@@ -8,6 +8,7 @@ import type { OCRResult } from "@/lib/types";
 
 function EngineColumn({ ocr, page }: { ocr: OCRResult; page: number }) {
   const current = ocr.pages.find((p) => p.page === page) ?? ocr.pages[0];
+  const multi = ocr.pages.length > 1;
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-2 rounded-xl border bg-card p-3">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -28,6 +29,11 @@ function EngineColumn({ ocr, page }: { ocr: OCRResult; page: number }) {
         <Badge variant="outline" className="font-mono">
           {ocr.table_count}T
         </Badge>
+        {multi && current && (
+          <Badge variant="outline" className="font-mono">
+            p{current.page}/{ocr.pages.length}
+          </Badge>
+        )}
       </div>
       <ScrollArea className="h-[48vh] rounded-lg border bg-muted/30">
         <pre className="p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
@@ -56,7 +62,7 @@ export function EngineComparison({
     <div className="flex h-full flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
-          Run both engines on the same page and compare text, confidence, and
+          Run both engines and compare the selected page's text, confidence, and
           latency side by side.
         </p>
         <Button size="sm" variant="outline" onClick={onRun} disabled={running}>

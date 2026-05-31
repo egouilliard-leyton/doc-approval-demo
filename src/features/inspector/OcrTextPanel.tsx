@@ -5,8 +5,11 @@ import { cn } from "@/lib/utils";
 import { formatMs, formatPct, confidenceTone } from "@/lib/format";
 import type { OCRResult } from "@/lib/types";
 
+// Shows the OCR text for the page currently selected in the left page viewer
+// (SplitInspector's displayPage). Paging on the left swaps the text shown here.
 export function OcrTextPanel({ ocr, page }: { ocr: OCRResult; page: number }) {
   const current = ocr.pages.find((p) => p.page === page) ?? ocr.pages[0];
+  const multi = ocr.pages.length > 1;
   const tables = current?.tables ?? [];
 
   return (
@@ -31,6 +34,11 @@ export function OcrTextPanel({ ocr, page }: { ocr: OCRResult; page: number }) {
           <Badge variant="outline" className="gap-1">
             <Table2 className="size-3" />
             {ocr.table_count} table{ocr.table_count > 1 ? "s" : ""}
+          </Badge>
+        )}
+        {multi && current && (
+          <Badge variant="outline" className="font-mono">
+            page {current.page}/{ocr.pages.length}
           </Badge>
         )}
       </div>

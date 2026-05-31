@@ -1,10 +1,15 @@
 // Pipeline state machine: owns the document and stage results, and drives the
 // sequential auto-run (prescan -> ocr -> structure -> decide). The runner stops on
 // the first error and marks downstream stages "blocked" (avoids the backend's 409s).
-import { useCallback, useMemo, useReducer } from "react";
+import { useCallback, useMemo, useReducer, useRef } from "react";
 import { toast } from "sonner";
 import {
   ApiError,
+  getDecision,
+  getDocument,
+  getOcr,
+  getPrescan,
+  getStructure,
   runDecide,
   runOcr,
   runPrescan,
@@ -95,7 +100,18 @@ type Action =
       setActive: boolean;
     }
   | { type: "STRUCTURE_DONE"; result: StructuredResult; timing: number }
-  | { type: "DECIDE_DONE"; result: DecisionResult; timing: number };
+  | { type: "DECIDE_DONE"; result: DecisionResult; timing: number }
+  | {
+      type: "HYDRATE";
+      document: DocumentDetail;
+      prescan: QualityReport | null;
+      ocrByEngine: Record<string, OCRResult>;
+      ocr: OCRResult | null;
+      structure: StructuredResult | null;
+      decision: DecisionResult | null;
+      activeEngine: OcrEngine;
+      docType: DocType;
+    };
 
 function reducer(state: PipelineState, action: Action): PipelineState {
   switch (action.type) {
@@ -177,6 +193,40 @@ function reducer(state: PipelineState, action: Action): PipelineState {
         perStageStatus: { ...state.perStageStatus, decide: "done" },
         perStageTiming: { ...state.perStageTiming, decide: action.timing },
       };
+    case "HYDRATE": {
+      // Reopen a previously-ingested document: mark a stage "done" only when its
+      // persisted result is present, leaving never-run stages "idle".
+      const status = idleStatus();
+      const timing: Partial<Record<StageKey, number>> = {};
+      if (action.prescan) status.prescan = "done";
+      if (action.ocr) {
+        status.ocr = "done";
+        timing.ocr = action.ocr.latency_ms;
+      }
+      if (action.structure) {
+        status.structure = "done";
+        timing.structure = action.structure.latency_ms;
+      }
+      if (action.decision) {
+        status.decide = "done";
+        timing.decide = action.decision.latency_ms;
+      }
+      return {
+        ...state,
+        document: action.document,
+        prescan: action.prescan,
+        ocr: action.ocr,
+        ocrByEngine: action.ocrByEngine,
+        structure: action.structure,
+        decision: action.decision,
+        perStageStatus: status,
+        perStageTiming: timing,
+        activeEngine: action.activeEngine,
+        docType: action.docType,
+        ingesting: false,
+        error: null,
+      };
+    }
     default:
       return state;
   }
@@ -192,6 +242,7 @@ export interface UsePipeline extends PipelineState {
   setDocType: (t: DocType) => void;
   setActiveEngine: (e: OcrEngine) => void;
   ingestFile: (file: File) => Promise<void>;
+  openDocument: (id: string) => Promise<void>;
   runStage: (stage: StageKey) => Promise<void>;
   runEngineComparison: () => Promise<void>;
   reset: () => void;
@@ -199,6 +250,10 @@ export interface UsePipeline extends PipelineState {
 
 export function usePipeline(): UsePipeline {
   const [state, dispatch] = useReducer(reducer, undefined, initialState);
+
+  // Bumped on every openDocument call; lets a slow open bail out if the user has
+  // since opened another document, so a stale fetch can't clobber the newer one.
+  const openTokenRef = useRef(0);
 
   // Run a single stage against a known document id, returning success.
   const execStage = useCallback(
@@ -288,6 +343,58 @@ export function usePipeline(): UsePipeline {
     [state.activeEngine, state.docType, runAll],
   );
 
+  // Reopen an already-ingested document and rehydrate whatever stage results
+  // were persisted, without re-running the pipeline.
+  const openDocument = useCallback(
+    async (id: string) => {
+      const token = ++openTokenRef.current;
+      let detail: DocumentDetail;
+      try {
+        detail = await getDocument(id);
+      } catch (e) {
+        toast.error("Could not open document", { description: errMessage(e) });
+        return;
+      }
+
+      // 404s (a stage that never ran) settle as rejections we intentionally drop.
+      const [prescanR, doclingR, qwenR, structureR, decisionR] =
+        await Promise.allSettled([
+          getPrescan(id),
+          getOcr(id, "docling"),
+          getOcr(id, "qwen-vl"),
+          getStructure(id),
+          getDecision(id),
+        ]);
+
+      // A newer openDocument started while we were fetching — drop these results.
+      if (openTokenRef.current !== token) return;
+
+      const ocrByEngine: Record<string, OCRResult> = {};
+      if (doclingR.status === "fulfilled") ocrByEngine.docling = doclingR.value;
+      if (qwenR.status === "fulfilled") ocrByEngine["qwen-vl"] = qwenR.value;
+
+      // Keep the user's selected engine if it has a result; otherwise fall back
+      // to whichever engine does (docling is inserted first, so it's preferred).
+      const activeEngine: OcrEngine = ocrByEngine[state.activeEngine]
+        ? state.activeEngine
+        : ((Object.keys(ocrByEngine)[0] as OcrEngine | undefined) ??
+          state.activeEngine);
+
+      dispatch({
+        type: "HYDRATE",
+        document: detail,
+        prescan: prescanR.status === "fulfilled" ? prescanR.value : null,
+        ocrByEngine,
+        ocr: ocrByEngine[activeEngine] ?? null,
+        structure: structureR.status === "fulfilled" ? structureR.value : null,
+        decision: decisionR.status === "fulfilled" ? decisionR.value : null,
+        activeEngine,
+        docType: detail.doc_type ?? state.docType,
+      });
+    },
+    [state.activeEngine, state.docType],
+  );
+
   const runStage = useCallback(
     async (stage: StageKey) => {
       if (!state.document) return;
@@ -336,6 +443,7 @@ export function usePipeline(): UsePipeline {
       setDocType,
       setActiveEngine,
       ingestFile,
+      openDocument,
       runStage,
       runEngineComparison,
       reset,
@@ -345,6 +453,7 @@ export function usePipeline(): UsePipeline {
       setDocType,
       setActiveEngine,
       ingestFile,
+      openDocument,
       runStage,
       runEngineComparison,
       reset,

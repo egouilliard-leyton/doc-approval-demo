@@ -71,6 +71,16 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
     }
     throw new ApiError(res.status, detail);
   }
+  // 204 No Content (e.g. DELETE) and any non-JSON/empty body have nothing to
+  // parse. Guarding on content-type (not just Content-Length, which proxies may
+  // omit on chunked responses) keeps res.json() from throwing on an empty body.
+  if (
+    res.status === 204 ||
+    res.headers.get("content-length") === "0" ||
+    !res.headers.get("content-type")?.includes("application/json")
+  ) {
+    return undefined as T;
+  }
   return (await res.json()) as T;
 }
 
@@ -96,6 +106,35 @@ export async function getDocument(id: string): Promise<DocumentDetail> {
 
 export async function listDocuments(): Promise<DocumentSummary[]> {
   return request<DocumentSummary[]>("/documents");
+}
+
+export async function deleteDocument(id: string): Promise<void> {
+  await request<void>(`/documents/${id}`, { method: "DELETE" });
+}
+
+export async function deleteAllDocuments(): Promise<void> {
+  await request<void>("/documents", { method: "DELETE" });
+}
+
+// --- persisted stage results (GET; 404 when a stage hasn't run) ---------------
+
+export async function getPrescan(id: string): Promise<QualityReport> {
+  return request<QualityReport>(`/documents/${id}/prescan`);
+}
+
+export async function getOcr(
+  id: string,
+  engine: OcrEngine,
+): Promise<OCRResult> {
+  return request<OCRResult>(`/documents/${id}/ocr`, { query: { engine } });
+}
+
+export async function getStructure(id: string): Promise<StructuredResult> {
+  return request<StructuredResult>(`/documents/${id}/structure`);
+}
+
+export async function getDecision(id: string): Promise<DecisionResult> {
+  return request<DecisionResult>(`/documents/${id}/decide`);
 }
 
 // --- pipeline stages (live engines) ------------------------------------------

@@ -164,4 +164,10 @@
   html {
     @apply font-sans;
   }
+  /* Tailwind v4 preflight resets interactive elements to `cursor: default`;
+     restore a pointer for all enabled buttons (component + native + role). */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    @apply cursor-pointer;
+  }
 }

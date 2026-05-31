@@ -1,12 +1,12 @@
 """Document ingestion + retrieval endpoints (Phase 1)."""
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 
 from app import storage
 from app.config import settings
 from app.db import get_session
-from app.models import DocType, Document
+from app.models import DocType, Document, PipelineRun
 from app.schemas import DocumentDetail, DocumentSummary, PageInfo
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -72,3 +72,37 @@ def get_document(doc_id: str, session: Session = Depends(get_session)) -> Docume
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found.")
     return _to_detail(doc)
+
+
+@router.delete("", status_code=204)
+def delete_all_documents(session: Session = Depends(get_session)) -> None:
+    """Permanently remove every document: all pipeline runs, DB rows, and files.
+
+    Ids are collected before the rows are deleted so the on-disk ``data/<id>/``
+    trees can be removed after the DB commit.
+    """
+    doc_ids = list(session.exec(select(Document.id)).all())
+    session.exec(delete(PipelineRun))
+    session.exec(delete(Document))
+    session.commit()
+
+    for doc_id in doc_ids:
+        storage.delete_document_dir(doc_id)
+
+
+@router.delete("/{doc_id}", status_code=204)
+def delete_document(doc_id: str, session: Session = Depends(get_session)) -> None:
+    """Permanently remove a document: its pipeline runs, DB row, and on-disk files.
+
+    The PipelineRun -> Document foreign key has no DB cascade configured, so the
+    runs are deleted explicitly before the document.
+    """
+    doc = session.get(Document, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    session.exec(delete(PipelineRun).where(PipelineRun.document_id == doc_id))
+    session.delete(doc)
+    session.commit()
+
+    storage.delete_document_dir(doc_id)

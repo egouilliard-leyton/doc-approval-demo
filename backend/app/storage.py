@@ -12,6 +12,8 @@ PDFs are rendered with PyMuPDF (fitz); images are normalized with Pillow.
 
 from __future__ import annotations
 
+import logging
+import shutil
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -19,6 +21,8 @@ import numpy as np
 from PIL import Image, ImageSequence
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Allowed upload types: extension -> canonical MIME.
 ALLOWED_TYPES: dict[str, str] = {
@@ -46,6 +50,25 @@ def detect_type(filename: str) -> tuple[str, str]:
     if mime is None:
         raise UnsupportedFileType(ext or filename)
     return ext, mime
+
+
+def delete_document_dir(doc_id: str) -> None:
+    """Recursively remove data/<doc_id>/ (originals, pages, thumbs, stage artifacts).
+
+    A missing directory (e.g. a doc whose normalization failed before any file was
+    written) is treated as success, so deletion stays idempotent. Real failures
+    (permissions, a locked file) are logged rather than silently swallowed — the DB
+    row is already gone, so a leftover tree is an orphan worth surfacing.
+    """
+    doc_dir = _doc_dir(doc_id)
+    if not doc_dir.exists():
+        return
+    shutil.rmtree(
+        doc_dir,
+        onexc=lambda _func, path, exc: logger.warning(
+            "Failed to delete %s while removing document %s: %s", path, doc_id, exc
+        ),
+    )
 
 
 def save_original(doc_id: str, ext: str, content: bytes) -> Path:
