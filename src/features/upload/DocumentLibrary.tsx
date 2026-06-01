@@ -2,9 +2,9 @@
 // a past run (without re-ingesting) or delete it. Fetches on mount; because
 // UploadView only mounts when no document is open, returning here via "New
 // document" re-runs this fetch and surfaces freshly ingested docs.
-import { useCallback, useEffect, useState } from "react";
-import { FileText, Loader2, ReceiptText, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { useCallback, useEffect, useState } from 'react';
+import { FileText, Loader2, ReceiptText, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,38 +15,38 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
+} from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
 import {
   ApiError,
   deleteAllDocuments,
   deleteDocument,
   fileUrl,
   listDocuments,
-} from "@/lib/api";
-import { formatDate } from "@/lib/format";
-import { cn } from "@/lib/utils";
-import type { DocumentStatus, DocumentSummary } from "@/lib/types";
-import { usePipelineContext } from "@/features/pipeline/PipelineContext";
+} from '@/lib/api';
+import { formatDate } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import type { DocumentStatus, DocumentSummary } from '@/lib/types';
+import { usePipelineContext } from '@/features/pipeline/PipelineContext';
 
-const LOAD_ERROR = "Could not load documents.";
+const LOAD_ERROR = 'Could not load documents.';
 
 const STATUS_LABEL: Record<DocumentStatus, string> = {
-  uploaded: "Uploaded",
-  prescanned: "Pre-scanned",
-  ocr_done: "OCR done",
-  structured: "Structured",
-  decided: "Decided",
-  needs_review: "Needs review",
+  uploaded: 'Uploaded',
+  prescanned: 'Pre-scanned',
+  ocr_done: 'OCR done',
+  structured: 'Structured',
+  decided: 'Decided',
+  needs_review: 'Needs review',
 };
 
 // Borrow the approve/review verdict tokens (also used in the Workspace) so a
 // finished doc reads green and a flagged one reads amber.
 function statusBadgeClass(status: DocumentStatus): string {
-  if (status === "decided") return "border-approve/40 text-approve";
-  if (status === "needs_review")
-    return "border-review/40 text-review-foreground";
-  return "border-border text-muted-foreground";
+  if (status === 'decided') return 'border-approve/40 text-approve';
+  if (status === 'needs_review')
+    return 'border-review/40 text-review-foreground';
+  return 'border-border text-muted-foreground';
 }
 
 function DocumentCard({
@@ -60,7 +60,7 @@ function DocumentCard({
   onDelete: (id: string) => void;
   deleting: boolean;
 }) {
-  const Icon = doc.doc_type === "contract" ? FileText : ReceiptText;
+  const Icon = doc.doc_type === 'contract' ? FileText : ReceiptText;
   // Thumbs may not exist yet (freshly ingested) or may 404; fall back to the icon
   // instead of the browser's broken-image glyph.
   const [thumbFailed, setThumbFailed] = useState(false);
@@ -78,12 +78,12 @@ function DocumentCard({
         onClick={() => onOpen(doc.id)}
         disabled={deleting}
         className={cn(
-          "flex w-full flex-col overflow-hidden rounded-xl bg-card text-left ring-1 ring-foreground/10 transition-all",
-          "hover:ring-brand/40 hover:shadow-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
-          deleting && "pointer-events-none opacity-50",
+          'flex w-full flex-col overflow-hidden rounded-xl bg-card text-left ring-1 ring-foreground/10 transition-all',
+          'hover:ring-brand/40 hover:shadow-sm focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
+          deleting && 'pointer-events-none opacity-50',
         )}
       >
-        <div className="flex aspect-[4/3] items-center justify-center overflow-hidden border-b bg-muted/40">
+        <div className="flex aspect-4/3 items-center justify-center overflow-hidden border-b bg-muted/40">
           {thumb ? (
             <img
               src={thumb}
@@ -120,7 +120,7 @@ function DocumentCard({
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>{formatDate(doc.created_at)}</span>
             <span className="font-mono">
-              {doc.page_count} pg{doc.page_count === 1 ? "" : "s"}
+              {doc.page_count} pg{doc.page_count === 1 ? '' : 's'}
             </span>
           </div>
         </div>
@@ -132,10 +132,10 @@ function DocumentCard({
           aria-label={`Delete ${doc.filename}`}
           disabled={deleting}
           className={cn(
-            "absolute top-2 right-2 z-10 flex size-7 items-center justify-center rounded-lg bg-background/80 text-muted-foreground backdrop-blur transition-all",
-            "hover:bg-destructive/10 hover:text-destructive focus-visible:ring-3 focus-visible:ring-destructive/20 focus-visible:outline-none",
-            "opacity-0 group-hover/doc:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100",
-            deleting && "pointer-events-none",
+            'absolute top-2 right-2 z-10 flex size-7 items-center justify-center rounded-lg bg-background/80 text-muted-foreground backdrop-blur transition-all',
+            'hover:bg-destructive/10 hover:text-destructive focus-visible:ring-3 focus-visible:ring-destructive/20 focus-visible:outline-none',
+            'opacity-0 group-hover/doc:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100',
+            deleting && 'pointer-events-none',
           )}
         >
           {deleting ? (
@@ -150,7 +150,7 @@ function DocumentCard({
             <AlertDialogDescription>
               <span className="font-medium text-foreground">
                 {doc.filename}
-              </span>{" "}
+              </span>{' '}
               and all of its pipeline results and files will be permanently
               removed. This can't be undone.
             </AlertDialogDescription>
@@ -222,15 +222,15 @@ export function DocumentLibrary() {
       try {
         await deleteDocument(id);
         setDocs((prev) => prev.filter((d) => d.id !== id));
-        toast.success("Document deleted");
+        toast.success('Document deleted');
       } catch (e) {
         // Already gone (e.g. a concurrent delete won): treat as success.
         if (e instanceof ApiError && e.status === 404) {
           setDocs((prev) => prev.filter((d) => d.id !== id));
         } else {
           const msg =
-            e instanceof ApiError ? e.message : "Could not delete document.";
-          toast.error("Delete failed", { description: msg });
+            e instanceof ApiError ? e.message : 'Could not delete document.';
+          toast.error('Delete failed', { description: msg });
           void load(); // resync in case the server state diverged
         }
       } finally {
@@ -249,11 +249,11 @@ export function DocumentLibrary() {
     try {
       await deleteAllDocuments();
       setDocs([]);
-      toast.success("All documents deleted");
+      toast.success('All documents deleted');
     } catch (e) {
       const msg =
-        e instanceof ApiError ? e.message : "Could not delete documents.";
-      toast.error("Delete failed", { description: msg });
+        e instanceof ApiError ? e.message : 'Could not delete documents.';
+      toast.error('Delete failed', { description: msg });
       void load(); // resync in case the server state diverged
     } finally {
       setDeletingAll(false);
@@ -272,7 +272,7 @@ export function DocumentLibrary() {
   if (error) {
     return (
       <div className="py-6 text-center text-sm text-muted-foreground">
-        {error}{" "}
+        {error}{' '}
         <button
           type="button"
           onClick={() => void load()}
@@ -298,9 +298,9 @@ export function DocumentLibrary() {
             <AlertDialogTrigger
               disabled={deletingAll}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-muted-foreground transition-all",
-                "hover:bg-destructive/10 hover:text-destructive focus-visible:ring-3 focus-visible:ring-destructive/20 focus-visible:outline-none",
-                deletingAll && "pointer-events-none opacity-50",
+                'inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-muted-foreground transition-all',
+                'hover:bg-destructive/10 hover:text-destructive focus-visible:ring-3 focus-visible:ring-destructive/20 focus-visible:outline-none',
+                deletingAll && 'pointer-events-none opacity-50',
               )}
             >
               {deletingAll ? (
@@ -314,10 +314,10 @@ export function DocumentLibrary() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Delete all documents?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  All{" "}
+                  All{' '}
                   <span className="font-medium text-foreground">
                     {docs.length}
-                  </span>{" "}
+                  </span>{' '}
                   documents and their pipeline results and files will be
                   permanently removed. This can't be undone.
                 </AlertDialogDescription>

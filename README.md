@@ -14,8 +14,6 @@ so OCR engines can be compared side-by-side on camera.
 - **Agent / structuring model:** OpenRouter `deepseek/deepseek-v4-flash` (OpenAI-compatible).
 - **Storage:** local filesystem + SQLite (zero cloud setup).
 
-See `docs/ARCHITECTURE.md` for the stage diagram and `docs/DEMO_SCRIPT.md` for the on-camera run.
-
 ## Prerequisites
 
 - macOS (Apple Silicon supported) or Linux, **Python 3.12**, [`uv`](https://docs.astral.sh/uv/),
