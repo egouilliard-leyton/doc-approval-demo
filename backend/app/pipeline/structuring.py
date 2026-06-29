@@ -20,7 +20,7 @@ from time import perf_counter
 from app.config import settings
 from app.extraction import get_spec
 from app.extraction.base import FlatExtraction, GroundingCtx
-from app.models import Document, DocType, DocumentStatus
+from app.models import Document, DocumentStatus
 from app.schemas import FieldValue, Grounding, OCRResult, StructuredResult
 from app import storage
 
@@ -30,7 +30,7 @@ PROVIDERS = {"langextract", "mock"}
 def run_structuring(
     doc: Document,
     ocr_result: OCRResult,
-    doc_type: DocType,
+    doc_type: str,
     provider: str = "",
 ) -> StructuredResult:
     """Structure a document's OCR text into a validated, grounded result."""
@@ -138,14 +138,14 @@ def _structure_langextract(spec, full_text: str) -> tuple[list[FlatExtraction], 
     return flats, _artifact_jsonl(flats)
 
 
-def _structure_mock(doc_type: DocType, full_text: str) -> list[FlatExtraction]:
+def _structure_mock(doc_type: str, full_text: str) -> list[FlatExtraction]:
     """Deterministic, offline extractions whose spans live in the mock OCR text.
 
     For invoices: grounds vendor/invoice_no/total/line_item against the real
     ``full_text`` (so page mapping runs for real), emits an intentionally ungrounded
     ``currency``, and OMITS ``po_number`` to prove the null + low-confidence path.
     """
-    if doc_type == DocType.invoice:
+    if doc_type == "invoice":
         return [
             FlatExtraction(cls="vendor", text="MOCK INVOICE"),
             FlatExtraction(cls="invoice_no", text="page 1"),
@@ -231,14 +231,14 @@ def _table_cell(value: str | None, grounding: Grounding) -> FieldValue:
     return FieldValue(value=value, confidence=_TABLE_BACKFILL_CONFIDENCE, grounding=grounding)
 
 
-def _backfill_from_tables(fields_model, ocr_result: OCRResult, doc_type: DocType, ctx: GroundingCtx):
+def _backfill_from_tables(fields_model, ocr_result: OCRResult, doc_type: str, ctx: GroundingCtx):
     """Backfill empty invoice line items from persisted Docling tables (no re-OCR).
 
     Reuses the OCR result's table markdown (present when the OCR engine was Docling).
     Filled fields get capped low confidence + ``partial`` alignment. No tables, or a
     non-invoice doc type, makes this a no-op so fields stay explicitly null.
     """
-    if doc_type != DocType.invoice or fields_model.line_items:
+    if doc_type != "invoice" or fields_model.line_items:
         return fields_model, False
 
     tables = [t for page in ocr_result.pages for t in page.tables if t.markdown]

@@ -13,7 +13,8 @@ from sqlmodel import Session, select
 
 from app.config import settings
 from app.db import get_session
-from app.models import Document, DocType, DocumentStatus, PipelineRun, _utcnow
+from app.doc_types import is_registered
+from app.models import Document, DocumentStatus, PipelineRun, _utcnow
 from app.pipeline.agent import run_decision
 from app.pipeline.ocr import run_ocr
 from app.pipeline.prescan import run_prescan
@@ -192,7 +193,7 @@ def get_ocr(
 @router.post("/structure", response_model=StructuredResult)
 async def structure_document(
     doc_id: str,
-    doc_type: DocType | None = Query(default=None),
+    doc_type: str | None = Query(default=None),
     provider: str = Query(default=""),
     ocr_engine: str = Query(default=""),
     session: Session = Depends(get_session),
@@ -214,6 +215,8 @@ async def structure_document(
             status_code=400,
             detail="doc_type is required (not set on the document); pass ?doc_type=invoice|contract.",
         )
+    if not is_registered(resolved_type):
+        raise HTTPException(status_code=422, detail=f"Unknown doc_type '{resolved_type}'")
 
     run = _latest_run(session, doc_id)
     ocr = (run.stage_results.get("ocr") or {}) if run else {}

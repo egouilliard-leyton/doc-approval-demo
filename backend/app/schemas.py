@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.models import DocType, DocumentStatus
+from app.models import DocumentStatus
 
 
 class DocumentSummary(BaseModel):
@@ -13,7 +13,7 @@ class DocumentSummary(BaseModel):
 
     id: str
     filename: str
-    doc_type: DocType | None
+    doc_type: str | None
     mime: str
     page_count: int
     status: DocumentStatus
@@ -168,7 +168,7 @@ class StructuredResult(BaseModel):
 
     document_id: str
     status: DocumentStatus  # `structured` at this stage
-    doc_type: DocType
+    doc_type: str
     provider: str  # "langextract" | "mock"
     model: str  # extractor model slug (or "mock")
     ocr_engine: str  # which OCR result this was built from
@@ -212,7 +212,7 @@ class DecisionResult(BaseModel):
 
     document_id: str
     status: DocumentStatus  # `decided` (approve/flag) | `needs_review`
-    doc_type: DocType
+    doc_type: str
     provider: str  # "llm" | "mock"
     model: str  # decision model slug (or "mock")
     decision: Decision
@@ -223,3 +223,65 @@ class DecisionResult(BaseModel):
     llm_decision: Decision | None = None  # what the LLM proposed before reconciliation
     warnings: list[str] = []
     latency_ms: int = 0
+
+
+# --- Phase 3 Wave 2: configurable doc-type CRUD ------------------------------
+
+
+class DocTypeResponse(BaseModel):
+    """A document type's full definition as returned by the CRUD endpoints."""
+
+    name: str
+    label: str
+    icon: str
+    extraction_definition: dict
+    rule_definition: dict
+    citation_paths: list[str]
+    builtin: bool
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocTypeCreate(BaseModel):
+    """Payload to create a custom document type (always non-built-in, version 1)."""
+
+    name: str
+    label: str
+    icon: str = ""
+    extraction_definition: dict
+    rule_definition: dict
+    citation_paths: list[str] = []
+
+
+class DocTypeUpdate(BaseModel):
+    """Full-replace payload for a custom document type (everything but ``name``).
+
+    A PUT replaces the editable definition wholesale rather than patching individual
+    keys: the editor always holds the complete definition, so a full replace keeps the
+    stored row consistent and avoids partial-update ambiguity. The immutable ``name`` is
+    taken from the URL path.
+    """
+
+    label: str
+    icon: str = ""
+    extraction_definition: dict
+    rule_definition: dict
+    citation_paths: list[str] = []
+
+
+class DocTypePreviewRequest(BaseModel):
+    """Run the structuring + rules pipeline over ad-hoc sample text for a doc type."""
+
+    sample_text: str
+    provider: str = "mock"
+
+
+class DocTypePreviewResponse(BaseModel):
+    """Preview output: the extracted fields plus the rule checks they trigger."""
+
+    doc_type: str
+    fields: dict
+    extraction_confidence: float
+    checks: list[Check]
+    warnings: list[str] = []

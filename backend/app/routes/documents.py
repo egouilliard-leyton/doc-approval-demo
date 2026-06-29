@@ -6,7 +6,7 @@ from sqlmodel import Session, delete, select
 from app import storage
 from app.config import settings
 from app.db import get_session
-from app.models import DocType, Document, PipelineRun
+from app.models import Document, PipelineRun
 from app.schemas import DocumentDetail, DocumentSummary, PageInfo
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -20,7 +20,7 @@ def _to_detail(doc: Document) -> DocumentDetail:
 @router.post("", response_model=DocumentDetail, status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
-    doc_type: DocType | None = Form(default=None),
+    doc_type: str | None = Form(default=None),
     session: Session = Depends(get_session),
 ) -> DocumentDetail:
     """Upload a PDF/PNG/JPG/TIFF, persist it, and rasterize pages to PNGs."""

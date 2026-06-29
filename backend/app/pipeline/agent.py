@@ -62,7 +62,7 @@ def run_decision(
         model = "mock"
     else:
         llm_decision, llm_conf, llm_reasons, llm_warnings = _decide_llm(
-            doc_type.value, fields, checks, ctx
+            doc_type, fields, checks, ctx
         )
         warnings.extend(llm_warnings)
         model = settings.decision_model
