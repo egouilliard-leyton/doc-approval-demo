@@ -1,7 +1,7 @@
 // TypeScript mirrors of the FastAPI backend schemas (backend/app/schemas.py).
 // Kept hand-maintained and minimal to match the JSON the API returns.
 
-export type DocType = "invoice" | "contract";
+export type DocType = string;
 export type OcrEngine = "qwen-vl" | "docling";
 export type DocumentStatus =
   | "uploaded"

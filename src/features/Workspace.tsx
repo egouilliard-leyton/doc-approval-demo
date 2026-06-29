@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { ChevronDown, FileText, Plus, ReceiptText } from "lucide-react";
+import { createElement, useState } from "react";
+import { ChevronDown, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { resolveDocTypeIcon } from "@/lib/icon-utils";
 import { usePipelineContext } from "@/features/pipeline/PipelineContext";
 import { Stepper } from "@/features/pipeline/Stepper";
 import { QualityReportPanel } from "@/features/pipeline/QualityReportPanel";
@@ -13,7 +14,7 @@ export function Workspace() {
   const [showPrescan, setShowPrescan] = useState(false);
 
   if (!document) return null;
-  const DocIcon = document.doc_type === "contract" ? FileText : ReceiptText;
+  const docIcon = resolveDocTypeIcon(document.doc_type);
 
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-4 px-4 py-5 sm:px-6">
@@ -21,7 +22,7 @@ export function Workspace() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-lg border bg-card text-muted-foreground">
-            <DocIcon className="size-5" />
+            {createElement(docIcon, { className: "size-5" })}
           </div>
           <div>
             <h2 className="text-sm font-medium">{document.filename}</h2>

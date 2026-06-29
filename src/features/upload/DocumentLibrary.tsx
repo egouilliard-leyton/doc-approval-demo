@@ -2,8 +2,8 @@
 // a past run (without re-ingesting) or delete it. Fetches on mount; because
 // UploadView only mounts when no document is open, returning here via "New
 // document" re-runs this fetch and surfaces freshly ingested docs.
-import { useCallback, useEffect, useState } from 'react';
-import { FileText, Loader2, ReceiptText, Trash2 } from 'lucide-react';
+import { createElement, useCallback, useEffect, useState } from 'react';
+import { Loader2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -26,6 +26,7 @@ import {
 } from '@/lib/api';
 import { formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { resolveDocTypeIcon } from '@/lib/icon-utils';
 import type { DocumentStatus, DocumentSummary } from '@/lib/types';
 import { usePipelineContext } from '@/features/pipeline/PipelineContext';
 
@@ -60,7 +61,7 @@ function DocumentCard({
   onDelete: (id: string) => void;
   deleting: boolean;
 }) {
-  const Icon = doc.doc_type === 'contract' ? FileText : ReceiptText;
+  const docIcon = resolveDocTypeIcon(doc.doc_type);
   // Thumbs may not exist yet (freshly ingested) or may 404; fall back to the icon
   // instead of the browser's broken-image glyph.
   const [thumbFailed, setThumbFailed] = useState(false);
@@ -93,13 +94,17 @@ function DocumentCard({
               className="size-full object-cover object-top"
             />
           ) : (
-            <Icon className="size-10 text-muted-foreground/50" />
+            createElement(docIcon, {
+              className: 'size-10 text-muted-foreground/50',
+            })
           )}
         </div>
 
         <div className="flex flex-col gap-2 p-3">
           <div className="flex items-center gap-2">
-            <Icon className="size-4 shrink-0 text-muted-foreground" />
+            {createElement(docIcon, {
+              className: 'size-4 shrink-0 text-muted-foreground',
+            })}
             <span className="truncate text-sm font-medium" title={doc.filename}>
               {doc.filename}
             </span>

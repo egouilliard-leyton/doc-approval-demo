@@ -10,6 +10,13 @@ import type {
   QualityReport,
   StructuredResult,
 } from "@/lib/types";
+import type {
+  DocTypeCreate,
+  DocTypePreviewRequest,
+  DocTypePreviewResponse,
+  DocTypeResponse,
+  DocTypeUpdate,
+} from "@/lib/doc-type-schema";
 
 const API_BASE_URL: string =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -44,10 +51,11 @@ interface RequestOpts {
   query?: Record<string, string | number | boolean | undefined>;
   body?: BodyInit;
   signal?: AbortSignal;
+  headers?: Record<string, string>;
 }
 
 async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
-  const { method = "GET", query, body, signal } = opts;
+  const { method = "GET", query, body, signal, headers } = opts;
   const qs = query
     ? "?" +
       Object.entries(query)
@@ -57,7 +65,12 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
     : "";
   let res: Response;
   try {
-    res = await fetch(`${API_BASE_URL}${path}${qs}`, { method, body, signal });
+    res = await fetch(`${API_BASE_URL}${path}${qs}`, {
+      method,
+      body,
+      signal,
+      headers,
+    });
   } catch {
     throw new ApiError(0, "Cannot reach the backend — is it running on :8000?");
   }
@@ -171,6 +184,54 @@ export async function runStructure(
 
 export async function runDecide(id: string): Promise<DecisionResult> {
   return request<DecisionResult>(`/documents/${id}/decide`, { method: "POST" });
+}
+
+// --- configurable doc types (CRUD + preview) ---------------------------------
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+export async function listDocTypes(): Promise<DocTypeResponse[]> {
+  return request<DocTypeResponse[]>("/doc-types");
+}
+
+export async function getDocType(name: string): Promise<DocTypeResponse> {
+  return request<DocTypeResponse>(`/doc-types/${name}`);
+}
+
+export async function createDocType(
+  body: DocTypeCreate,
+): Promise<DocTypeResponse> {
+  return request<DocTypeResponse>("/doc-types", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateDocType(
+  name: string,
+  body: DocTypeUpdate,
+): Promise<DocTypeResponse> {
+  return request<DocTypeResponse>(`/doc-types/${name}`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteDocType(name: string): Promise<void> {
+  await request<void>(`/doc-types/${name}`, { method: "DELETE" });
+}
+
+export async function previewDocType(
+  name: string,
+  body: DocTypePreviewRequest,
+): Promise<DocTypePreviewResponse> {
+  return request<DocTypePreviewResponse>(`/doc-types/${name}/preview`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
 }
 
 export { API_BASE_URL };

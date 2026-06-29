@@ -1,0 +1,620 @@
+// Editor for a rule definition's `rules` list. Each rule is a collapsible card
+// whose body renders kind-specific parameters. The payload shape is what the
+// backend's validate_custom_rule_dict expects (see backend/app/serialization.py):
+// threshold sets exactly one of threshold/threshold_setting, set_membership sets
+// exactly one of allowed_list/allowed_list_setting, arithmetic carries the three
+// *_path keys, and llm_advisory has no severity (forced to "review" at runtime).
+import { useState } from "react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Toggle } from "@/components/ui/toggle";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type {
+  FieldDef,
+  RuleDef,
+  RuleKind,
+  RuleSeverity,
+  ThresholdOp,
+} from "@/lib/doc-type-schema";
+
+const RULE_KINDS: { value: RuleKind; label: string }[] = [
+  { value: "presence", label: "Presence" },
+  { value: "threshold", label: "Threshold" },
+  { value: "arithmetic", label: "Arithmetic" },
+  { value: "set_membership", label: "Set membership" },
+  { value: "field_dependency", label: "Field dependency" },
+  { value: "uniqueness", label: "Uniqueness" },
+  { value: "llm_advisory", label: "LLM advisory" },
+];
+
+const SEVERITIES: { value: RuleSeverity; label: string }[] = [
+  { value: "advisory", label: "Advisory" },
+  { value: "review", label: "Review" },
+  { value: "hard", label: "Hard" },
+];
+
+const THRESHOLD_OPS: { value: ThresholdOp; label: string }[] = [
+  { value: "lte", label: "≤ (lte)" },
+  { value: "gte", label: "≥ (gte)" },
+  { value: "lt", label: "< (lt)" },
+  { value: "gt", label: "> (gt)" },
+];
+
+// A blank rule of the given kind, carrying over only the previous `name`. Defaults
+// are picked so a freshly-added rule passes backend validation once its paths are
+// filled (e.g. threshold defaults to a literal value, not a setting key).
+function blankRule(kind: RuleKind, name: string): RuleDef {
+  switch (kind) {
+    case "presence":
+      return { kind, name, field_path: "", severity: "review" };
+    case "threshold":
+      return {
+        kind,
+        name,
+        field_path: "",
+        op: "lte",
+        severity: "review",
+        threshold: 0,
+        threshold_setting: null,
+      };
+    case "arithmetic":
+      return {
+        kind,
+        name,
+        result_path: "",
+        addend_a_path: "",
+        addend_b_path: "",
+        severity: "review",
+        tolerance: 0,
+      };
+    case "set_membership":
+      return {
+        kind,
+        name,
+        field_path: "",
+        severity: "review",
+        allowed_list: [],
+        allowed_list_setting: null,
+        match_mode: "exact_ci",
+        absent_behavior: "advisory_pass",
+      };
+    case "field_dependency":
+      return {
+        kind,
+        name,
+        antecedent_path: "",
+        consequent_path: "",
+        severity: "review",
+      };
+    case "uniqueness":
+      return { kind, name, field_path: "", severity: "review" };
+    case "llm_advisory":
+      return { kind, name, question: "" };
+  }
+}
+
+const FIELD_DATALIST_ID = "doctype-field-names";
+
+function PathInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <Input
+      list={FIELD_DATALIST_ID}
+      value={value}
+      placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
+export function RuleListEditor({
+  fields,
+  rules,
+  onChange,
+}: {
+  fields: FieldDef[];
+  rules: RuleDef[];
+  onChange: (rules: RuleDef[]) => void;
+}) {
+  const [openIndex, setOpenIndex] = useState<Set<number>>(() => new Set());
+  const [newKind, setNewKind] = useState<RuleKind>("presence");
+
+  const toggleOpen = (index: number) => {
+    setOpenIndex((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+
+  // `patch` is applied positionally; callers pass a partial of the concrete rule
+  // shape so the union stays sound after the spread.
+  const updateRule = (index: number, patch: Partial<RuleDef>) => {
+    onChange(
+      rules.map((r, i) =>
+        i === index ? ({ ...r, ...patch } as RuleDef) : r,
+      ),
+    );
+  };
+
+  const changeKind = (index: number, kind: RuleKind) => {
+    onChange(
+      rules.map((r, i) => (i === index ? blankRule(kind, r.name) : r)),
+    );
+  };
+
+  const removeRule = (index: number) => {
+    onChange(rules.filter((_, i) => i !== index));
+    setOpenIndex(new Set());
+  };
+
+  return (
+    <div className="space-y-3">
+      <datalist id={FIELD_DATALIST_ID}>
+        {fields
+          .filter((f) => f.name)
+          .map((f) => (
+            <option key={f.name} value={f.name} />
+          ))}
+      </datalist>
+
+      {rules.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          No rules yet. Add one below.
+        </p>
+      )}
+
+      {rules.map((rule, i) => {
+        const open = openIndex.has(i);
+        return (
+          <div key={i} className="rounded-lg border">
+            <div className="flex flex-wrap items-end gap-2 p-3">
+              <button
+                type="button"
+                aria-label={open ? "Collapse rule" : "Expand rule"}
+                onClick={() => toggleOpen(i)}
+                className="mb-1.5 text-muted-foreground hover:text-foreground"
+              >
+                {open ? (
+                  <ChevronDown className="size-4" />
+                ) : (
+                  <ChevronRight className="size-4" />
+                )}
+              </button>
+
+              <div className="w-40 space-y-1">
+                <Label className="text-xs text-muted-foreground">Kind</Label>
+                <Select
+                  value={rule.kind}
+                  onValueChange={(v) => changeKind(i, v as RuleKind)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {RULE_KINDS.map((k) => (
+                      <SelectItem key={k.value} value={k.value}>
+                        {k.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="min-w-40 flex-1 space-y-1">
+                <Label className="text-xs text-muted-foreground">Name</Label>
+                <Input
+                  value={rule.name}
+                  placeholder="rule_name"
+                  onChange={(e) => updateRule(i, { name: e.target.value })}
+                />
+              </div>
+
+              {rule.kind !== "llm_advisory" && (
+                <div className="w-32 space-y-1">
+                  <Label className="text-xs text-muted-foreground">
+                    Severity
+                  </Label>
+                  <Select
+                    value={rule.severity}
+                    onValueChange={(v) =>
+                      updateRule(i, { severity: v as RuleSeverity })
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SEVERITIES.map((s) => (
+                        <SelectItem key={s.value} value={s.value}>
+                          {s.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Delete rule"
+                onClick={() => removeRule(i)}
+              >
+                <Trash2 />
+              </Button>
+            </div>
+
+            {open && (
+              <div className="space-y-3 border-t p-3">
+                <RuleParams
+                  rule={rule}
+                  onPatch={(patch) => updateRule(i, patch)}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <div className="flex items-end gap-2">
+        <div className="w-40 space-y-1">
+          <Label className="text-xs text-muted-foreground">New rule</Label>
+          <Select
+            value={newKind}
+            onValueChange={(v) => setNewKind(v as RuleKind)}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {RULE_KINDS.map((k) => (
+                <SelectItem key={k.value} value={k.value}>
+                  {k.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            onChange([...rules, blankRule(newKind, "")]);
+            setOpenIndex((prev) => new Set(prev).add(rules.length));
+          }}
+        >
+          <Plus className="size-3.5" />
+          Add rule
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function RuleParams({
+  rule,
+  onPatch,
+}: {
+  rule: RuleDef;
+  onPatch: (patch: Partial<RuleDef>) => void;
+}) {
+  switch (rule.kind) {
+    case "presence":
+      return (
+        <>
+          <Field label="Field path">
+            <PathInput
+              value={rule.field_path}
+              placeholder="field_name"
+              onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "threshold": {
+      const useSetting = rule.threshold_setting != null;
+      return (
+        <>
+          <Field label="Field path">
+            <PathInput
+              value={rule.field_path}
+              placeholder="field_name"
+              onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
+          <Field label="Operator">
+            <Select
+              value={rule.op}
+              onValueChange={(v) => onPatch({ op: v as ThresholdOp })}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {THRESHOLD_OPS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              <Label className="text-xs text-muted-foreground">
+                {useSetting ? "Settings key" : "Threshold value"}
+              </Label>
+              {useSetting ? (
+                <Input
+                  value={rule.threshold_setting ?? ""}
+                  placeholder="settings.key"
+                  onChange={(e) =>
+                    onPatch({ threshold_setting: e.target.value })
+                  }
+                />
+              ) : (
+                <Input
+                  type="number"
+                  value={rule.threshold ?? 0}
+                  onChange={(e) =>
+                    onPatch({ threshold: Number(e.target.value) })
+                  }
+                />
+              )}
+            </div>
+            <Toggle
+              variant="outline"
+              pressed={useSetting}
+              onPressedChange={(pressed) =>
+                onPatch(
+                  pressed
+                    ? { threshold: null, threshold_setting: "" }
+                    : { threshold: 0, threshold_setting: null },
+                )
+              }
+            >
+              Settings key
+            </Toggle>
+          </div>
+        </>
+      );
+    }
+
+    case "arithmetic":
+      return (
+        <>
+          <Field label="Result path">
+            <PathInput
+              value={rule.result_path}
+              placeholder="total"
+              onChange={(v) => onPatch({ result_path: v })}
+            />
+          </Field>
+          <Field label="Addend A path">
+            <PathInput
+              value={rule.addend_a_path}
+              placeholder="subtotal"
+              onChange={(v) => onPatch({ addend_a_path: v })}
+            />
+          </Field>
+          <Field label="Addend B path">
+            <PathInput
+              value={rule.addend_b_path}
+              placeholder="tax"
+              onChange={(v) => onPatch({ addend_b_path: v })}
+            />
+          </Field>
+          <Field label="Tolerance">
+            <Input
+              type="number"
+              value={rule.tolerance ?? 0}
+              onChange={(e) => onPatch({ tolerance: Number(e.target.value) })}
+            />
+          </Field>
+        </>
+      );
+
+    case "set_membership": {
+      const useSetting = rule.allowed_list_setting != null;
+      return (
+        <>
+          <Field label="Field path">
+            <PathInput
+              value={rule.field_path}
+              placeholder="field_name"
+              onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              <Label className="text-xs text-muted-foreground">
+                {useSetting ? "Settings key" : "Allowed values (comma-separated)"}
+              </Label>
+              {useSetting ? (
+                <Input
+                  value={rule.allowed_list_setting ?? ""}
+                  placeholder="settings.key"
+                  onChange={(e) =>
+                    onPatch({ allowed_list_setting: e.target.value })
+                  }
+                />
+              ) : (
+                <Input
+                  value={(rule.allowed_list ?? []).join(", ")}
+                  placeholder="USD, EUR, GBP"
+                  onChange={(e) =>
+                    onPatch({
+                      allowed_list: e.target.value
+                        .split(",")
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                />
+              )}
+            </div>
+            <Toggle
+              variant="outline"
+              pressed={useSetting}
+              onPressedChange={(pressed) =>
+                onPatch(
+                  pressed
+                    ? { allowed_list: null, allowed_list_setting: "" }
+                    : { allowed_list: [], allowed_list_setting: null },
+                )
+              }
+            >
+              Settings key
+            </Toggle>
+          </div>
+          <Field label="Match mode">
+            <Select
+              value={rule.match_mode ?? "exact_ci"}
+              onValueChange={(v) =>
+                onPatch({
+                  match_mode: v as "exact_ci" | "substring_ci",
+                })
+              }
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="exact_ci">Exact (ci)</SelectItem>
+                <SelectItem value="substring_ci">Substring (ci)</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="Absent behavior">
+            <Select
+              value={rule.absent_behavior ?? "advisory_pass"}
+              onValueChange={(v) =>
+                onPatch({
+                  absent_behavior: v as "advisory_pass" | "skip",
+                })
+              }
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="advisory_pass">Advisory pass</SelectItem>
+                <SelectItem value="skip">Skip</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+        </>
+      );
+    }
+
+    case "field_dependency":
+      return (
+        <>
+          <Field label="Antecedent path">
+            <PathInput
+              value={rule.antecedent_path}
+              placeholder="field_a"
+              onChange={(v) => onPatch({ antecedent_path: v })}
+            />
+          </Field>
+          <Field label="Consequent path">
+            <PathInput
+              value={rule.consequent_path}
+              placeholder="field_b"
+              onChange={(v) => onPatch({ consequent_path: v })}
+            />
+          </Field>
+        </>
+      );
+
+    case "uniqueness":
+      return (
+        <Field label="Field path">
+          <PathInput
+            value={rule.field_path}
+            placeholder="field_name"
+            onChange={(v) => onPatch({ field_path: v })}
+          />
+        </Field>
+      );
+
+    case "llm_advisory":
+      return (
+        <Field label="Question">
+          <Textarea
+            value={rule.question}
+            placeholder="Ask a yes/no question about the document…"
+            onChange={(e) => onPatch({ question: e.target.value })}
+          />
+        </Field>
+      );
+  }
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      {children}
+    </div>
+  );
+}
+
+function DetailInputs({
+  pass,
+  fail,
+  onPatch,
+}: {
+  pass: string;
+  fail: string;
+  onPatch: (patch: Partial<RuleDef>) => void;
+}) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      <Field label="Detail (pass) — optional">
+        <Input
+          value={pass}
+          onChange={(e) => onPatch({ detail_pass: e.target.value })}
+        />
+      </Field>
+      <Field label="Detail (fail) — optional">
+        <Input
+          value={fail}
+          onChange={(e) => onPatch({ detail_fail: e.target.value })}
+        />
+      </Field>
+    </div>
+  );
+}

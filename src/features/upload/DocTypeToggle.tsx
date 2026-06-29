@@ -1,16 +1,25 @@
-import { FileText, ReceiptText } from "lucide-react";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type { DocType } from "@/lib/types";
+import { Skeleton } from "@/components/ui/skeleton";
+import { resolveDocTypeIcon } from "@/lib/icon-utils";
+import type { DocTypeResponse } from "@/lib/doc-type-schema";
 
 export function DocTypeToggle({
   value,
   onChange,
+  docTypes,
+  loading,
   disabled,
 }: {
-  value: DocType;
-  onChange: (t: DocType) => void;
+  value: string;
+  onChange: (t: string) => void;
+  docTypes: DocTypeResponse[];
+  loading: boolean;
   disabled?: boolean;
 }) {
+  if (loading) {
+    return <Skeleton className="h-9 w-full rounded-lg" />;
+  }
+
   return (
     <ToggleGroup
       type="single"
@@ -18,17 +27,18 @@ export function DocTypeToggle({
       spacing={0}
       value={value}
       disabled={disabled}
-      onValueChange={(v) => v && onChange(v as DocType)}
+      onValueChange={(v) => v && onChange(v)}
       className="w-full *:flex-1"
     >
-      <ToggleGroupItem value="invoice" aria-label="Invoice">
-        <ReceiptText className="size-4" />
-        Invoice
-      </ToggleGroupItem>
-      <ToggleGroupItem value="contract" aria-label="Contract">
-        <FileText className="size-4" />
-        Contract
-      </ToggleGroupItem>
+      {docTypes.map((dt) => {
+        const Icon = resolveDocTypeIcon(dt.name, dt.icon);
+        return (
+          <ToggleGroupItem key={dt.name} value={dt.name} aria-label={dt.label}>
+            <Icon className="size-4" />
+            {dt.label}
+          </ToggleGroupItem>
+        );
+      })}
     </ToggleGroup>
   );
 }
