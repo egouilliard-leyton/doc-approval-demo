@@ -3,6 +3,7 @@
 // section for composite/list_composite kinds. The owning dialog derives each
 // field's `cls` (via pascalCase) at save time, so `cls` is never shown here.
 import { Plus, Trash2 } from "lucide-react";
+import { pascalCase } from "./pascal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,28 +22,6 @@ import type {
   SubFieldDef,
   SubFieldSource,
 } from "@/lib/doc-type-schema";
-
-// Mirrors backend `_pascal` (backend/app/extraction/definition.py ~line 111):
-// PascalCase each underscore-separated segment (Python str.capitalize() upcases
-// the first char AND lowercases the rest), then drop exactly ONE trailing "s".
-// Smoke tests (verified byte-for-byte against the backend):
-//   pascalCase("line_items")          === "LineItem"
-//   pascalCase("termination_clause")  === "TerminationClause"
-//   pascalCase("address")             === "Addres"     (single trailing s dropped)
-//   pascalCase("total")               === "Total"
-//   pascalCase("PARTIES")             === "Partie"      (rest lowercased, then -s)
-//   pascalCase("")                    === ""
-// Co-located with the field editor by design (the builder derives `cls` via this).
-// eslint-disable-next-line react-refresh/only-export-components
-export function pascalCase(name: string): string {
-  const pascal = name
-    .split("_")
-    .map((part) =>
-      part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : "",
-    )
-    .join("");
-  return pascal.endsWith("s") ? pascal.slice(0, -1) : pascal;
-}
 
 const FIELD_KINDS: { value: FieldKind; label: string }[] = [
   { value: "scalar", label: "Scalar" },
@@ -116,7 +95,14 @@ export function FieldListEditor({
                 <Input
                   value={field.name}
                   placeholder="field_name"
-                  onChange={(e) => updateField(i, { name: e.target.value })}
+                  onChange={(e) =>
+                    updateField(i, {
+                      name: e.target.value,
+                      // Keep the derived class name in sync with the field name;
+                      // the save payload recomputes it identically via pascalCase.
+                      cls: pascalCase(e.target.value),
+                    })
+                  }
                 />
               </div>
 

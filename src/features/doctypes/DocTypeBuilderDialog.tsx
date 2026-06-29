@@ -29,7 +29,6 @@ import {
 import { ApiError, createDocType, updateDocType } from "@/lib/api";
 import { LUCIDE_ICON_OPTIONS } from "@/lib/icon-utils";
 import type {
-  DocTypeCreate,
   DocTypeResponse,
   DocTypeUpdate,
   ExtractionDefinition,
@@ -37,8 +36,9 @@ import type {
   RuleDef,
   RuleDefinition,
 } from "@/lib/doc-type-schema";
-import { FieldListEditor, pascalCase } from "./FieldListEditor";
+import { FieldListEditor } from "./FieldListEditor";
 import { RuleListEditor } from "./RuleListEditor";
+import { buildDocTypePayload } from "./payload";
 
 // Structured editing shape. The backend stores extraction/rule definitions as
 // opaque dicts (Record<string, unknown> on the wire), but the builder needs them
@@ -134,47 +134,21 @@ export function DocTypeBuilderDialog({
     setFormErrors([]);
     setSaving(true);
     try {
-      // Derive `cls` per field and assemble the canonical extraction definition.
-      const fields = form.extraction_definition.fields.map((f) => ({
-        ...f,
-        cls: pascalCase(f.name),
-      }));
-      const core_paths = fields.filter((f) => f.is_core).map((f) => f.name);
-      const citation_paths = [...form.citation_paths];
-
-      const extraction_definition: ExtractionDefinition = {
-        ...form.extraction_definition,
-        name: form.name,
-        fields,
-        core_paths,
-      };
-      const rule_definition: RuleDefinition = {
-        ...form.rule_definition,
-        name: form.name,
-        citation_paths,
-      };
+      // Assemble the canonical payload (derives `cls`, core_paths, mirrors
+      // citation_paths and forces the definition names) in one pure step.
+      const built = buildDocTypePayload(form);
 
       if (editingType) {
         const payload: DocTypeUpdate = {
-          label: form.label,
-          icon: form.icon || undefined,
-          extraction_definition:
-            extraction_definition as unknown as Record<string, unknown>,
-          rule_definition: rule_definition as unknown as Record<string, unknown>,
-          citation_paths,
+          label: built.label,
+          icon: built.icon,
+          extraction_definition: built.extraction_definition,
+          rule_definition: built.rule_definition,
+          citation_paths: built.citation_paths,
         };
         await updateDocType(editingType.name, payload);
       } else {
-        const payload: DocTypeCreate = {
-          name: form.name,
-          label: form.label,
-          icon: form.icon || undefined,
-          extraction_definition:
-            extraction_definition as unknown as Record<string, unknown>,
-          rule_definition: rule_definition as unknown as Record<string, unknown>,
-          citation_paths,
-        };
-        await createDocType(payload);
+        await createDocType(built);
       }
 
       toast.success("Doc type saved");

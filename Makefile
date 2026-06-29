@@ -1,4 +1,4 @@
-.PHONY: install warm dev dev-backend dev-frontend test reset
+.PHONY: install warm dev dev-backend dev-frontend test smoke reset
 
 # One-time setup: backend deps (PyPI, hardened) + frontend deps.
 install:
@@ -30,6 +30,10 @@ dev-frontend:
 # Backend test suite (offline; uses the mock engine/provider — no models or API key).
 test:
 	cd backend && uv run --no-sync pytest -q
+
+# End-to-end offline smoke test (full pipeline + doc-type CRUD via TestClient).
+smoke:
+	cd backend && uv run --no-sync python scripts/smoke.py
 
 # Clear uploaded files + SQLite DB (fresh demo state).
 reset:
