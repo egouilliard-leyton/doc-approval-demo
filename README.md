@@ -3,10 +3,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Made By Agents](https://img.shields.io/badge/Made%20By%20Agents-madebyagents.com-55D44C?labelColor=1B1C1C)](https://www.madebyagents.com)
 
-A proof-of-concept that ingests contracts & invoices, pre-scans them for quality, runs
+A proof-of-concept that ingests documents, pre-scans them for quality, runs
 OCR (**Qwen3-VL / Docling**), structures the result into approval-relevant fields with
 **LangExtract**, and lets an agent make a reliable **approve / flag / needs-review**
 decision with an explanation, a rule-by-rule trace, and a confidence score.
+
+**Document types are user-configurable** — invoice and contract ship as built-ins, but
+new types are defined as data (a field list + approval rules over a fixed primitive
+vocabulary), created and edited from the UI or the `/doc-types` API, with no code change.
+See [Configurable document types](#configurable-document-types).
 
 Built as the demo for a video on _the best OCR tools for AI agents_. The pipeline is
 modular — each stage (**pre-scan → OCR → structure → decide**) is a swappable component,
@@ -72,10 +77,39 @@ defaults). The essentials:
 ## How it works
 
 `POST /documents` (upload) → then per-document stage endpoints, each persisted and re-fetchable:
-`POST /documents/{id}/prescan` → `…/ocr?engine=qwen-vl|docling` → `…/structure?doc_type=invoice|contract`
+`POST /documents/{id}/prescan` → `…/ocr?engine=qwen-vl|docling` → `…/structure?doc_type=<type>`
 → `…/decide`. Deterministic business rules run in code and the LLM can **explain but never
 override** a hard-failed rule; low OCR/extraction confidence or a poor scan caps the decision
 at `needs_review`.
+
+## Configurable document types
+
+A document type is **data, not code**: a declarative definition of (1) the fields to
+extract and (2) the approval rules to enforce. Definitions are stored in SQLite and turned
+into the runtime extraction spec + rule set by a generic interpreter, so adding a type
+requires no Python.
+
+- **Extraction** — a field list (`scalar` / `presence` / `list_scalar` / `list_composite` /
+  `composite`, each `text` or `number`). The LangExtract prompt, a typed model, and the
+  grounding/confidence assembly are all derived from it.
+- **Rules** — a fixed primitive vocabulary: `presence`, `threshold`, `arithmetic`,
+  `set_membership`, `field_dependency`, `uniqueness`, plus an **LLM-advisory** rule that is
+  structurally capped at `needs_review` severity (it can never auto-`flag`). Decisions stay
+  deterministic and auditable — the whole point of the system.
+- **Built-ins** (`invoice`, `contract`) keep their definitions in code (they use coded
+  rule escape hatches) and are read-only; **custom types** are validated JSON and can never
+  inject code.
+
+Manage types from the **upload screen → "Manage types"** dialog (create / edit / delete,
+with a preview), or via the REST API:
+
+```
+GET    /doc-types                 # list (built-ins + custom)
+POST   /doc-types                 # create a custom type
+PUT    /doc-types/{name}          # edit a custom type (built-ins are 403)
+DELETE /doc-types/{name}          # delete (409 if documents still use it)
+POST   /doc-types/{name}/preview  # dry-run a definition against sample text
+```
 
 ## Tests
 
