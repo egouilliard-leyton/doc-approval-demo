@@ -58,6 +58,17 @@ def as_number(value: object | None) -> float | None:
     return None
 
 
+def _values_only(node: object) -> object:
+    """Strip FieldValue nodes down to their value for a compact LLM prompt."""
+    if isinstance(node, dict):
+        if "value" in node and "confidence" in node:
+            return node.get("value")
+        return {k: _values_only(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_values_only(x) for x in node]
+    return node
+
+
 def citations_from_grounding(
     grounding_map: dict[str, Grounding], paths: list[str]
 ) -> list[Citation]:

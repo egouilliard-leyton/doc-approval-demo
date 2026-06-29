@@ -1,11 +1,19 @@
-"""Contract business rules (TASK Phase 5)."""
+"""Contract business rules (TASK Phase 5).
+
+Expressed declaratively as :data:`CONTRACT_RULE_DEFINITION` (interpreted by
+:func:`app.rules.definition.build_ruleset`); every contract rule reduces to a single
+primitive, so no coded escape hatches are needed.
+"""
 
 from __future__ import annotations
 
-from app.config import settings
-from app.schemas import Check
-
-from .base import DecisionContext, as_number, fval, present
+from .definition import (
+    DocTypeRuleDefinition,
+    FieldDependencyRuleDef,
+    PresenceRuleDef,
+    SetMembershipRuleDef,
+    ThresholdCompareRuleDef,
+)
 
 CITATION_PATHS = [
     "parties.0",
@@ -16,102 +24,39 @@ CITATION_PATHS = [
 ]
 
 
-def contract_checks(fields: dict, ctx: DecisionContext) -> list[Check]:
-    """Run the contract rule set over the structured fields."""
-    checks: list[Check] = []
-
-    # Missing signatures (hard).
-    signed = present(fields, "signatures_present")
-    checks.append(
-        Check(
-            name="signatures_present",
-            passed=signed,
-            detail="executed signatures " + ("present" if signed else "missing"),
-            severity="hard",
-        )
-    )
-
-    # Auto-renew without a notice period (hard).
-    renews = present(fields, "renewal_clause")
-    has_notice = present(fields, "termination_clause.notice_period")
-    auto_renew_risk = renews and not has_notice
-    checks.append(
-        Check(
+CONTRACT_RULE_DEFINITION = DocTypeRuleDefinition(
+    name="contract",
+    citation_paths=CITATION_PATHS,
+    rules=[
+        PresenceRuleDef(name="signatures_present", field_path="signatures_present", severity="hard"),
+        FieldDependencyRuleDef(
             name="auto_renew_without_notice",
-            passed=not auto_renew_risk,
-            detail=(
-                "auto-renews with no termination notice period"
-                if auto_renew_risk
-                else "renewal/notice terms acceptable"
-            ),
+            antecedent_path="renewal_clause",
+            consequent_path="termination_clause.notice_period",
             severity="hard",
-        )
-    )
-
-    # Standard termination clause present (review).
-    has_termination = present(fields, "termination_clause.text")
-    checks.append(
-        Check(
+        ),
+        PresenceRuleDef(
             name="termination_clause_present",
-            passed=has_termination,
-            detail="termination clause " + ("present" if has_termination else "absent"),
+            field_path="termination_clause.text",
             severity="review",
-        )
-    )
-
-    # Liability cap present (review).
-    has_cap = present(fields, "liability_cap")
-    checks.append(
-        Check(
-            name="liability_cap_present",
-            passed=has_cap,
-            detail="liability cap " + ("present" if has_cap else "absent"),
+        ),
+        PresenceRuleDef(name="liability_cap_present", field_path="liability_cap", severity="review"),
+        SetMembershipRuleDef(
+            name="governing_law_allowed",
+            field_path="governing_law",
             severity="review",
-        )
-    )
-
-    # Governing law in the allowed list (review). Absent allowlist disables the check.
-    law = fval(fields, "governing_law")
-    allowed = settings.contract_allowed_governing_law
-    if law is None:
-        checks.append(
-            Check(
-                name="governing_law_allowed",
-                passed=True,
-                detail="governing law absent",
-                severity="advisory",
-            )
-        )
-    elif allowed:
-        law_l = str(law).lower()
-        ok = any(item.lower() in law_l for item in allowed)
-        checks.append(
-            Check(
-                name="governing_law_allowed",
-                passed=ok,
-                detail=(
-                    f"governing law {law!r} "
-                    + ("is allowed" if ok else f"not in {allowed}")
-                ),
-                severity="review",
-            )
-        )
-
-    # Total value over the review threshold (review).
-    value = as_number(fval(fields, "total_value"))
-    if value is not None:
-        under = value <= settings.contract_value_review_threshold
-        checks.append(
-            Check(
-                name="value_over_threshold",
-                passed=under,
-                detail=(
-                    f"contract value {value:.2f} "
-                    f"{'within' if under else 'over'} review threshold "
-                    f"{settings.contract_value_review_threshold:.2f}"
-                ),
-                severity="review",
-            )
-        )
-
-    return checks
+            allowed_list_setting="contract_allowed_governing_law",
+            match_mode="substring_ci",
+            absent_behavior="advisory_pass",
+            absent_severity="advisory",
+            empty_list_behavior="skip",
+        ),
+        ThresholdCompareRuleDef(
+            name="value_over_threshold",
+            field_path="total_value",
+            op="lte",
+            threshold_setting="contract_value_review_threshold",
+            severity="review",
+        ),
+    ],
+)

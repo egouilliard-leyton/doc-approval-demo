@@ -15,15 +15,16 @@ from .base import (
     citations_from_grounding,
     cross_cutting_checks,
 )
+from .definition import build_ruleset
 
 RULESETS: dict[DocType, Ruleset] = {
-    DocType.invoice: invoice.invoice_checks,
-    DocType.contract: contract.contract_checks,
+    DocType.invoice: build_ruleset(invoice.INVOICE_RULE_DEFINITION),
+    DocType.contract: build_ruleset(contract.CONTRACT_RULE_DEFINITION),
 }
 
 CITATION_PATHS: dict[DocType, list[str]] = {
-    DocType.invoice: invoice.CITATION_PATHS,
-    DocType.contract: contract.CITATION_PATHS,
+    DocType.invoice: invoice.INVOICE_RULE_DEFINITION.citation_paths,
+    DocType.contract: contract.CONTRACT_RULE_DEFINITION.citation_paths,
 }
 
 
