@@ -52,6 +52,31 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
+# Plannotator (Bun) takes ~1-2s to actually start listening after the fork. We must not
+# hand the URL to the browser before then, or the iframe gets "connection refused" and
+# does not retry. Poll the port until the server accepts a connection (or the process
+# dies / we time out).
+_READY_TIMEOUT_S = 20.0
+_READY_POLL_S = 0.1
+
+
+def _wait_until_ready(port: int, proc, timeout: float = _READY_TIMEOUT_S) -> bool:
+    """Block until ``port`` accepts a TCP connection, returning ``False`` on timeout.
+
+    Returns ``False`` immediately if the subprocess exits before binding (it crashed).
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:  # process exited before it ever listened
+            return False
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(_READY_POLL_S)
+    return False
+
+
 def _reader_thread(session: _AnnotateSession) -> None:
     """Drain the subprocess stdout, parse the JSON decision, and mark the session done.
 
@@ -87,12 +112,14 @@ def _parse_annotator_output(text: str) -> dict:
 
 
 def launch_session(
-    spec_markdown: str, *, _popen=subprocess.Popen
+    spec_markdown: str, *, _popen=subprocess.Popen, _ready=_wait_until_ready
 ) -> tuple[str, str]:
     """Write ``spec_markdown`` to a temp file and launch a Plannotator session over it.
 
-    Returns ``(session_id, url)``. Raises :class:`ValueError` if the ``plannotator``
-    binary is not on PATH (after cleaning up the temp file).
+    Returns ``(session_id, url)`` only once the server is actually accepting connections,
+    so the browser iframe never hits a "connection refused". Raises :class:`ValueError`
+    if the ``plannotator`` binary is not on PATH or fails to start listening in time
+    (after cleaning up the temp file + child). ``_ready`` is injectable for tests.
     """
     tmp = tempfile.NamedTemporaryFile(suffix=".md", delete=False, mode="w", encoding="utf-8")
     try:
@@ -121,6 +148,18 @@ def launch_session(
         raise ValueError(
             "plannotator not found on PATH; cannot start annotation session"
         ) from exc
+
+    if not _ready(port, proc):
+        # Server never came up (crash or too slow): kill + reap the child, clean up, fail.
+        try:
+            proc.terminate()
+            proc.communicate(timeout=2)
+        except Exception:  # noqa: BLE001 — best-effort teardown
+            pass
+        Path(tmp_path).unlink(missing_ok=True)
+        raise ValueError(
+            f"plannotator did not start listening on port {port} in time"
+        )
 
     session_id = uuid4().hex
     session = _AnnotateSession(

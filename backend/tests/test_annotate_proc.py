@@ -23,7 +23,7 @@ class FakePopen:
         self._release = threading.Event()
         self.terminated = False
 
-    def communicate(self):
+    def communicate(self, timeout=None):
         self._release.wait()
         return self._stdout, b""
 
@@ -49,9 +49,19 @@ def _wait_until(predicate, timeout=2.0):
 # --- launch -------------------------------------------------------------------
 
 
+def test_launch_raises_when_server_never_ready():
+    """If the port never starts listening, launch fails cleanly (no leaked session)."""
+    fake = FakePopen(b'{"decision": "approve"}')
+    with pytest.raises(ValueError, match="did not start listening"):
+        ap.launch_session(
+            "# Spec\n", _popen=lambda *a, **k: fake, _ready=lambda *a, **k: False
+        )
+    assert fake.terminated
+
+
 def test_launch_returns_session_and_url():
     fake = FakePopen(b'{"decision": "approve", "feedback": "looks good"}')
-    session_id, url = ap.launch_session("# Spec\n", _popen=lambda *a, **k: fake)
+    session_id, url = ap.launch_session("# Spec\n", _popen=lambda *a, **k: fake, _ready=lambda *a, **k: True)
     try:
         assert session_id
         assert url.startswith("http://127.0.0.1:")
@@ -66,7 +76,7 @@ def test_launch_returns_session_and_url():
 
 def test_poll_pending_then_done():
     fake = FakePopen(b'{"decision": "request_changes", "feedback": "add a field"}')
-    session_id, _ = ap.launch_session("# Spec\n", _popen=lambda *a, **k: fake)
+    session_id, _ = ap.launch_session("# Spec\n", _popen=lambda *a, **k: fake, _ready=lambda *a, **k: True)
 
     assert ap.poll_session(session_id) == {"status": "pending"}
 
@@ -103,7 +113,7 @@ def test_missing_binary_raises_value_error():
 
 def test_cancel_terminates_and_removes():
     fake = FakePopen(b'{"decision": "approve"}')
-    session_id, _ = ap.launch_session("# Spec\n", _popen=lambda *a, **k: fake)
+    session_id, _ = ap.launch_session("# Spec\n", _popen=lambda *a, **k: fake, _ready=lambda *a, **k: True)
     assert ap.cancel_session(session_id) is True
     assert fake.terminated is True
     assert ap.poll_session(session_id) is None
@@ -116,7 +126,7 @@ def test_cancel_terminates_and_removes():
 
 def test_non_json_stdout_yields_error_decision():
     fake = FakePopen(b"not json at all")
-    session_id, _ = ap.launch_session("# Spec\n", _popen=lambda *a, **k: fake)
+    session_id, _ = ap.launch_session("# Spec\n", _popen=lambda *a, **k: fake, _ready=lambda *a, **k: True)
     fake.release()
     done = _wait_until(
         lambda: (p := ap.poll_session(session_id))["status"] == "done" and p
@@ -130,7 +140,7 @@ def test_temp_file_unlinked_after_done():
     from pathlib import Path
 
     fake = FakePopen(b'{"decision": "approve"}')
-    session_id, _ = ap.launch_session("# Spec\n", _popen=lambda *a, **k: fake)
+    session_id, _ = ap.launch_session("# Spec\n", _popen=lambda *a, **k: fake, _ready=lambda *a, **k: True)
     with ap._LOCK:
         tmp_path = ap._SESSIONS[session_id].tmp_path
     assert Path(tmp_path).exists()
