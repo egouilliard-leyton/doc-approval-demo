@@ -4,7 +4,6 @@
 // to the type name, core_paths is rebuilt from is_core fields, each field's `cls`
 // is derived via pascalCase, and citation_paths is mirrored onto rule_definition.
 import { createElement, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -18,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Toggle } from "@/components/ui/toggle";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -49,7 +49,6 @@ interface BuilderState {
   icon: string;
   extraction_definition: ExtractionDefinition;
   rule_definition: RuleDefinition;
-  citation_paths: string[];
 }
 
 function blankState(): BuilderState {
@@ -65,7 +64,6 @@ function blankState(): BuilderState {
       examples: [],
     },
     rule_definition: { name: "", rules: [], citation_paths: [] },
-    citation_paths: [],
   };
 }
 
@@ -93,8 +91,24 @@ function stateFromResponse(t: DocTypeResponse): BuilderState {
       rules: rules.rules ?? [],
       citation_paths: rules.citation_paths ?? [],
     },
-    citation_paths: [...(t.citation_paths ?? [])],
   };
+}
+
+// Citation is opt-OUT, defaulting to all fields. When editing an existing type,
+// a field starts UNCHECKED (excluded) only when no stored citation path covers
+// it — "covered" meaning a stored path equals the field name or is one of its
+// dotted leaves (e.g. `parties.0` / `termination_clause.text` cover `parties` /
+// `termination_clause`).
+function excludedFromResponse(t: DocTypeResponse): string[] {
+  const extraction = t.extraction_definition as unknown as ExtractionDefinition;
+  const fields = extraction.fields ?? [];
+  const stored = t.citation_paths ?? [];
+  return fields
+    .map((f) => f.name)
+    .filter(
+      (name) =>
+        !stored.some((p) => p === name || p.startsWith(`${name}.`)),
+    );
 }
 
 export function DocTypeBuilderDialog({
@@ -110,6 +124,11 @@ export function DocTypeBuilderDialog({
 }) {
   const [form, setForm] = useState<BuilderState>(() =>
     editingType ? stateFromResponse(editingType) : blankState(),
+  );
+  // UI-only opt-out set: field names the user unchecked in "Cited fields". Never
+  // sent to the API — the effective citation list is derived from it on save.
+  const [citationExcluded, setCitationExcluded] = useState<string[]>(() =>
+    editingType ? excludedFromResponse(editingType) : [],
   );
   const [saving, setSaving] = useState(false);
   const [formErrors, setFormErrors] = useState<string[]>([]);
@@ -127,8 +146,11 @@ export function DocTypeBuilderDialog({
       rule_definition: { ...f.rule_definition, rules },
     }));
 
-  const setCitationPaths = (citation_paths: string[]) =>
-    setForm((f) => ({ ...f, citation_paths }));
+  // Toggling a box flips a field between cited (checked) and excluded.
+  const toggleCited = (name: string, cited: boolean) =>
+    setCitationExcluded((ex) =>
+      cited ? ex.filter((n) => n !== name) : [...ex, name],
+    );
 
   async function handleSave() {
     setFormErrors([]);
@@ -136,7 +158,7 @@ export function DocTypeBuilderDialog({
     try {
       // Assemble the canonical payload (derives `cls`, core_paths, mirrors
       // citation_paths and forces the definition names) in one pure step.
-      const built = buildDocTypePayload(form);
+      const built = buildDocTypePayload(form, citationExcluded);
 
       if (editingType) {
         const payload: DocTypeUpdate = {
@@ -254,49 +276,32 @@ export function DocTypeBuilderDialog({
 
           <TabsContent value="advanced" className="space-y-4 pt-2">
             <div className="space-y-2">
-              <Label>Citation paths</Label>
-              {form.citation_paths.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  No citation paths yet.
-                </p>
+              <Label>Cited fields</Label>
+              {form.extraction_definition.fields.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Add fields first.</p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {form.extraction_definition.fields.map((field, i) => (
+                      <Toggle
+                        key={i}
+                        variant="outline"
+                        pressed={!citationExcluded.includes(field.name)}
+                        onPressedChange={(pressed) =>
+                          toggleCited(field.name, pressed)
+                        }
+                        aria-label={`Cite ${field.name || "field"}`}
+                      >
+                        {field.name || "(unnamed)"}
+                      </Toggle>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    All fields are cited by default. Uncheck a field to exclude
+                    it.
+                  </p>
+                </>
               )}
-              {form.citation_paths.map((path, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <Input
-                    value={path}
-                    placeholder="field_name"
-                    onChange={(e) =>
-                      setCitationPaths(
-                        form.citation_paths.map((p, k) =>
-                          k === i ? e.target.value : p,
-                        ),
-                      )
-                    }
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Remove citation path"
-                    onClick={() =>
-                      setCitationPaths(
-                        form.citation_paths.filter((_, k) => k !== i),
-                      )
-                    }
-                  >
-                    <Trash2 />
-                  </Button>
-                </div>
-              ))}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setCitationPaths([...form.citation_paths, ""])}
-              >
-                <Plus className="size-3.5" />
-                Add citation path
-              </Button>
             </div>
 
             <div className="space-y-1">

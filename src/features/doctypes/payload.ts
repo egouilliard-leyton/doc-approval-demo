@@ -4,7 +4,8 @@
 //   - extraction_definition.name & rule_definition.name are forced to form.name
 //   - core_paths is rebuilt from the is_core fields
 //   - each field's `cls` is derived via pascalCase(field.name)
-//   - citation_paths is mirrored onto both the top level and rule_definition
+//   - citation_paths defaults to ALL field names minus the opt-out `excluded`
+//     set, and is mirrored onto both the top level and rule_definition
 import type {
   DocTypeCreate,
   ExtractionDefinition,
@@ -21,17 +22,23 @@ export interface DocTypeFormInput {
   icon: string;
   extraction_definition: ExtractionDefinition;
   rule_definition: RuleDefinition;
-  citation_paths: string[];
 }
 
-export function buildDocTypePayload(form: DocTypeFormInput): DocTypeCreate {
+export function buildDocTypePayload(
+  form: DocTypeFormInput,
+  // UI-only opt-out: field names the user unchecked in the "Cited fields" list.
+  // Citation is opt-OUT, so the effective list = all field names minus these.
+  excluded: string[] = [],
+): DocTypeCreate {
   // Derive `cls` per field and assemble the canonical extraction definition.
   const fields = form.extraction_definition.fields.map((f) => ({
     ...f,
     cls: pascalCase(f.name),
   }));
   const core_paths = fields.filter((f) => f.is_core).map((f) => f.name);
-  const citation_paths = [...form.citation_paths];
+  const citation_paths = fields
+    .map((f) => f.name)
+    .filter((name) => !excluded.includes(name));
 
   const extraction_definition: ExtractionDefinition = {
     ...form.extraction_definition,

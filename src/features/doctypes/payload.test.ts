@@ -88,7 +88,6 @@ function makeForm(): DocTypeFormInput {
     icon: "",
     extraction_definition,
     rule_definition,
-    citation_paths: ["po_number", "total_amount"],
   };
 }
 
@@ -119,9 +118,18 @@ describe("buildDocTypePayload", () => {
     ]);
   });
 
-  it("(d) mirrors citation_paths onto both top-level and rule_definition", () => {
-    expect(payload.citation_paths).toEqual(form.citation_paths);
-    expect(rules.citation_paths).toEqual(form.citation_paths);
+  it("(d) defaults citation_paths to ALL field names (top-level + rule_definition)", () => {
+    const allNames = ["po_number", "total_amount", "line_items"];
+    expect(payload.citation_paths).toEqual(allNames);
+    expect(rules.citation_paths).toEqual(allNames);
+  });
+
+  it("(d) omits an excluded field from citation_paths (opt-out)", () => {
+    const built = buildDocTypePayload(form, ["total_amount"]);
+    const builtRules = built.rule_definition as unknown as RuleDefinition;
+    const remaining = ["po_number", "line_items"];
+    expect(built.citation_paths).toEqual(remaining);
+    expect(builtRules.citation_paths).toEqual(remaining);
   });
 
   it("(e) preserves each rule's kind", () => {

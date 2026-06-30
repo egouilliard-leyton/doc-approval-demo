@@ -72,12 +72,27 @@ def _values_only(node: object) -> object:
 def citations_from_grounding(
     grounding_map: dict[str, Grounding], paths: list[str]
 ) -> list[Citation]:
-    """Build citations for the decision-relevant fields that have a grounded page."""
+    """Build citations for the decision-relevant fields that have a grounded page.
+
+    Matching is field-aware: a ``path`` first tries an EXACT hit in
+    ``grounding_map`` (built-in parity — explicit leaf paths like ``parties.0`` or
+    ``total`` keep their behavior). When there's no exact hit, the grounding map is
+    scanned in insertion order for the first leaf equal to ``path`` or starting with
+    ``path + "."`` that carries a page — so a top-level field name like
+    ``line_items`` (grounded as ``line_items.0.amount``) is citeable, emitting ONE
+    citation per path. Input ``paths`` order is preserved.
+    """
     out: list[Citation] = []
     for path in paths:
         g = grounding_map.get(path)
         if g is not None and g.page is not None:
             out.append(Citation(field=path, source=f"page {g.page}"))
+            continue
+        prefix = path + "."
+        for key, grounding in grounding_map.items():
+            if (key == path or key.startswith(prefix)) and grounding.page is not None:
+                out.append(Citation(field=path, source=f"page {grounding.page}"))
+                break
     return out
 
 
