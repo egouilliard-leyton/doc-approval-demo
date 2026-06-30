@@ -277,6 +277,110 @@ def scenario_guards(client: TestClient) -> None:
     )
 
 
+def scenario_assist_wizard(client: TestClient) -> None:
+    """AI doc-type wizard: assist turn, text ingest, annotate start + unknown poll.
+
+    Fully offline: the assistant LLM call is patched to a canned valid envelope and the
+    Plannotator subprocess is replaced with a fake Popen, so no network or real process
+    is involved.
+    """
+    import json as _json
+
+    from app import annotate_proc
+    from app.config import settings as _settings
+    from app.pipeline import doctype_assistant
+
+    section("5. AI doc-type wizard (assist / ingest / annotate)")
+
+    saved_key = _settings.openrouter_api_key
+    _settings.openrouter_api_key = "smoke-key"
+
+    canned = _json.dumps(
+        {
+            "questions": ["What kind of document is this?"],
+            "updated_spec_markdown": "# Draft Spec\n",
+            "done": False,
+            "draft_doctype": None,
+        }
+    )
+    saved_call_llm = doctype_assistant._call_llm
+    doctype_assistant._call_llm = lambda messages: canned
+
+    class _FakePopen:
+        pid = 9999
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def communicate(self):
+            return (b'{"decision": "approve", "feedback": "ok"}', b"")
+
+        def terminate(self):
+            pass
+
+    saved_popen = annotate_proc.subprocess.Popen
+    annotate_proc.subprocess.Popen = _FakePopen
+
+    try:
+        assist = client.post("/doc-types/assist", json={"messages": []})
+        ok_assist = check(
+            "POST /doc-types/assist -> 200", assist.status_code == 200, assist.text[:200]
+        )
+        if ok_assist:
+            body = assist.json()
+            check(
+                "assist response has wizard shape",
+                isinstance(body.get("questions"), list)
+                and "updated_spec_markdown" in body
+                and body.get("done") is False
+                and isinstance(body.get("warnings"), list),
+                f"keys={sorted(body)}",
+            )
+
+        ingest = client.post(
+            "/doc-types/assist/ingest",
+            files={"file": ("notes.txt", b"hello smoke", "text/plain")},
+            data={"kind": "process"},
+        )
+        ok_ingest = check(
+            "POST /doc-types/assist/ingest (.txt) -> 200",
+            ingest.status_code == 200,
+            ingest.text[:200],
+        )
+        if ok_ingest:
+            check(
+                "ingest returns the decoded text",
+                ingest.json().get("text") == "hello smoke",
+                f"text={ingest.json().get('text')!r}",
+            )
+
+        started = client.post(
+            "/doc-types/assist/annotate", json={"spec_markdown": "# Spec\n"}
+        )
+        ok_start = check(
+            "POST /doc-types/assist/annotate -> 200",
+            started.status_code == 200,
+            started.text[:200],
+        )
+        if ok_start:
+            sbody = started.json()
+            check(
+                "annotate start returns session_id + url",
+                bool(sbody.get("session_id")) and str(sbody.get("url")).startswith("http"),
+                f"session_id={sbody.get('session_id')} url={sbody.get('url')}",
+            )
+            client.delete(f"/doc-types/assist/annotate/{sbody.get('session_id')}")
+
+        unknown = client.get("/doc-types/assist/annotate/does-not-exist")
+        check(
+            "GET annotate/{unknown} -> 404", unknown.status_code == 404, unknown.text[:200]
+        )
+    finally:
+        doctype_assistant._call_llm = saved_call_llm
+        annotate_proc.subprocess.Popen = saved_popen
+        _settings.openrouter_api_key = saved_key
+
+
 def main() -> int:
     print(f"doc-approval smoke test (DATA_DIR={_TMP_DATA})")
     with TestClient(app) as client:
@@ -284,6 +388,7 @@ def main() -> int:
         scenario_contract(client)
         scenario_custom_crud(client)
         scenario_guards(client)
+        scenario_assist_wizard(client)
 
     section("Summary")
     total = _PASSES + _FAILURES

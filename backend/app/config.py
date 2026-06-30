@@ -78,6 +78,14 @@ class Settings(BaseSettings):
         "California",
     ]
 
+    # AI doc-type wizard (Phase 3 Wave 1). The assistant agent designs a new doc type
+    # conversationally over OpenRouter; the Plannotator subprocess collects review
+    # annotations. The "assist" call reuses OPENROUTER_API_KEY. All env-overridable.
+    assist_model: str = "deepseek/deepseek-v4-flash"
+    assist_base_url: str = "https://openrouter.ai/api/v1"
+    assist_timeout_s: float = 120.0  # wizard turn (network LLM, may include a repair pass).
+    annotate_ttl_s: float = 600.0  # idle annotation sessions older than this are reaped.
+
     # Browser origins allowed to call the API (Vite dev server by default).
     cors_origins: list[str] = ["http://localhost:5173"]
 

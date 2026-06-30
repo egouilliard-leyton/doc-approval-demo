@@ -10,7 +10,7 @@ from sqlmodel import Session
 
 from app.config import settings
 from app.db import engine, init_db
-from app.routes import doc_types, documents, pipeline
+from app.routes import doc_types, doctype_assist, documents, pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,7 @@ app.mount("/files", StaticFiles(directory=settings.data_path), name="files")
 app.include_router(documents.router)
 app.include_router(pipeline.router)
 app.include_router(doc_types.router)
+app.include_router(doctype_assist.router)
 
 
 @app.get("/health")

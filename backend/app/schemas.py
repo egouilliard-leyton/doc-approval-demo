@@ -285,3 +285,62 @@ class DocTypePreviewResponse(BaseModel):
     extraction_confidence: float
     checks: list[Check]
     warnings: list[str] = []
+
+
+# --- Phase 3 Wave 1: AI doc-type wizard --------------------------------------
+
+
+class AssistMessage(BaseModel):
+    """One turn in the wizard transcript exchanged with the assistant agent."""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class AssistRequest(BaseModel):
+    """Everything the wizard knows when asking the assistant for its next turn.
+
+    The transcript (``messages``) plus the ingested document texts, the spec drafted so
+    far, and any annotations collected from the last Plannotator review round.
+    """
+
+    messages: list[AssistMessage] = []
+    process_docs: list[str] = []
+    example_docs: list[str] = []
+    spec_markdown: str = ""
+    annotations: list[dict] = []
+
+
+class AssistResponse(BaseModel):
+    """The assistant's next turn: clarifying questions, the updated spec, and — when the
+    design is complete — the validated ``draft_doctype`` ready to create."""
+
+    questions: list[str]
+    updated_spec_markdown: str
+    done: bool
+    draft_doctype: DocTypeCreate | None
+    warnings: list[str]
+
+
+class IngestResponse(BaseModel):
+    """Plain text extracted from one uploaded process/example document."""
+
+    text: str
+    filename: str
+    kind: Literal["process", "example"]
+
+
+class AnnotateStartResponse(BaseModel):
+    """A launched Plannotator annotation session: its id and the URL to open."""
+
+    session_id: str
+    url: str
+
+
+class AnnotatePollResponse(BaseModel):
+    """Annotation session status; ``decision``/``feedback``/``raw`` are set once done."""
+
+    status: Literal["pending", "done"]
+    decision: str | None = None
+    feedback: str | None = None
+    raw: dict | None = None
