@@ -7,9 +7,18 @@ const ACCEPT = ".pdf,.png,.jpg,.jpeg,.tif,.tiff";
 export function Dropzone({
   onFile,
   disabled,
+  accept,
+  label,
+  hint,
 }: {
   onFile: (file: File) => void;
   disabled?: boolean;
+  /** Override the default accepted extensions (default unchanged). */
+  accept?: string;
+  /** Override the primary call-to-action line. */
+  label?: string;
+  /** Override the secondary hint line. */
+  hint?: React.ReactNode;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -56,7 +65,7 @@ export function Dropzone({
       <input
         ref={inputRef}
         type="file"
-        accept={ACCEPT}
+        accept={accept ?? ACCEPT}
         className="hidden"
         disabled={disabled}
         onChange={(e) => {
@@ -77,11 +86,15 @@ export function Dropzone({
       </div>
       <div className="space-y-1">
         <p className="text-base font-medium text-foreground">
-          {dragging ? "Drop to ingest" : "Drag & drop a document"}
+          {dragging ? "Drop to ingest" : (label ?? "Drag & drop a document")}
         </p>
         <p className="text-sm text-muted-foreground">
-          or <span className="font-medium text-brand">browse</span> — PDF, PNG,
-          JPG or TIFF
+          {hint ?? (
+            <>
+              or <span className="font-medium text-brand">browse</span> — PDF,
+              PNG, JPG or TIFF
+            </>
+          )}
         </p>
       </div>
     </div>

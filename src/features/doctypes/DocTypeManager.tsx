@@ -3,7 +3,7 @@
 // are disabled behind an explanatory tooltip); custom types can be edited or
 // deleted (delete is gated behind an AlertDialog confirmation).
 import { createElement, useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -30,10 +30,12 @@ import { resolveDocTypeIcon } from "@/lib/icon-utils";
 import type { DocTypeResponse } from "@/lib/doc-type-schema";
 import { useDocTypes } from "./useDocTypes";
 import { DocTypeBuilderDialog } from "./DocTypeBuilderDialog";
+import { CreateWithAIDialog } from "./wizard/CreateWithAIDialog";
 
 export function DocTypeManager({ onChanged }: { onChanged: () => void }) {
   const { docTypes, loading, error, refetch } = useDocTypes();
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [editingType, setEditingType] = useState<DocTypeResponse | undefined>();
   const [deletingName, setDeletingName] = useState<string | null>(null);
 
@@ -48,6 +50,16 @@ export function DocTypeManager({ onChanged }: { onChanged: () => void }) {
   };
 
   const handleSaved = () => {
+    onChanged();
+    refetch();
+  };
+
+  // The AI wizard committed a new type: open the builder/editor on it so the user
+  // can fine-tune, and refresh the lists/toggle so it shows up immediately.
+  const handleWizardCreated = (t: DocTypeResponse) => {
+    setWizardOpen(false);
+    setEditingType(t);
+    setBuilderOpen(true);
     onChanged();
     refetch();
   };
@@ -217,10 +229,16 @@ export function DocTypeManager({ onChanged }: { onChanged: () => void }) {
           })}
         </div>
 
-        <Button variant="outline" size="sm" onClick={openCreate}>
-          <Plus className="size-3.5" />
-          Create new type
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={openCreate}>
+            <Plus className="size-3.5" />
+            Create new type
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setWizardOpen(true)}>
+            <Sparkles className="size-3.5" />
+            Create with AI
+          </Button>
+        </div>
 
         {builderOpen && (
           <DocTypeBuilderDialog
@@ -229,6 +247,14 @@ export function DocTypeManager({ onChanged }: { onChanged: () => void }) {
             onClose={() => setBuilderOpen(false)}
             editingType={editingType}
             onSaved={handleSaved}
+          />
+        )}
+
+        {wizardOpen && (
+          <CreateWithAIDialog
+            open
+            onClose={() => setWizardOpen(false)}
+            onCreated={handleWizardCreated}
           />
         )}
       </div>

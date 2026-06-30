@@ -183,3 +183,44 @@ export interface DocTypePreviewResponse {
   checks: Check[];
   warnings: string[];
 }
+
+// --- AI wizard DTOs ----------------------------------------------------------
+
+export interface AssistMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface AssistRequest {
+  messages: AssistMessage[];
+  process_docs: string[];
+  example_docs: string[];
+  spec_markdown: string;
+  annotations: Record<string, unknown>[];
+}
+
+export interface AssistResponse {
+  questions: string[];
+  updated_spec_markdown: string;
+  done: boolean;
+  draft_doctype: DocTypeCreate | null;
+  warnings: string[];
+}
+
+export interface IngestResponse {
+  text: string;
+  filename: string;
+  kind: "process" | "example";
+}
+
+export interface AnnotateStartResponse {
+  session_id: string;
+  url: string;
+}
+
+export interface AnnotatePollResponse {
+  status: "pending" | "done";
+  decision: string | null;
+  feedback: string | null;
+  raw: Record<string, unknown> | null;
+}

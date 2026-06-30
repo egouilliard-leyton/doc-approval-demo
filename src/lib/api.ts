@@ -11,11 +11,16 @@ import type {
   StructuredResult,
 } from "@/lib/types";
 import type {
+  AnnotatePollResponse,
+  AnnotateStartResponse,
+  AssistRequest,
+  AssistResponse,
   DocTypeCreate,
   DocTypePreviewRequest,
   DocTypePreviewResponse,
   DocTypeResponse,
   DocTypeUpdate,
+  IngestResponse,
 } from "@/lib/doc-type-schema";
 
 const API_BASE_URL: string =
@@ -231,6 +236,58 @@ export async function previewDocType(
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify(body),
+  });
+}
+
+// --- AI doc-type wizard ------------------------------------------------------
+
+export async function assistTurn(req: AssistRequest): Promise<AssistResponse> {
+  return request<AssistResponse>("/doc-types/assist", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(req),
+  });
+}
+
+/** Extract plain text from an uploaded process/example doc (text passthrough or OCR). */
+export async function ingestDocForAssist(
+  file: File,
+  kind: "process" | "example",
+): Promise<IngestResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("kind", kind);
+  // No explicit content-type: the browser sets the multipart boundary.
+  return request<IngestResponse>("/doc-types/assist/ingest", {
+    method: "POST",
+    body: form,
+  });
+}
+
+/** Launch a Plannotator annotation session over the spec markdown. */
+export async function startAnnotation(
+  specMarkdown: string,
+): Promise<AnnotateStartResponse> {
+  return request<AnnotateStartResponse>("/doc-types/assist/annotate", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ spec_markdown: specMarkdown }),
+  });
+}
+
+/** Poll an annotation session's status (404 ApiError when the id is unknown). */
+export async function pollAnnotation(
+  sessionId: string,
+): Promise<AnnotatePollResponse> {
+  return request<AnnotatePollResponse>(
+    `/doc-types/assist/annotate/${sessionId}`,
+  );
+}
+
+/** Cancel an annotation session (idempotent 204). */
+export async function cancelAnnotation(sessionId: string): Promise<void> {
+  await request<void>(`/doc-types/assist/annotate/${sessionId}`, {
+    method: "DELETE",
   });
 }
 
