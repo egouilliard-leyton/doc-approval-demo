@@ -132,7 +132,7 @@ export function CreateWithAIDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="flex h-[85vh] flex-col gap-0 p-0 sm:max-w-5xl">
+      <DialogContent className="flex h-[92vh] w-[96vw] flex-col gap-0 p-0 sm:max-w-[1700px]">
         <DialogHeader className="border-b px-4 py-3">
           <DialogTitle>Create document type with AI</DialogTitle>
           <DialogDescription>
