@@ -1,5 +1,10 @@
 # Validation Model — Brainstorm
 
+> 📖 **Looking for how to *use* the shipped rules?** See the
+> **[Validation rules reference](./validation-rules.md)** — the catalogue of every primitive,
+> the expression DSL, and how to add a new one. This document is the *design rationale* and
+> the shipped/deferred status behind it.
+
 > Status: **brainstorm / not built yet.** Depends on the *multi-document extraction & configuration* work landing first (the interesting validations are cross-document).
 >
 > Goal: let a doc-type author (and, later, a bundle/package author) declare **validations** the way they already declare extraction fields and rule primitives. This doc is a big idea-dump to prune together — not a spec.
