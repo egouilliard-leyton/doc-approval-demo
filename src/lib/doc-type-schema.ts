@@ -127,7 +127,8 @@ export interface EqualityRule {
   severity: RuleSeverity;
   expected?: string | null;
   expected_field_path?: string | null;
-  match_mode?: "exact" | "normalized" | "regex";
+  match_mode?: "exact" | "normalized" | "regex" | "fuzzy";
+  fuzzy_threshold?: number;
   case_insensitive?: boolean;
   trim?: boolean;
   collapse_whitespace?: boolean;

@@ -17,6 +17,7 @@ while preserving their exact ``(name, passed, severity)`` behaviour.
 
 from __future__ import annotations
 
+import difflib
 import re
 import unicodedata
 from collections.abc import Callable
@@ -134,8 +135,10 @@ class EqualityRuleDef:
     absent, when ``expected_field_path`` is set but that field is absent, or when a
     ``regex`` pattern fails to compile. ``match_mode`` picks the comparison: ``exact``
     (raw string equality, toggles inert), ``normalized`` (apply the trim/whitespace/case/
-    accent toggles to both sides), or ``regex`` (``expected`` is a full-match pattern;
-    only ``case_insensitive`` applies). ``negate`` flips the result last.
+    accent toggles to both sides), ``regex`` (``expected`` is a full-match pattern;
+    only ``case_insensitive`` applies), or ``fuzzy`` (apply the same normalization as
+    ``normalized`` to both sides, then accept when the ``difflib`` similarity ratio is
+    ``>= fuzzy_threshold``). ``negate`` flips the result last.
     """
 
     name: str
@@ -143,11 +146,12 @@ class EqualityRuleDef:
     severity: Literal["hard", "review", "advisory"]
     expected: str | None = None
     expected_field_path: str | None = None
-    match_mode: Literal["exact", "normalized", "regex"] = "exact"
+    match_mode: Literal["exact", "normalized", "regex", "fuzzy"] = "exact"
     case_insensitive: bool = False
     trim: bool = False
     collapse_whitespace: bool = False
     normalize_accents: bool = False
+    fuzzy_threshold: float = 0.8
     negate: bool = False
     detail_pass: str = ""
     detail_fail: str = ""
@@ -400,6 +404,7 @@ def _interpret(rule: RuleDef, fields: dict, ctx: DecisionContext) -> Check | Non
                 return None
         else:
             exp = rule.expected
+        ratio: float | None = None
         if rule.match_mode == "normalized":
             ok = _normalize_equality_value(str(law), rule) == _normalize_equality_value(
                 str(exp), rule
@@ -410,10 +415,21 @@ def _interpret(rule: RuleDef, fields: dict, ctx: DecisionContext) -> Check | Non
                 ok = re.fullmatch(str(exp), str(law), flags) is not None
             except re.error:
                 return None
+        elif rule.match_mode == "fuzzy":
+            a_norm = _normalize_equality_value(str(law), rule)
+            b_norm = _normalize_equality_value(str(exp), rule)
+            ratio = difflib.SequenceMatcher(None, a_norm, b_norm).ratio()
+            ok = ratio >= rule.fuzzy_threshold
         else:  # exact
             ok = str(law) == str(exp)
         ok = ok != rule.negate
-        default = f"{rule.field_path} {law!r} {'==' if ok else '!='} {exp!r}"
+        if ratio is not None:
+            default = (
+                f"{rule.field_path} {law!r} ~{ratio:.2f} "
+                f"{'>=' if ok else '<'} {rule.fuzzy_threshold} vs {exp!r}"
+            )
+        else:
+            default = f"{rule.field_path} {law!r} {'==' if ok else '!='} {exp!r}"
         fmt = {"value": law, "expected": exp, "field_path": rule.field_path}
         return Check(
             name=rule.name,

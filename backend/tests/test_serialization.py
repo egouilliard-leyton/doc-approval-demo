@@ -77,6 +77,32 @@ def test_round_trip_equality_and_date_constraint():
     assert isinstance(rebuilt.rules[1], DateConstraintRuleDef)
 
 
+def test_round_trip_equality_fuzzy():
+    original = DocTypeRuleDefinition(
+        name="fuzzy",
+        rules=[
+            EqualityRuleDef(
+                name="name_fuzzy",
+                field_path="bill_to",
+                severity="review",
+                expected="Acme Corp",
+                match_mode="fuzzy",
+                fuzzy_threshold=0.85,
+                case_insensitive=True,
+            ),
+        ],
+        citation_paths=["bill_to"],
+    )
+
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["match_mode"] == "fuzzy"
+    assert d["rules"][0]["fuzzy_threshold"] == 0.85
+
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert rebuilt.rules[0].fuzzy_threshold == 0.85
+
+
 # --- validation: rejections ---------------------------------------------------
 
 
@@ -115,10 +141,53 @@ def test_equality_bad_match_mode_errors():
         "field_path": "currency",
         "severity": "hard",
         "expected": "USD",
-        "match_mode": "fuzzy",
+        "match_mode": "nonsense",
     }
     errors = validate_custom_rule_dict(_defn(rule), DECLARED)
     assert any("match_mode" in e for e in errors)
+
+
+def test_equality_fuzzy_match_mode_accepted():
+    rule = {
+        "kind": "equality",
+        "name": "eq",
+        "field_path": "currency",
+        "severity": "hard",
+        "expected": "USD",
+        "match_mode": "fuzzy",
+        "fuzzy_threshold": 0.9,
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert not any("match_mode" in e for e in errors)
+    assert not any("fuzzy_threshold" in e for e in errors)
+
+
+def test_equality_fuzzy_threshold_too_high_errors():
+    rule = {
+        "kind": "equality",
+        "name": "eq",
+        "field_path": "currency",
+        "severity": "hard",
+        "expected": "USD",
+        "match_mode": "fuzzy",
+        "fuzzy_threshold": 1.5,
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("fuzzy_threshold" in e for e in errors)
+
+
+def test_equality_fuzzy_threshold_negative_errors():
+    rule = {
+        "kind": "equality",
+        "name": "eq",
+        "field_path": "currency",
+        "severity": "hard",
+        "expected": "USD",
+        "match_mode": "fuzzy",
+        "fuzzy_threshold": -0.1,
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("fuzzy_threshold" in e for e in errors)
 
 
 def test_equality_invalid_regex_errors():

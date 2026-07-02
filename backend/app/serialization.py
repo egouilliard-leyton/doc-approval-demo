@@ -352,17 +352,27 @@ def validate_custom_rule_dict(d: dict, declared_field_names: set[str]) -> list[s
                     f"{where}: set exactly one of 'expected' / 'expected_field_path'"
                 )
             if "match_mode" in rule and rule["match_mode"] not in {
-                "exact", "normalized", "regex"
+                "exact", "normalized", "regex", "fuzzy"
             }:
                 errors.append(
                     f"{where}: 'match_mode' must be one of "
-                    f"['exact','normalized','regex'] (got {rule['match_mode']!r})"
+                    f"['exact','normalized','regex','fuzzy'] (got {rule['match_mode']!r})"
                 )
             if rule.get("match_mode") == "regex" and isinstance(rule.get("expected"), str):
                 try:
                     re.compile(rule["expected"])
                 except re.error:
                     errors.append(f"{where}: 'expected' is not a valid regex pattern")
+            if "fuzzy_threshold" in rule:
+                value = rule["fuzzy_threshold"]
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not (0.0 <= value <= 1.0)
+                ):
+                    errors.append(
+                        f"{where}: 'fuzzy_threshold' must be a number between 0 and 1"
+                    )
         elif kind == "date_constraint":
             # Truthiness (not ``is not None``): the UI writes an empty string for a
             # cleared input, and the interpreter treats "" as absent (``if rule.min:``).

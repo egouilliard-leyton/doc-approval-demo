@@ -52,12 +52,13 @@ const THRESHOLD_OPS: { value: ThresholdOp; label: string }[] = [
 ];
 
 const EQUALITY_MATCH_MODES: {
-  value: "exact" | "normalized" | "regex";
+  value: "exact" | "normalized" | "regex" | "fuzzy";
   label: string;
 }[] = [
   { value: "exact", label: "Exact" },
   { value: "normalized", label: "Normalized" },
   { value: "regex", label: "Regex" },
+  { value: "fuzzy", label: "Fuzzy" },
 ];
 
 // A blank rule of the given kind, carrying over only the previous `name`. Defaults
@@ -115,6 +116,7 @@ function blankRule(kind: RuleKind, name: string): RuleDef {
         field_path: "",
         severity: "review",
         match_mode: "exact",
+        fuzzy_threshold: 0.8,
         expected: "",
         expected_field_path: null,
         case_insensitive: false,
@@ -652,7 +654,11 @@ function RuleParams({
               value={matchMode}
               onValueChange={(v) =>
                 onPatch({
-                  match_mode: v as "exact" | "normalized" | "regex",
+                  match_mode: v as
+                    | "exact"
+                    | "normalized"
+                    | "regex"
+                    | "fuzzy",
                 })
               }
             >
@@ -668,7 +674,13 @@ function RuleParams({
               </SelectContent>
             </Select>
           </Field>
-          {matchMode === "normalized" && (
+          {matchMode === "fuzzy" && (
+            <FuzzyThreshold
+              value={rule.fuzzy_threshold ?? 0.8}
+              onChange={(v) => onPatch({ fuzzy_threshold: v })}
+            />
+          )}
+          {(matchMode === "normalized" || matchMode === "fuzzy") && (
             <div className="flex flex-wrap gap-2">
               <Toggle
                 variant="outline"
@@ -786,6 +798,101 @@ function RuleParams({
         </Field>
       );
   }
+}
+
+// Illustrative name-matching guide for the fuzzy threshold slider. Static, not
+// computed from live documents — it just helps the author reason about the number.
+const FUZZY_EXAMPLES: {
+  threshold: number;
+  label: string;
+  accepts: string;
+  rejects: string;
+}[] = [
+  {
+    threshold: 1,
+    label: "1.00 (exact)",
+    accepts: "Jean Dupont = Jean Dupont",
+    rejects: "jean dupont",
+  },
+  {
+    threshold: 0.9,
+    label: "0.90",
+    accepts: "Jean Dupond ≈ Jean Dupont (1-char OCR slip)",
+    rejects: "J. Dupont",
+  },
+  {
+    threshold: 0.8,
+    label: "0.80",
+    accepts: "J. Dupont ≈ Jean Dupont",
+    rejects: "Pierre Dupont",
+  },
+  {
+    threshold: 0.6,
+    label: "0.60",
+    accepts: "Jon Dupont ≈ Jean Dupont",
+    rejects: "Jean Martin",
+  },
+];
+
+// Native range slider (no Slider component in this codebase) plus a static example
+// table so the author understands what each threshold band accepts vs. rejects.
+function FuzzyThreshold({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  // Highlight the example row whose threshold is closest to the current value.
+  const closest = FUZZY_EXAMPLES.reduce((best, ex) =>
+    Math.abs(ex.threshold - value) < Math.abs(best.threshold - value)
+      ? ex
+      : best,
+  );
+  return (
+    <div className="space-y-2">
+      <Label className="text-xs text-muted-foreground">Fuzzy threshold</Label>
+      <div className="flex items-center gap-3">
+        <input
+          type="range"
+          min={0.6}
+          max={1}
+          step={0.05}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="flex-1 accent-primary"
+        />
+        <span className="w-10 text-right text-sm tabular-nums">
+          {value.toFixed(2)}
+        </span>
+      </div>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-left text-muted-foreground">
+            <th className="py-1 pr-2 font-medium">Threshold</th>
+            <th className="py-1 pr-2 font-medium">Accepts as “same”</th>
+            <th className="py-1 font-medium">Rejects</th>
+          </tr>
+        </thead>
+        <tbody>
+          {FUZZY_EXAMPLES.map((ex) => (
+            <tr
+              key={ex.threshold}
+              className={
+                ex === closest
+                  ? "rounded bg-muted font-medium text-foreground"
+                  : "text-muted-foreground"
+              }
+            >
+              <td className="py-1 pr-2 align-top tabular-nums">{ex.label}</td>
+              <td className="py-1 pr-2 align-top">{ex.accepts}</td>
+              <td className="py-1 align-top">{ex.rejects}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function Field({

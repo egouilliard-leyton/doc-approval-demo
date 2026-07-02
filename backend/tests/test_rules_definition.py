@@ -350,6 +350,80 @@ def test_equality_compare_against_another_field():
     assert not diff.passed
 
 
+# --- primitives: EqualityRuleDef (fuzzy match mode) ---------------------------
+
+
+def test_equality_fuzzy_near_match_passes_at_default_threshold():
+    """'Jean Dupont' vs 'Jean Dupond' has a difflib ratio ~0.909 >= 0.8."""
+    rule = EqualityRuleDef(
+        name="eq", field_path="name", severity="review",
+        expected="Jean Dupont", match_mode="fuzzy",
+    )
+    out = _interpret(rule, {"name": fv("Jean Dupond")}, ctx())
+    assert out.passed and out.severity == "review"
+
+
+def test_equality_fuzzy_clear_non_match_fails():
+    rule = EqualityRuleDef(
+        name="eq", field_path="name", severity="review",
+        expected="Jean Dupont", match_mode="fuzzy",
+    )
+    out = _interpret(rule, {"name": fv("Pierre Dupont")}, ctx())
+    assert not out.passed
+
+
+def test_equality_fuzzy_composes_with_case_insensitive():
+    """Normalization (lowercasing) applies before the ratio, so casing is ignored."""
+    rule = EqualityRuleDef(
+        name="eq", field_path="name", severity="review",
+        expected="jean dupont", match_mode="fuzzy", case_insensitive=True,
+    )
+    out = _interpret(rule, {"name": fv("JEAN DUPONT")}, ctx())
+    assert out.passed  # ratio == 1.0 after lowercasing both sides
+
+
+def test_equality_fuzzy_negate_flips_result():
+    rule = EqualityRuleDef(
+        name="eq", field_path="name", severity="review",
+        expected="Jean Dupont", match_mode="fuzzy", negate=True,
+    )
+    # near-match (would pass) -> negate makes it fail
+    assert not _interpret(rule, {"name": fv("Jean Dupond")}, ctx()).passed
+    # clear non-match (would fail) -> negate makes it pass
+    assert _interpret(rule, {"name": fv("Pierre Dupont")}, ctx()).passed
+
+
+def test_equality_fuzzy_threshold_boundary_is_inclusive():
+    """The ~0.909 ratio for 'Jean Dupont'/'Jean Dupond' proves the comparison is `>=`."""
+    fields = {"name": fv("Jean Dupond")}
+    just_below = EqualityRuleDef(
+        name="eq", field_path="name", severity="review",
+        expected="Jean Dupont", match_mode="fuzzy", fuzzy_threshold=0.9,
+    )
+    assert _interpret(just_below, fields, ctx()).passed  # 0.909 >= 0.90
+    just_above = EqualityRuleDef(
+        name="eq", field_path="name", severity="review",
+        expected="Jean Dupont", match_mode="fuzzy", fuzzy_threshold=0.95,
+    )
+    assert not _interpret(just_above, fields, ctx()).passed  # 0.909 < 0.95
+
+
+def test_equality_fuzzy_skips_when_field_absent():
+    rule = EqualityRuleDef(
+        name="eq", field_path="name", severity="review",
+        expected="Jean Dupont", match_mode="fuzzy",
+    )
+    assert _interpret(rule, {}, ctx()) is None
+
+
+def test_equality_fuzzy_skips_when_expected_field_absent():
+    rule = EqualityRuleDef(
+        name="eq", field_path="bill_to", severity="review",
+        expected_field_path="ship_to", match_mode="fuzzy",
+    )
+    assert _interpret(rule, {"bill_to": fv("Acme")}, ctx()) is None
+
+
 # --- primitives: DateConstraintRuleDef ----------------------------------------
 
 
