@@ -2,7 +2,7 @@
 // delete affordances. Built-in types are read-only (their edit/delete controls
 // are disabled behind an explanatory tooltip); custom types can be edited or
 // deleted (delete is gated behind an AlertDialog confirmation).
-import { createElement, useState } from "react";
+import { createElement, useEffect, useRef, useState } from "react";
 import { Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -26,18 +26,27 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, deleteDocType } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { resolveDocTypeIcon } from "@/lib/icon-utils";
 import type { DocTypeResponse } from "@/lib/doc-type-schema";
 import { useDocTypes } from "./useDocTypes";
 import { DocTypeBuilderDialog } from "./DocTypeBuilderDialog";
 import { CreateWithAIDialog } from "./wizard/CreateWithAIDialog";
 
-export function DocTypeManager({ onChanged }: { onChanged: () => void }) {
+export function DocTypeManager({
+  focusName,
+  onChanged,
+}: {
+  focusName?: string;
+  onChanged: () => void;
+}) {
   const { docTypes, loading, error, refetch } = useDocTypes();
   const [builderOpen, setBuilderOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editingType, setEditingType] = useState<DocTypeResponse | undefined>();
   const [deletingName, setDeletingName] = useState<string | null>(null);
+  // The row a `focusName` deep-link points at, briefly ring-highlighted after scroll.
+  const [highlightName, setHighlightName] = useState<string | null>(null);
 
   const openCreate = () => {
     setEditingType(undefined);
@@ -48,6 +57,42 @@ export function DocTypeManager({ onChanged }: { onChanged: () => void }) {
     setEditingType(t);
     setBuilderOpen(true);
   };
+
+  // A `#/admin/config/doctype/<name>` deep-link focuses one type once the registry
+  // loads: a custom type opens straight into the editor, a built-in one (read-only)
+  // scrolls its row into view with a transient highlight. Guarded by the last-applied
+  // focusName so it fires once per link change — not on every render — and never
+  // fights a user who then navigates away.
+  const appliedFocusRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (loading) return;
+    if (focusName === appliedFocusRef.current) return;
+    appliedFocusRef.current = focusName;
+    if (!focusName) return;
+    const target = docTypes.find((t) => t.name === focusName);
+    if (!target) return; // unknown/deleted key: silent no-op
+
+    // Defer to after paint: the rows must already be in the DOM to scroll to one,
+    // and this keeps the focus side-effects (open editor / flash highlight) out of
+    // the render pass.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const raf = requestAnimationFrame(() => {
+      if (!target.builtin) {
+        openEdit(target); // custom type: straight into the editor
+        return;
+      }
+      // Built-in (read-only): scroll its row in and briefly ring-highlight it.
+      document
+        .getElementById(`doctype-row-${target.name}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightName(target.name);
+      timer = setTimeout(() => setHighlightName(null), 2000);
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      if (timer) clearTimeout(timer);
+    };
+  }, [focusName, docTypes, loading]);
 
   const handleSaved = () => {
     onChanged();
@@ -119,7 +164,11 @@ export function DocTypeManager({ onChanged }: { onChanged: () => void }) {
             return (
               <div
                 key={t.name}
-                className="flex items-center gap-3 rounded-lg border p-3"
+                id={`doctype-row-${t.name}`}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg border p-3 transition-shadow",
+                  highlightName === t.name && "ring-2 ring-brand",
+                )}
               >
                 {createElement(icon, {
                   className: "size-5 shrink-0 text-muted-foreground",

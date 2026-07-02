@@ -3,7 +3,7 @@
 // an "open for viewing" action that fetches the case + its reconciliation/decision into
 // a read-only overview (a full live "resume" of orchestration is out of scope). Real
 // empty/loading/error states keep the screen legible at every moment.
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
   Trash2,
@@ -55,6 +55,8 @@ import type {
   CaseDetail,
   CaseReconciliation,
 } from "@/lib/types";
+import { useRouteContext } from "@/features/routing/RouteContext";
+import { CopyLinkButton } from "@/features/routing/CopyLinkButton";
 import { useCases } from "@/features/case/useCases";
 import { useCaseContext } from "@/features/case/CaseContext";
 import { CaseStageHeader } from "@/features/case/CaseStageHeader";
@@ -76,7 +78,8 @@ function CaseReadView({
   view: ReadView;
   onBack: () => void;
 }) {
-  const { openMember } = useCaseContext();
+  const { activeDocId, openMember, closeDrilldown } = useCaseContext();
+  const { route, navigate } = useRouteContext();
   const { detail, reconciliation, decision } = view;
 
   const filenameById = useMemo(() => {
@@ -85,6 +88,29 @@ function CaseReadView({
     return map;
   }, [detail]);
 
+  // Keep the member drill-down overlay and the `?member=` URL in sync — the URL is the
+  // source of truth. Opening a member navigates (adds `?member`); this effect then opens
+  // the overlay. Closing the overlay (Escape/Close/backdrop clears activeDocId) strips
+  // the query instead of re-opening. Guarded by the previous activeDocId so a direct
+  // close propagates to the URL rather than looping (and stays StrictMode-safe).
+  const prevActiveRef = useRef<string | null>(activeDocId);
+  useEffect(() => {
+    const wantedMember = route.view === "case" ? route.member : undefined;
+    const justClosed = prevActiveRef.current != null && !activeDocId;
+    prevActiveRef.current = activeDocId;
+
+    if (justClosed && wantedMember) {
+      // The user closed the overlay: reflect that in the URL, don't re-open.
+      navigate({ view: "case", id: detail.id });
+      return;
+    }
+    if (wantedMember && activeDocId !== wantedMember) {
+      openMember(wantedMember);
+    } else if (!wantedMember && activeDocId) {
+      closeDrilldown();
+    }
+  }, [route, activeDocId, openMember, closeDrilldown, navigate, detail.id]);
+
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
       <CaseStageHeader
@@ -92,14 +118,17 @@ function CaseReadView({
         caseLabel={detail.label}
         onBack={onBack}
         right={
-          decision ? (
-            <Badge
-              variant="outline"
-              className={cn("gap-1", caseDecisionClass(decision.decision))}
-            >
-              {CASE_DECISION_LABEL[decision.decision]}
-            </Badge>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            <CopyLinkButton />
+            {decision ? (
+              <Badge
+                variant="outline"
+                className={cn("gap-1", caseDecisionClass(decision.decision))}
+              >
+                {CASE_DECISION_LABEL[decision.decision]}
+              </Badge>
+            ) : null}
+          </div>
         }
       />
 
@@ -172,7 +201,13 @@ function CaseReadView({
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => openMember(m.document_id)}
+                        onClick={() =>
+                          navigate({
+                            view: "case",
+                            id: detail.id,
+                            member: m.document_id,
+                          })
+                        }
                       >
                         <ExternalLink className="size-3.5" />
                         Open
@@ -214,6 +249,7 @@ function CaseReadView({
 
 export function CaseList({ onNewCase }: { onNewCase: () => void }) {
   const { cases, loading, error, refetch } = useCases();
+  const { route, navigate } = useRouteContext();
   const [view, setView] = useState<ReadView | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(
@@ -238,6 +274,25 @@ export function CaseList({ onNewCase }: { onNewCase: () => void }) {
       setOpeningId(null);
     }
   }, []);
+
+  // The read-view is DRIVEN by the route: a `#/cases/<id>` link (pasted, shared, or
+  // clicked) cold-loads that case into the overview. Guarded on the id (and openingId)
+  // so it fires once per link change, not on every render. Leaving the case (`#/cases`)
+  // needs no state reset — the render below simply falls back to the list when the route
+  // no longer names this loaded case.
+  useEffect(() => {
+    if (
+      route.view === "case" &&
+      view?.detail.id !== route.id &&
+      openingId !== route.id
+    ) {
+      // Defer the fetch off the render pass; the rAF cancels on re-run so a
+      // StrictMode double-mount (or a fast route change) fires it exactly once.
+      const id = route.id;
+      const raf = requestAnimationFrame(() => void openCase(id));
+      return () => cancelAnimationFrame(raf);
+    }
+  }, [route, view, openingId, openCase]);
 
   const handleDelete = useCallback(
     async (id: string) => {
@@ -265,8 +320,13 @@ export function CaseList({ onNewCase }: { onNewCase: () => void }) {
     [refetch],
   );
 
-  if (view) {
-    return <CaseReadView view={view} onBack={() => setView(null)} />;
+  // Show the read-view only while the route still names the loaded case; otherwise the
+  // route has moved on (back to the list, or on to a different case that's cold-loading)
+  // and the list is the right thing to render.
+  if (view && route.view === "case" && view.detail.id === route.id) {
+    return (
+      <CaseReadView view={view} onBack={() => navigate({ view: "cases" })} />
+    );
   }
 
   return (
@@ -340,7 +400,7 @@ export function CaseList({ onNewCase }: { onNewCase: () => void }) {
                     <TableCell>
                       <button
                         type="button"
-                        onClick={() => void openCase(c.id)}
+                        onClick={() => navigate({ view: "case", id: c.id })}
                         disabled={opening || deleting}
                         className="flex items-center gap-2 rounded-sm text-left font-medium transition-colors hover:text-brand focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-60"
                       >
@@ -372,7 +432,7 @@ export function CaseList({ onNewCase }: { onNewCase: () => void }) {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => void openCase(c.id)}
+                          onClick={() => navigate({ view: "case", id: c.id })}
                           disabled={opening || deleting}
                         >
                           {opening ? (

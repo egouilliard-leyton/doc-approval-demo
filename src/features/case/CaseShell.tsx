@@ -5,6 +5,7 @@
 // engine so the choice made when uploading survives the flip into the classify stage.
 import { useMemo, useState } from "react";
 import { deriveCaseStage } from "@/lib/case-stage";
+import { useRouteContext } from "@/features/routing/RouteContext";
 import { useCaseContext } from "@/features/case/CaseContext";
 import { CaseList } from "@/features/case/CaseList";
 import { NewCaseView } from "@/features/case/NewCaseView";
@@ -14,8 +15,7 @@ import { CaseOverview } from "@/features/case/CaseOverview";
 export function CaseShell() {
   const { caseId, members, memberOrder, reconciliation, reset } =
     useCaseContext();
-  // "New case" is a transient route shown only while there's no active case.
-  const [showNew, setShowNew] = useState(false);
+  const { route, navigate } = useRouteContext();
   // Case-global OCR engine, chosen at upload and reused for extraction. Lives here so
   // it outlives the New → Classify stage flip (the child components remount, this doesn't).
   const [engine, setEngine] = useState("");
@@ -28,29 +28,31 @@ export function CaseShell() {
     [members, memberOrder],
   );
 
-  // No active case: the list, or the new-case form.
+  // No active case: the list, or the new-case form. Which one is DRIVEN by the route
+  // (`#/cases/new` shows the form) rather than local state, so it's deep-linkable.
   if (!caseId) {
-    return showNew ? (
+    return route.view === "case-new" ? (
       <div className="w-full px-4 py-6 sm:px-6">
         <NewCaseView
           engine={engine}
           onEngineChange={setEngine}
-          onCancel={() => setShowNew(false)}
+          onCancel={() => navigate({ view: "cases" })}
         />
       </div>
     ) : (
       <div className="w-full px-4 py-6 sm:px-6">
-        <CaseList onNewCase={() => setShowNew(true)} />
+        <CaseList onNewCase={() => navigate({ view: "case-new" })} />
       </div>
     );
   }
 
   // Active case: derive the stage from its members + reconciliation. "Back" abandons the
-  // in-memory case (it's persisted server-side and reopenable from the list) via reset.
+  // in-memory case (it's persisted server-side and reopenable from the list) via reset,
+  // and returns the URL to the list.
   const stage = deriveCaseStage(statuses, reconciliation != null);
   const backToList = () => {
-    setShowNew(false);
     reset();
+    navigate({ view: "cases" });
   };
 
   return (

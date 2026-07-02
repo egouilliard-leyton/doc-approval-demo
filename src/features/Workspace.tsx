@@ -5,12 +5,15 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { resolveDocTypeIcon } from "@/lib/icon-utils";
 import { usePipelineContext } from "@/features/pipeline/PipelineContext";
+import { useRouteContext } from "@/features/routing/RouteContext";
+import { CopyLinkButton } from "@/features/routing/CopyLinkButton";
 import { Stepper } from "@/features/pipeline/Stepper";
 import { QualityReportPanel } from "@/features/pipeline/QualityReportPanel";
 import { SplitInspector } from "@/features/inspector/SplitInspector";
 
 export function Workspace() {
   const { document, prescan, reset } = usePipelineContext();
+  const { route, navigate } = useRouteContext();
   const [showPrescan, setShowPrescan] = useState(false);
 
   if (!document) return null;
@@ -38,10 +41,23 @@ export function Workspace() {
             </div>
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={reset}>
-          <Plus className="size-4" />
-          New document
-        </Button>
+        <div className="flex items-center gap-1.5">
+          <CopyLinkButton />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              reset();
+              // replace (not push) so the route update batches synchronously with
+              // reset() — one render straight to the upload screen, no LoadingDocument
+              // flash — and "start over" doesn't leave a dead doc entry in history.
+              navigate({ view: "workspace" }, { replace: true });
+            }}
+          >
+            <Plus className="size-4" />
+            New document
+          </Button>
+        </div>
       </div>
 
       {/* Stepper */}
@@ -83,7 +99,22 @@ export function Workspace() {
       )}
 
       {/* Split inspector */}
-      <SplitInspector />
+      <SplitInspector
+        tab={route.view === "document" ? route.tab : "structured"}
+        onTabChange={(t) =>
+          navigate({
+            view: "document",
+            id: document.id,
+            tab: t,
+            field: undefined,
+          })
+        }
+        focus={
+          route.view === "document" && route.field
+            ? { field: route.field }
+            : undefined
+        }
+      />
     </div>
   );
 }

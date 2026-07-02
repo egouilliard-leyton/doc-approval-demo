@@ -249,7 +249,7 @@ export interface UsePipeline extends PipelineState {
   setDocType: (t: DocType) => void;
   setActiveEngine: (e: OcrEngine) => void;
   ingestFile: (file: File) => Promise<void>;
-  openDocument: (id: string) => Promise<void>;
+  openDocument: (id: string) => Promise<boolean>;
   runStage: (stage: StageKey) => Promise<void>;
   runEngineComparison: () => Promise<void>;
   runOcrEngine: (engine: OcrEngine) => Promise<void>;
@@ -374,7 +374,7 @@ export function usePipeline(): UsePipeline {
         detail = await getDocument(id);
       } catch (e) {
         toast.error("Could not open document", { description: errMessage(e) });
-        return;
+        return false;
       }
 
       // Rehydrate cached OCR. A spreadsheet only ever has the single "spreadsheet"
@@ -398,7 +398,7 @@ export function usePipeline(): UsePipeline {
         ]);
 
       // A newer openDocument started while we were fetching — drop these results.
-      if (openTokenRef.current !== token) return;
+      if (openTokenRef.current !== token) return false;
 
       const ocrByEngine: Record<string, OCRResult> = {};
       ocrResults.forEach((r, i) => {
@@ -423,6 +423,7 @@ export function usePipeline(): UsePipeline {
         activeEngine,
         docType: detail.doc_type ?? state.docType,
       });
+      return true;
     },
     [state.activeEngine, state.docType],
   );
