@@ -77,6 +77,22 @@ Spreadsheets became a first-class input on a **native, non-image path**:
 - **Engine Compare** — per-engine roster with on-demand runs + a two-pane A/B transcription
   diff.
 
+### Large-document extraction accuracy
+Extracting the right fields from the right places in **long, multi-page** documents, instead of
+flattening every page into one blind window:
+- **Proximity-aware grounding** — a repeated token (`Total`, a date) re-anchors to the occurrence
+  nearest the extractor's offset hint instead of the first `str.find`, fixing wrong-page citations.
+- **Section-aware extraction** — the document is partitioned into sections along the headings the
+  OCR engine already emits (Docling `section_header`/`title` labels, or `#` markdown headings),
+  extracted per section against its own grounded substrate, then merged. No new dependency
+  (PageIndex/embeddings were evaluated and rejected — Docling already emits the structure).
+- **Cross-section list dedup** (opt-in per field) — collapses the same entity extracted from two
+  sections (e.g. `parties` from the intro + signature block); `line_items` stays un-deduped.
+- **Whole-document grounding fallback** — a field whose span spilled across a section boundary is
+  re-grounded against the full document; section-local grounding still wins.
+- Small / mock / spreadsheet / header-less docs are byte-for-byte unchanged. Full design:
+  **[large-document-extraction.md](./large-document-extraction.md)**.
+
 ### Human-in-the-loop corrections
 - **Inline field editing** (`PATCH /documents/{id}/structure/field`) — correct any extracted
   value; the model's original is pinned and the edit is logged (`FieldCorrectionRow`).

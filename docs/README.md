@@ -10,6 +10,13 @@ Project documentation for the Document Auto-Approval System.
 | [validation-rules.md](./validation-rules.md) | **Validation rules reference** — the catalogue of every rule primitive, the sandboxed expression DSL, and how to add a new one. |
 | [VALIDATION-BRAINSTORM.md](./VALIDATION-BRAINSTORM.md) | The design rationale behind the validation model, plus the shipped/deferred status and the cross-document roadmap. |
 
+**Deep dives (feature-level):**
+
+| Doc | What's in it |
+| --- | --- |
+| [large-document-extraction.md](./large-document-extraction.md) | **Extraction accuracy on long docs** — proximity grounding, section-aware extraction, cross-section list dedup, and the whole-document grounding fallback. |
+| [signature-extraction.md](./signature-extraction.md) | **Signature detection** — the YOLOv8-ONNX best-effort spatial post-pass, its config, weights delivery, and measured accuracy. |
+
 Start with the [root README](../README.md) for the pitch, setup, and running the app.
 
 > **Code intelligence.** This repo is also indexed by GitNexus; `CLAUDE.md` and

@@ -126,8 +126,10 @@ Key mechanics:
   maps a span back to its page. This is why the invoice example's few-shots include a
   Markdown-table case.
 - **Grounding + confidence** (`extraction/base.py`) — each extracted span is located in the
-  source text; alignment quality (`exact`/`partial`/`ungrounded`) × propagated OCR
-  confidence yields a per-field confidence. The grounding map drives the inspector's boxes.
+  source text (**proximity-anchored** to the occurrence nearest the extractor's offset hint, so
+  a repeated token in a long doc doesn't snap to page 1); alignment quality
+  (`exact`/`partial`/`ungrounded`) × propagated OCR confidence yields a per-field confidence.
+  The grounding map drives the inspector's boxes.
 - **Table backfill fallback** — for invoices, empty line items are best-effort backfilled
   from Docling tables (capped low confidence).
 - **Human corrections** — a reviewer can edit any field
@@ -152,6 +154,26 @@ and (2) the approval rules — interpreted at runtime:
 - The **Create-with-AI wizard** (`pipeline/doctype_assistant.py` + `routes/doctype_assist.py`)
   is a stateless agent that designs a type conversationally, then emits a validated
   `DocTypeCreate` through the same validators as a hand-built type.
+
+### 4b. Large documents: section-aware extraction
+
+For long, multi-page documents the `langextract` provider does **not** flatten every page into
+one window. `run_structuring` partitions the document into **sections** along the headings the
+OCR engine already emits (`docling` `section_header`/`title` block labels, or `#` markdown
+headings from a VLM), extracts each section against its own section-scoped `GroundingCtx`, then
+merges the per-section field models. This localises extraction, keeps grounding accurate
+(section-relative offsets → real page numbers), and layers on **opt-in cross-section list dedup**
+(collapses the same entity extracted from two sections — e.g. `parties`) and a **whole-document
+grounding fallback** (re-grounds a field whose span spilled across a section boundary). Small /
+mock / spreadsheet / header-less docs reproduce the single-blob path byte-for-byte. **Full
+design, config, and gates: [large-document-extraction.md](./large-document-extraction.md).**
+
+### 4c. Signature detection
+
+A doc type may declare a field of `kind="signature"`; structuring then runs a best-effort YOLOv8
+spatial post-pass over the page PNGs, emitting located + cropped signature regions that reuse the
+grounding/render stack. Contract-only, graceful no-op without the model. Full design:
+**[signature-extraction.md](./signature-extraction.md).**
 
 ---
 

@@ -23,6 +23,10 @@ Highlights:
 - **Traceable extractions** — every field is boxed on the page (or highlighted in its grid
   cell) in a matching color; click a field to jump to its source. See
   [Reviewing extractions](#reviewing-extractions).
+- **Long-document accuracy** — multi-page docs are split into sections (along the OCR engine's
+  headings) and extracted section-by-section, with proximity-anchored grounding, cross-section
+  dedup, and a whole-document grounding fallback. See
+  [large-document-extraction.md](docs/large-document-extraction.md).
 - **Human-in-the-loop** — edit any extracted value inline; every correction is logged.
 - **Admin panel** — a consolidated overview, documents, corrections log, and configuration.
   See [Admin panel](#admin-panel).
@@ -33,7 +37,9 @@ so OCR engines can be compared side-by-side on camera.
 
 > **📚 Full documentation** lives in [`docs/`](docs/README.md):
 > [Architecture](docs/ARCHITECTURE.md) · [API reference](docs/API.md) ·
-> [Roadmap & work log](docs/ROADMAP.md).
+> [Roadmap & work log](docs/ROADMAP.md) · [Validation rules](docs/validation-rules.md).
+> Deep dives: [Large-document extraction](docs/large-document-extraction.md) ·
+> [Signature detection](docs/signature-extraction.md).
 
 - **Backend:** FastAPI (`backend/`, Python 3.12, `uv`) — the pipeline + REST API.
 - **Frontend:** Vite + React 19 (TypeScript) at the repo root — `pnpm` + Tailwind v4 + shadcn/ui.
@@ -99,6 +105,7 @@ defaults). The essentials:
 | `OPENROUTER_API_KEY` | _(required)_                       | Used by both structuring and the decision agent.                               |
 | `DECISION_MODEL`     | `deepseek/deepseek-v4-flash`       | Fallback `deepseek/deepseek-v3.2`.                                             |
 | `STRUCTURING_MODEL`  | `deepseek/deepseek-v4-flash`       | LangExtract extractor model.                                                   |
+| `STRUCTURING_SECTIONING` | `true`                         | Section-aware extraction for long docs. `false` forces the single-blob path. Tuning knobs (`STRUCTURING_MAX_CHAR_BUFFER`, `_MAX_SECTIONS`, `_SECTION_MIN_CHARS`) + design: [large-document-extraction.md](docs/large-document-extraction.md). |
 | `OCR_DEFAULT_ENGINE` | `docling`                          | `docling` \| `mock` \| any enabled VLM engine key.                             |
 | `OCR_VLM_MODEL`      | `qwen/qwen3-vl-235b-a22b-instruct` | OpenRouter model used to **seed** the default `qwen-vl` engine on a fresh DB. Connect more from the UI. |
 | `OCR_DEVICE`         | `cpu`                              | CPU is the reliable on-device path (MPS unsupported by Docling's float64 ops). |
@@ -114,6 +121,11 @@ override** a hard-failed rule; low OCR/extraction confidence or a poor scan caps
 at `needs_review`. Reviewers can correct any extracted field
 (`PATCH …/structure/field`), which is logged for review. See the full
 [API reference](docs/API.md).
+
+For **long, multi-page documents**, structuring doesn't flatten the pages into one window — it
+splits the document into sections along the OCR engine's headings, extracts each separately, and
+merges (with proximity-anchored grounding, cross-section dedup, and a whole-document grounding
+fallback). See [large-document-extraction.md](docs/large-document-extraction.md).
 
 ## OCR models (multi-VLM)
 
@@ -264,6 +276,7 @@ DELETE /doc-types/assist/annotate/{session_id} # cancel a session
 | Field edits + correction log | `PATCH …/structure/field` in `backend/app/routes/pipeline.py` · `GET /corrections` in `backend/app/routes/corrections.py` · `FieldCorrectionRow` in `models.py` |
 | Admin overview aggregates | `backend/app/routes/overview.py` |
 | Extraction engine (declarative → spec) | `backend/app/extraction/definition.py` (`build_spec`) |
+| Section-aware extraction + proximity/fallback grounding ([docs](docs/large-document-extraction.md)) | `backend/app/pipeline/structuring.py` · `backend/app/extraction/base.py` (`_ground`/`_find_nearest`) |
 | Rule engine (primitives + escape hatches) | `backend/app/rules/definition.py` (`build_ruleset`) |
 | Doc-type registry (built-ins in code + custom from DB) | `backend/app/doc_types.py` |
 | Inspector: highlights + color model | `src/lib/grounding.ts` · `src/lib/highlights.ts` · `src/features/inspector/` |
