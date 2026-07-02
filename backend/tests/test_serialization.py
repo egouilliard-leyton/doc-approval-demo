@@ -11,6 +11,7 @@ from app.rules.definition import (
     DocTypeRuleDefinition,
     EqualityRuleDef,
     ExpressionRuleDef,
+    FormatRuleDef,
     NumericRangeRuleDef,
     PercentageToleranceRuleDef,
 )
@@ -463,3 +464,45 @@ def test_percentage_tolerance_negative_pct_errors():
     }
     errors = validate_custom_rule_dict(_defn(rule), DECLARED)
     assert any("'pct'" in e for e in errors)
+
+
+# --- format kind --------------------------------------------------------------
+
+
+def test_round_trip_format():
+    original = DocTypeRuleDefinition(
+        name="fmt",
+        rules=[
+            FormatRuleDef(name="iban_ok", field_path="account", format="iban", severity="hard"),
+        ],
+        citation_paths=["account"],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "format"
+    assert d["rules"][0]["format"] == "iban"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], FormatRuleDef)
+
+
+def test_format_unknown_key_errors():
+    rule = {
+        "kind": "format",
+        "name": "f",
+        "field_path": "currency",
+        "format": "not_real",
+        "severity": "review",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("'format' must be one of" in e for e in errors)
+
+
+def test_format_known_key_valid():
+    rule = {
+        "kind": "format",
+        "name": "f",
+        "field_path": "currency",
+        "format": "iso_currency",
+        "severity": "review",
+    }
+    assert validate_custom_rule_dict(_defn(rule), DECLARED) == []

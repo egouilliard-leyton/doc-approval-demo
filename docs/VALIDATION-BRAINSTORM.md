@@ -53,7 +53,7 @@ Every primitive returns a `Check(name, passed, detail, severity)` where **severi
 - **One-of a set** (already `SetMembershipRuleDef`, but expose the `exact_ci` vs `substring_ci` toggle + a new `regex` match mode in the UI).
 - **Not-equals / not-in blocklist** (e.g. status must not be "VOID").
 - **Regex match** — field matches a pattern (IBAN, VAT id, SIREN, postal code, email, phone).
-- **Checksum/format validators** — IBAN mod-97, VAT check digit, Luhn (cards), SIRET, ISO country code, currency code. (Canned "format" library the author picks from.)
+- **Checksum/format validators** — ✅ **SHIPPED** as `FormatRuleDef` (`backend/app/rules/formats.py`): a picklist of canned validators — IBAN mod-97, mod-10 checksum, email, URL, UUID, ISO 3166 country code, ISO 4217 currency code, digits, alphanumeric. Each is total (never raises). Best-effort structural checks, not registry lookups. Extensible: add a `Callable[[str], bool]` to the registry.
 
 ### 2.2 Numeric / quantitative
 - **Range**: `min ≤ value ≤ max` (literal or expression bounds). Generalizes `ThresholdCompareRuleDef`.

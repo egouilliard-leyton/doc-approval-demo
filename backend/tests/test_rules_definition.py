@@ -19,6 +19,7 @@ from app.rules.definition import (
     EqualityRuleDef,
     ExpressionRuleDef,
     FieldDependencyRuleDef,
+    FormatRuleDef,
     LlmAdvisoryRuleDef,
     NumericRangeRuleDef,
     PercentageToleranceRuleDef,
@@ -768,3 +769,37 @@ def test_contract_parity_auto_renew_without_notice():
     got = by_name(run(CONTRACT_RULE_DEFINITION, fields))
     ar = got["auto_renew_without_notice"]
     assert (ar.passed, ar.severity) == (False, "hard")
+
+
+# --- FormatRuleDef ------------------------------------------------------------
+
+
+def _fmt(field_path, fmt, **kw):
+    return FormatRuleDef(name="fmt", field_path=field_path, format=fmt, severity="review", **kw)
+
+
+def test_format_pass():
+    fields = {"country": fv("US")}
+    c = _interpret(_fmt("country", "iso_country"), fields, ctx())
+    assert (c.passed, c.severity) == (True, "review")
+
+
+def test_format_fail():
+    fields = {"country": fv("ZZ")}
+    c = _interpret(_fmt("country", "iso_country"), fields, ctx())
+    assert c.passed is False
+
+
+def test_format_skip_when_field_absent():
+    assert _interpret(_fmt("country", "iso_country"), {}, ctx()) is None
+
+
+def test_format_skip_on_unknown_format_key():
+    fields = {"country": fv("US")}
+    assert _interpret(_fmt("country", "not_a_real_format"), fields, ctx()) is None
+
+
+def test_format_email_and_checksum():
+    assert _interpret(_fmt("e", "email"), {"e": fv("a@b.co")}, ctx()).passed is True
+    assert _interpret(_fmt("n", "luhn"), {"n": fv("79927398713")}, ctx()).passed is True
+    assert _interpret(_fmt("n", "luhn"), {"n": fv("79927398714")}, ctx()).passed is False

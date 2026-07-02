@@ -22,6 +22,7 @@ import type {
   AggregateFn,
   AggregateOp,
   FieldDef,
+  FormatKind,
   RuleDef,
   RuleKind,
   RuleSeverity,
@@ -42,6 +43,7 @@ const RULE_KINDS: { value: RuleKind; label: string }[] = [
   { value: "aggregate", label: "Aggregate (sum/count/min/max/avg)" },
   { value: "numeric_range", label: "Numeric range" },
   { value: "percentage_tolerance", label: "Percentage tolerance" },
+  { value: "format", label: "Format / checksum" },
 ];
 
 const SEVERITIES: { value: RuleSeverity; label: string }[] = [
@@ -71,6 +73,18 @@ const AGGREGATE_OPS: { value: AggregateOp; label: string }[] = [
   { value: "gte", label: "≥ (gte)" },
   { value: "lt", label: "< (lt)" },
   { value: "gt", label: "> (gt)" },
+];
+
+const FORMAT_KINDS: { value: FormatKind; label: string }[] = [
+  { value: "iban", label: "IBAN" },
+  { value: "luhn", label: "Luhn (card/checksum)" },
+  { value: "email", label: "Email" },
+  { value: "url", label: "URL" },
+  { value: "uuid", label: "UUID" },
+  { value: "iso_country", label: "ISO country code" },
+  { value: "iso_currency", label: "ISO currency code" },
+  { value: "digits", label: "Digits only" },
+  { value: "alphanumeric", label: "Alphanumeric" },
 ];
 
 const EQUALITY_MATCH_MODES: {
@@ -194,6 +208,8 @@ function blankRule(kind: RuleKind, name: string): RuleDef {
         pct: 0.05,
         severity: "review",
       };
+    case "format":
+      return { kind, name, field_path: "", format: "email", severity: "review" };
   }
 }
 
@@ -1063,6 +1079,41 @@ function RuleParams({
           <p className="text-xs text-muted-foreground">
             Fraction, not a percent — e.g. <code>0.05</code> = 5%.
           </p>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "format":
+      return (
+        <>
+          <Field label="Field path">
+            <PathInput
+              value={rule.field_path}
+              placeholder="field_name"
+              onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
+          <Field label="Format">
+            <Select
+              value={rule.format}
+              onValueChange={(v) => onPatch({ format: v as FormatKind })}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FORMAT_KINDS.map((f) => (
+                  <SelectItem key={f.value} value={f.value}>
+                    {f.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
           <DetailInputs
             pass={rule.detail_pass ?? ""}
             fail={rule.detail_fail ?? ""}

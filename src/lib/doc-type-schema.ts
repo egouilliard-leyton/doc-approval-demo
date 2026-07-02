@@ -54,8 +54,19 @@ export type RuleKind =
   | "expression"
   | "aggregate"
   | "numeric_range"
-  | "percentage_tolerance";
+  | "percentage_tolerance"
+  | "format";
 export type RuleSeverity = "advisory" | "review" | "hard";
+export type FormatKind =
+  | "alphanumeric"
+  | "digits"
+  | "email"
+  | "iban"
+  | "iso_country"
+  | "iso_currency"
+  | "luhn"
+  | "url"
+  | "uuid";
 export type ThresholdOp = "lte" | "gte" | "lt" | "gt";
 export type AggregateFn = "sum" | "count" | "min" | "max" | "avg";
 export type AggregateOp = "eq" | "lte" | "gte" | "lt" | "gt";
@@ -210,6 +221,16 @@ export interface PercentageToleranceRule {
   detail_fail?: string;
 }
 
+export interface FormatRule {
+  kind: "format";
+  name: string;
+  field_path: string;
+  format: FormatKind;
+  severity: RuleSeverity;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
 export type RuleDef =
   | PresenceRule
   | ThresholdRule
@@ -223,7 +244,8 @@ export type RuleDef =
   | ExpressionRule
   | AggregateRule
   | NumericRangeRule
-  | PercentageToleranceRule;
+  | PercentageToleranceRule
+  | FormatRule;
 
 export interface RuleDefinition {
   name: string;

@@ -30,6 +30,7 @@ from app.schemas import Check
 
 from .base import DecisionContext, Ruleset, as_date, as_number, fval, present, _values_only
 from .expression import evaluate_expression, aggregate_list
+from .formats import FORMAT_VALIDATORS
 
 
 # --- declarative rule primitives ----------------------------------------------
@@ -258,6 +259,22 @@ class PercentageToleranceRuleDef:
 
 
 @dataclass
+class FormatRuleDef:
+    """Check a field against a canned format/checksum validator (app.rules.formats).
+
+    ``format`` is a key of ``FORMAT_VALIDATORS``. Skipped (no check) when the field is
+    absent or when the format key is unknown — never fails on missing data.
+    """
+
+    name: str
+    field_path: str
+    format: str
+    severity: Literal["hard", "review", "advisory"]
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
 class CodedRuleDef:
     """Tier-3 escape hatch: delegate entirely to a hand-written function.
 
@@ -295,6 +312,7 @@ RuleDef = Union[
     AggregateRuleDef,
     NumericRangeRuleDef,
     PercentageToleranceRuleDef,
+    FormatRuleDef,
     CodedRuleDef,
     LlmAdvisoryRuleDef,
 ]
@@ -646,6 +664,27 @@ def _interpret(rule: RuleDef, fields: dict, ctx: DecisionContext) -> Check | Non
             severity=rule.severity,
         )
 
+    if isinstance(rule, FormatRuleDef):
+        val = fval(fields, rule.field_path)
+        if val is None:
+            return None
+        validator = FORMAT_VALIDATORS.get(rule.format)
+        if validator is None:
+            return None  # unknown format key -> skip defensively
+        passed = validator(str(val))
+        default = (
+            f"{rule.field_path} {val!r} "
+            + ("is a valid" if passed else "is not a valid")
+            + f" {rule.format}"
+        )
+        fmt = {"value": val, "field_path": rule.field_path}
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
     if isinstance(rule, CodedRuleDef):
         return rule.fn(fields, ctx)
 
@@ -757,6 +796,7 @@ __all__ = [
     "AggregateRuleDef",
     "NumericRangeRuleDef",
     "PercentageToleranceRuleDef",
+    "FormatRuleDef",
     "CodedRuleDef",
     "LlmAdvisoryRuleDef",
     "DocTypeRuleDefinition",

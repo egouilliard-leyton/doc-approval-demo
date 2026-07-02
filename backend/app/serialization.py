@@ -34,6 +34,7 @@ from app.rules.definition import (
     EqualityRuleDef,
     ExpressionRuleDef,
     FieldDependencyRuleDef,
+    FormatRuleDef,
     LlmAdvisoryRuleDef,
     NumericRangeRuleDef,
     PercentageToleranceRuleDef,
@@ -43,6 +44,7 @@ from app.rules.definition import (
     UniquenessVsHistoryRuleDef,
 )
 from app.rules.expression import validate_expression
+from app.rules.formats import FORMAT_KEYS
 
 
 # --- extraction definition <-> dict -------------------------------------------
@@ -62,6 +64,7 @@ def dict_to_extraction_defn(d: dict) -> DocTypeDefinition:
             cls=f["cls"],
             coerce=f.get("coerce", "text"),
             is_core=f.get("is_core", False),
+            dedup=f.get("dedup", False),
             sub_fields=[
                 SubFieldDef(
                     name=sf["name"],
@@ -114,6 +117,7 @@ _KIND_MAP: dict[type, str] = {
     AggregateRuleDef: "aggregate",
     NumericRangeRuleDef: "numeric_range",
     PercentageToleranceRuleDef: "percentage_tolerance",
+    FormatRuleDef: "format",
     LlmAdvisoryRuleDef: "llm_advisory",
 }
 
@@ -478,6 +482,12 @@ def validate_custom_rule_dict(d: dict, declared_field_names: set[str]) -> list[s
                 or value < 0
             ):
                 errors.append(f"{where}: 'pct' must be a non-negative number")
+        elif kind == "format":
+            if rule.get("format") not in FORMAT_KEYS:
+                errors.append(
+                    f"{where}: 'format' must be one of {list(FORMAT_KEYS)} "
+                    f"(got {rule.get('format')!r})"
+                )
 
         # Every referenced field path must resolve to a declared field (by base name).
         for key, value in rule.items():
