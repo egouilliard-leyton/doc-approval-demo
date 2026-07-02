@@ -1,8 +1,10 @@
 # Multi-Document Cases — Design & Phase Plan
 
-Status: **Phases 1–2 SHIPPED** (backend Case foundation `19ce56c`; cross-document
-reasoning — classify/reconcile/decide `73f9106`) / Phase 3 (frontend) pending.
-Author: brainstormed with the owner 2026-07-02.
+Status: **COMPLETE — all phases SHIPPED.** Backend Case foundation `19ce56c`;
+cross-document reasoning (classify/reconcile/decide) `56bcf1f`; ap_match demo
+completeness (po + delivery_note, vendor matching) `1fac578`; frontend (multi-doc
+case UI + reconciliation) `ca5ffa8`. Backend 483 tests, frontend 71 tests, all green;
+frontend live-verified end to end. Author: brainstormed with the owner 2026-07-02.
 
 ## Problem
 

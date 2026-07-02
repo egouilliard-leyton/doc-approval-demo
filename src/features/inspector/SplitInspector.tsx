@@ -36,7 +36,12 @@ function Empty({ label }: { label: string }) {
   );
 }
 
-export function SplitInspector() {
+export function SplitInspector({
+  focus,
+}: {
+  /** Case drill-down: jump to a field/page once the structure is ready (additive; no-op when omitted). */
+  focus?: { field?: string; page?: number } | null;
+} = {}) {
   const {
     document,
     ocr,
@@ -99,6 +104,23 @@ export function SplitInspector() {
     },
     [highlights],
   );
+
+  // Case drill-down focus: once the structure (and thus highlights) is ready, jump
+  // to the requested field (flashing its box) or page. Primitives in the deps keep
+  // this from re-firing on a fresh `focus` object identity every render.
+  const focusField = focus?.field ?? null;
+  const focusPage = focus?.page ?? null;
+  useEffect(() => {
+    if (!structure) return;
+    if (!focusField && !focusPage) return;
+    // Defer to the next frame so the jump/flash lands after the structure has
+    // rendered (and to keep setState out of the effect body).
+    const raf = requestAnimationFrame(() => {
+      if (focusField) selectField(focusField);
+      else if (focusPage) setActivePage(focusPage);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [focusField, focusPage, structure, selectField]);
 
   const editField = useCallback(
     async (path: string, value: string | null) => {

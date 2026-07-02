@@ -1,5 +1,10 @@
 import { useCallback, useState } from "react";
-import { ShieldCheck, PanelsTopLeft, LayoutDashboard } from "lucide-react";
+import {
+  ShieldCheck,
+  PanelsTopLeft,
+  LayoutDashboard,
+  FolderKanban,
+} from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -7,11 +12,13 @@ import {
   PipelineProvider,
   usePipelineContext,
 } from "@/features/pipeline/PipelineContext";
+import { CaseProvider } from "@/features/case/CaseContext";
 import { UploadView } from "@/features/upload/UploadView";
 import { Workspace } from "@/features/Workspace";
 import { AdminPanel } from "@/features/admin/AdminPanel";
+import { CaseShell } from "@/features/case/CaseShell";
 
-type View = "workspace" | "admin";
+type View = "workspace" | "case" | "admin";
 
 function ViewToggle({
   view,
@@ -22,6 +29,7 @@ function ViewToggle({
 }) {
   const items: { id: View; label: string; icon: typeof PanelsTopLeft }[] = [
     { id: "workspace", label: "Workspace", icon: PanelsTopLeft },
+    { id: "case", label: "Cases", icon: FolderKanban },
     { id: "admin", label: "Admin", icon: LayoutDashboard },
   ];
   return (
@@ -79,6 +87,8 @@ function Shell() {
       <main className="flex flex-1 flex-col">
         {view === "admin" ? (
           <AdminPanel onOpenDocument={openInWorkspace} />
+        ) : view === "case" ? (
+          <CaseShell />
         ) : document ? (
           <Workspace />
         ) : (
@@ -92,10 +102,12 @@ function Shell() {
 function App() {
   return (
     <PipelineProvider>
-      <TooltipProvider delayDuration={200}>
-        <Shell />
-        <Toaster position="bottom-right" richColors />
-      </TooltipProvider>
+      <CaseProvider>
+        <TooltipProvider delayDuration={200}>
+          <Shell />
+          <Toaster position="bottom-right" richColors />
+        </TooltipProvider>
+      </CaseProvider>
     </PipelineProvider>
   );
 }

@@ -74,6 +74,7 @@ export interface DocumentSummary {
   page_count: number;
   status: DocumentStatus;
   created_at: string;
+  case_id?: string | null; // the case this document belongs to, if any
 }
 
 export interface PageInfo {
@@ -183,6 +184,9 @@ export interface Grounding {
   // Spatial grounding (signature post-pass): a pixel bbox on the page + the crop URL.
   bbox?: BBox | null;
   image_url?: string | null; // relative /files/... — wrap with fileUrl()
+  // Case reconciliation: which member document this span came from, so a reconciled
+  // canonical value can cite its source document. None for single-doc use.
+  document_id?: string | null;
 }
 
 export interface FieldValue {
@@ -221,6 +225,9 @@ export interface Check {
 export interface Citation {
   field: string;
   source: string;
+  // Case reconciliation: which member document this citation points at, so a
+  // reconciled canonical value can cite its source document. None for single-doc use.
+  document_id?: string | null;
 }
 
 export interface DecisionResult {
@@ -237,4 +244,132 @@ export interface DecisionResult {
   llm_decision: Decision | null;
   warnings: string[];
   latency_ms: number;
+}
+
+// --- multi-document cases ----------------------------------------------------
+
+/** One expected member doc-type of a case type, with its cardinality. */
+export interface CaseTypeMember {
+  doc_type: DocType;
+  min_count: number;
+  max_count: number | null;
+  label: string;
+}
+
+/** A case type's full definition as returned by the CRUD endpoints. */
+export interface CaseTypeResponse {
+  name: string;
+  label: string;
+  icon: string;
+  members: CaseTypeMember[];
+  canonical_fields: Record<string, unknown>;
+  builtin: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Payload to create a custom case type (always non-built-in, version 1). */
+export interface CaseTypeCreate {
+  name: string;
+  label: string;
+  icon?: string;
+  members?: CaseTypeMember[];
+  canonical_fields?: Record<string, unknown>;
+}
+
+/** Payload to create a case: an open pile, or one bound to a case type. */
+export interface CaseCreate {
+  case_type?: string | null;
+  label?: string;
+}
+
+/** Compact shape for the case list view. */
+export interface CaseSummary {
+  id: string;
+  case_type: string | null;
+  label: string;
+  created_at: string;
+}
+
+/** One member document of a case plus its persisted structured result (if any). */
+export interface CaseMemberAssembly {
+  document_id: string;
+  filename: string;
+  doc_type: DocType | null;
+  status: DocumentStatus;
+  structured: StructuredResult | null;
+}
+
+/** A case with each member document's status + grouped structured result. */
+export interface CaseDetail {
+  id: string;
+  case_type: string | null;
+  label: string;
+  created_at: string;
+  members: CaseMemberAssembly[];
+}
+
+// --- classifier --------------------------------------------------------------
+
+/** One doc-type guess for a document, with its normalized confidence score. */
+export interface ClassifyCandidate {
+  doc_type: DocType;
+  score: number;
+}
+
+/** A document's classification: the winning doc-type + the full candidate ranking. */
+export interface ClassifyResult {
+  document_id: string;
+  provider: string; // "heuristic" | "llm"
+  doc_type: DocType | null; // null when nothing scored above zero
+  confidence: number; // 0-1; the normalized top score
+  candidates: ClassifyCandidate[];
+}
+
+// --- reconciliation ----------------------------------------------------------
+
+/** One grounded value drawn from a member document for a canonical field. */
+export interface CandidateInfo {
+  document_id: string;
+  doc_type: DocType;
+  field_path: string;
+  value: string | number | boolean | null;
+  confidence: number;
+  page: number | null;
+}
+
+/** One reconciled canonical field: its value, whether its sources agree, and why. */
+export interface CanonicalFieldResult {
+  name: string;
+  value: string | number | boolean | null;
+  agreement: boolean;
+  kind: string; // "money" | "date" | "string" (the tolerance rule applied)
+  candidates: CandidateInfo[];
+  conflict_detail: string | null; // set when agreement is false
+  citations: Citation[]; // one per contributing document (document_id set)
+}
+
+/** Cross-document reconciliation of a case into its canonical fields. */
+export interface CaseReconciliation {
+  case_id: string;
+  case_type: string | null;
+  status: string; // "reconciled" at this stage
+  canonical_fields: CanonicalFieldResult[];
+  member_count: number;
+  structured_count: number;
+  warnings: string[];
+}
+
+/** Case-level decision (parallel to DecisionResult, but case-shaped). */
+export interface CaseDecisionResult {
+  case_id: string;
+  case_type: string | null;
+  status: string; // "decided" (approve/flag) | "needs_review"
+  decision: Decision;
+  confidence: number;
+  reasons: string[];
+  checks: Check[];
+  citations: Citation[];
+  llm_decision: Decision | null;
 }

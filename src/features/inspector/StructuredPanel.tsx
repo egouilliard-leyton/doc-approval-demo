@@ -23,7 +23,7 @@ import {
 import type { FieldValue, StructuredResult } from "@/lib/types";
 import { fileUrl } from "@/lib/api";
 
-function ConfidencePill({ value }: { value: number }) {
+export function ConfidencePill({ value }: { value: number }) {
   return (
     <span
       className={cn(

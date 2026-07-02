@@ -1,6 +1,14 @@
 // Fetch client for the FastAPI backend.
 // CORS on the backend already allows the Vite dev origin, so we call it directly.
 import type {
+  CaseCreate,
+  CaseDecisionResult,
+  CaseDetail,
+  CaseReconciliation,
+  CaseSummary,
+  CaseTypeCreate,
+  CaseTypeResponse,
+  ClassifyResult,
   DocumentDetail,
   DocumentSummary,
   DecisionResult,
@@ -30,7 +38,7 @@ import type {
 } from "@/lib/doc-type-schema";
 
 const API_BASE_URL: string =
-  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8001";
 
 export interface HealthResponse {
   status: string;
@@ -117,11 +125,24 @@ export async function getHealth(): Promise<HealthResponse> {
 export async function uploadDocument(
   file: File,
   docType?: DocType,
+  caseId?: string,
 ): Promise<DocumentDetail> {
   const form = new FormData();
   form.append("file", file);
   if (docType) form.append("doc_type", docType);
+  if (caseId) form.append("case_id", caseId);
   return request<DocumentDetail>("/documents", { method: "POST", body: form });
+}
+
+/** Classify a document into its most-likely doc type (heuristic or LLM). */
+export async function classifyDocument(
+  id: string,
+  opts: { ocrEngine?: string; provider?: string } = {},
+): Promise<ClassifyResult> {
+  return request<ClassifyResult>(`/documents/${id}/classify`, {
+    method: "POST",
+    query: { ocr_engine: opts.ocrEngine, provider: opts.provider },
+  });
 }
 
 export async function getDocument(id: string): Promise<DocumentDetail> {
@@ -371,6 +392,99 @@ export async function cancelAnnotation(sessionId: string): Promise<void> {
   await request<void>(`/doc-types/assist/annotate/${sessionId}`, {
     method: "DELETE",
   });
+}
+
+// --- multi-document cases ----------------------------------------------------
+
+export async function createCase(body: CaseCreate): Promise<CaseDetail> {
+  return request<CaseDetail>("/cases", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function listCases(): Promise<CaseSummary[]> {
+  return request<CaseSummary[]>("/cases");
+}
+
+export async function getCase(id: string): Promise<CaseDetail> {
+  return request<CaseDetail>(`/cases/${id}`);
+}
+
+export async function deleteCase(id: string): Promise<void> {
+  await request<void>(`/cases/${id}`, { method: "DELETE" });
+}
+
+/** Associate a document with a case; returns the updated case. */
+export async function addDocumentToCase(
+  caseId: string,
+  docId: string,
+): Promise<CaseDetail> {
+  return request<CaseDetail>(`/cases/${caseId}/documents/${docId}`, {
+    method: "POST",
+  });
+}
+
+export async function removeDocumentFromCase(
+  caseId: string,
+  docId: string,
+): Promise<void> {
+  await request<void>(`/cases/${caseId}/documents/${docId}`, {
+    method: "DELETE",
+  });
+}
+
+// --- case types (CRUD) -------------------------------------------------------
+
+export async function listCaseTypes(): Promise<CaseTypeResponse[]> {
+  return request<CaseTypeResponse[]>("/case-types");
+}
+
+export async function getCaseType(name: string): Promise<CaseTypeResponse> {
+  return request<CaseTypeResponse>(`/case-types/${name}`);
+}
+
+export async function createCaseType(
+  body: CaseTypeCreate,
+): Promise<CaseTypeResponse> {
+  return request<CaseTypeResponse>("/case-types", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteCaseType(name: string): Promise<void> {
+  await request<void>(`/case-types/${name}`, { method: "DELETE" });
+}
+
+// --- case pipeline (reconcile + decide) --------------------------------------
+
+export async function reconcileCase(id: string): Promise<CaseReconciliation> {
+  return request<CaseReconciliation>(`/cases/${id}/reconcile`, {
+    method: "POST",
+  });
+}
+
+export async function getCaseReconciliation(
+  id: string,
+): Promise<CaseReconciliation> {
+  return request<CaseReconciliation>(`/cases/${id}/reconcile`);
+}
+
+export async function decideCase(
+  id: string,
+  provider?: string,
+): Promise<CaseDecisionResult> {
+  return request<CaseDecisionResult>(`/cases/${id}/decide`, {
+    method: "POST",
+    query: { provider },
+  });
+}
+
+export async function getCaseDecision(id: string): Promise<CaseDecisionResult> {
+  return request<CaseDecisionResult>(`/cases/${id}/decide`);
 }
 
 export { API_BASE_URL };
