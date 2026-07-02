@@ -93,6 +93,19 @@ flattening every page into one blind window:
 - Small / mock / spreadsheet / header-less docs are byte-for-byte unchanged. Full design:
   **[large-document-extraction.md](./large-document-extraction.md)**.
 
+### Signature detection
+Located + cropped handwritten-signature extraction, layered onto the text-grounded pipeline:
+- A doc type declares a `kind="signature"` field (contracts do); structuring runs a **best-effort
+  YOLOv8-ONNX spatial post-pass** over the page PNGs (`_detect_signatures`), independent of the OCR
+  engine. Each detection becomes a `FieldValue` carrying a pixel `bbox` + a saved crop URL.
+- Additive/optional throughout — `Grounding.bbox`/`FieldValue.image_url` default to `None`, the
+  frontend gained a bbox highlight fast-path + crop thumbnail, and the whole thing is a **graceful
+  no-op** without the optional deps or model weights (structuring still succeeds).
+- **Calibrated on a real-document eval** (confidence floor 0.45, in the measured gap between true
+  signatures and noise); tuned for typed/printed documents. Fully-handwritten / degraded historical
+  scans are a documented model ceiling. Full design + accuracy:
+  **[signature-extraction.md](./signature-extraction.md)**.
+
 ### Human-in-the-loop corrections
 - **Inline field editing** (`PATCH /documents/{id}/structure/field`) — correct any extracted
   value; the model's original is pinned and the edit is logged (`FieldCorrectionRow`).
@@ -142,3 +155,8 @@ Not built yet — candidate next steps, roughly ordered by value.
 - Cloud storage / managed DB — intentionally local (SQLite + filesystem) for a zero-setup demo.
 - Overriding deterministic rules with the LLM — rules stay authoritative and auditable by design.
 - A heavy frontend test harness — UI is validated by `tsc` + lint; only pure logic is unit-tested.
+
+
+---
+
+📚 **Docs:** [Index](./README.md) · [Architecture](./ARCHITECTURE.md) · [API](./API.md) · **Roadmap** · [Validation rules](./validation-rules.md) · [Large-doc extraction](./large-document-extraction.md) · [Signatures](./signature-extraction.md) · [Validation brainstorm](./VALIDATION-BRAINSTORM.md) · [↑ Root README](../README.md)

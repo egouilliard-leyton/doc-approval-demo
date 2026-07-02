@@ -196,3 +196,8 @@ deferred because they need a **bundle** (multiple documents' extractions evaluat
 a subsystem that doesn't exist yet and that the multi-document extraction & configuration
 work builds first. See [VALIDATION-BRAINSTORM.md §0, §3, §9](./VALIDATION-BRAINSTORM.md) for
 the design and the planned `CrossDocConsistencyRuleDef` / `BundleCompletenessRuleDef`.
+
+
+---
+
+📚 **Docs:** [Index](./README.md) · [Architecture](./ARCHITECTURE.md) · [API](./API.md) · [Roadmap](./ROADMAP.md) · **Validation rules** · [Large-doc extraction](./large-document-extraction.md) · [Signatures](./signature-extraction.md) · [Validation brainstorm](./VALIDATION-BRAINSTORM.md) · [↑ Root README](../README.md)

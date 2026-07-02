@@ -3,6 +3,10 @@
 Located + cropped handwritten-signature detection, layered onto the existing
 text-span-grounded extraction pipeline without disturbing it.
 
+> Fits in the pipeline at [ARCHITECTURE.md §4c](./ARCHITECTURE.md#4c-signature-detection);
+> the "is a signature present?" approval rule is [`signature_presence`](./validation-rules.md).
+> For the feature pitch, see the [root README](../README.md#signature-detection).
+
 ## How it works
 
 A YOLOv8s ONNX model (`tech4humans/yolov8s-signature-detector`, run via `onnxruntime` —
@@ -120,3 +124,8 @@ dependency), so YOLOv8s + onnxruntime remains the better fit here.
 Phase 1 ships on the **contract** doc type only (`extraction/contract.py`). Invoices have no
 signature concept. Threshold calibration against real samples, a manual "add signature region"
 affordance, and the alternative detector are follow-ups.
+
+
+---
+
+📚 **Docs:** [Index](./README.md) · [Architecture](./ARCHITECTURE.md) · [API](./API.md) · [Roadmap](./ROADMAP.md) · [Validation rules](./validation-rules.md) · [Large-doc extraction](./large-document-extraction.md) · **Signatures** · [Validation brainstorm](./VALIDATION-BRAINSTORM.md) · [↑ Root README](../README.md)

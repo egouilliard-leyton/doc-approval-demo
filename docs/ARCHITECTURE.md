@@ -170,9 +170,14 @@ design, config, and gates: [large-document-extraction.md](./large-document-extra
 
 ### 4c. Signature detection
 
-A doc type may declare a field of `kind="signature"`; structuring then runs a best-effort YOLOv8
-spatial post-pass over the page PNGs, emitting located + cropped signature regions that reuse the
-grounding/render stack. Contract-only, graceful no-op without the model. Full design:
+A doc type may declare a field of `kind="signature"`; structuring then runs a best-effort YOLOv8s
+**ONNX** spatial post-pass (`_detect_signatures`, via `onnxruntime` — no `ultralytics`) over the
+page PNGs, emitting located + cropped signature regions that reuse the grounding/render stack
+(`Grounding.bbox` + `FieldValue.image_url`, both optional/`None`-defaulted so text-grounded fields
+are untouched). It runs on the page pixels independently of the OCR engine, is **contract-only**
+today, and is a **graceful no-op** without the optional deps or model file. The confidence floor
+(`0.45`) was calibrated on a real-document eval; fully-handwritten/degraded scans are a known model
+ceiling. Full design, weights delivery, and measured accuracy:
 **[signature-extraction.md](./signature-extraction.md).**
 
 ---
@@ -277,3 +282,8 @@ instead holds `sheets.json` (the parsed grid, one entry per sheet) and no page i
 - **Frontend** — Node ≥ 22. `vitest` covers **pure logic only** (reducers, payload building,
   `pascalCase`↔backend `_pascal` parity — the test env is node, no jsdom). UI correctness is
   enforced via `pnpm build` (strict `tsc`) + `pnpm lint`.
+
+
+---
+
+📚 **Docs:** [Index](./README.md) · **Architecture** · [API](./API.md) · [Roadmap](./ROADMAP.md) · [Validation rules](./validation-rules.md) · [Large-doc extraction](./large-document-extraction.md) · [Signatures](./signature-extraction.md) · [Validation brainstorm](./VALIDATION-BRAINSTORM.md) · [↑ Root README](../README.md)

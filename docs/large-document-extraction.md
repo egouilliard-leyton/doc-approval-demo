@@ -195,3 +195,8 @@ reloading mid-run when the pipeline writes to `backend/data`.
 - Benchmark the page-count / structure crossover where sectioning beats the flat path.
 - Cross-page consistency rules (line-items-sum-to-total across pages, date monotonicity) — see
   the [validation backlog](./validation-rules.md).
+
+
+---
+
+📚 **Docs:** [Index](./README.md) · [Architecture](./ARCHITECTURE.md) · [API](./API.md) · [Roadmap](./ROADMAP.md) · [Validation rules](./validation-rules.md) · **Large-doc extraction** · [Signatures](./signature-extraction.md) · [Validation brainstorm](./VALIDATION-BRAINSTORM.md) · [↑ Root README](../README.md)

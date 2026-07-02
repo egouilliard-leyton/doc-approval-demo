@@ -131,8 +131,9 @@ This is what multi-doc extraction unlocks and where your examples mostly live. A
 - **Roll-up**: sum of all invoice totals ≤ the framework-contract ceiling.
 - **Sequence / no-gaps**: statement periods are contiguous (no missing month).
 
-### 3.4 Signature & visual (depends on signature extraction — in progress)
-- ✅ **SHIPPED** — **Signature present** on the docs that require one — `SignaturePresenceRuleDef` (at least `min_count` detected signatures in a `kind="signature"` list field; reads the YOLOv8 post-pass output). Same-signatory *matching* remains deferred (§9 — cross-doc + a similarity model).
+### 3.4 Signature & visual (signature *detection* shipped; matching deferred)
+- ✅ **SHIPPED** — **Signature detection**: located + cropped signatures via the YOLOv8-ONNX post-pass ([signature-extraction.md](./signature-extraction.md)).
+- ✅ **SHIPPED** — **Signature present** on the docs that require one — `SignaturePresenceRuleDef` (at least `min_count` detected signatures in a `kind="signature"` list field; reads the post-pass output). Same-signatory *matching* remains deferred (§9 — cross-doc + a similarity model).
 - **Same signatory**: signature on doc A visually matches doc B (similarity score + threshold; human-review band in the middle).
 - **Signature ↔ named party**: the signature block name matches the extracted party name.
 - **Stamp / seal present** (company stamp, notary seal).
@@ -315,3 +316,8 @@ Findings from a scan of the offline-signature-verification landscape, weighted t
 3. **If we do build matching:** self-hosting a Siamese/SigNet feature extractor keeps data private and is the sound long-term path, but **budget for training on a commercially-licensed dataset** (the best pretrained weights are GPDS-encumbered). A commercial API is the shortcut if we accept per-call cost and sending signature crops off-box.
 
 **Sources:** [luizgh/sigver](https://github.com/luizgh/sigver) · [fastforwardlabs/signver](https://github.com/fastforwardlabs/signver) · [SigNet paper (arXiv 1707.02131)](https://arxiv.org/pdf/1707.02131) · [Aftaab99/OfflineSignatureVerification](https://github.com/Aftaab99/OfflineSignatureVerification) · [Yash-10 siamese impl](https://github.com/Yash-10/signature-verification-siamese-network) · [Siamese-Transformer few-shot (2024)](https://www.researchgate.net/publication/378536334_Siamese-Transformer_Network_for_Offline_Handwritten_Signature_Verification_using_Few-shot) · [Cross-dataset generalization (arXiv 2510.17724)](https://arxiv.org/html/2510.17724v1)
+
+
+---
+
+📚 **Docs:** [Index](./README.md) · [Architecture](./ARCHITECTURE.md) · [API](./API.md) · [Roadmap](./ROADMAP.md) · [Validation rules](./validation-rules.md) · [Large-doc extraction](./large-document-extraction.md) · [Signatures](./signature-extraction.md) · **Validation brainstorm** · [↑ Root README](../README.md)

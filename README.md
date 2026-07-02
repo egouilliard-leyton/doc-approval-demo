@@ -189,6 +189,21 @@ the structured result:
 - **Optional currency** — money-like numeric fields render with the document's currency when
   one was extracted; other extractions are unaffected.
 
+## Signature detection
+
+When a doc type declares a **signature field** (contracts do), structuring runs a best-effort
+**YOLOv8-ONNX spatial post-pass** over the page images and adds each detected signature as a
+first-class field — a **cropped thumbnail** in the panel plus a **box on the page**, using the
+same grounding/highlight stack as every other field. It runs directly on the page pixels
+(independent of the OCR engine), and **degrades to a silent no-op** if the optional deps or the
+model weights aren't present — the rest of the pipeline is unaffected.
+
+It's tuned for the app's domain (typed/printed documents with a handwritten signature) and
+calibrated on a real-document eval; the confidence floor sits in the measured gap between true
+signatures and noise. Fully-handwritten or degraded historical scans are a known model ceiling.
+Full design, config, weights delivery, and measured accuracy:
+**[docs/signature-extraction.md](docs/signature-extraction.md).**
+
 ## Admin panel
 
 Toggle **Admin** in the header for a consolidated view (left-sidebar navigation):
@@ -277,6 +292,7 @@ DELETE /doc-types/assist/annotate/{session_id} # cancel a session
 | Admin overview aggregates | `backend/app/routes/overview.py` |
 | Extraction engine (declarative → spec) | `backend/app/extraction/definition.py` (`build_spec`) |
 | Section-aware extraction + proximity/fallback grounding ([docs](docs/large-document-extraction.md)) | `backend/app/pipeline/structuring.py` · `backend/app/extraction/base.py` (`_ground`/`_find_nearest`) |
+| Signature detection (YOLOv8-ONNX post-pass → bbox + crop) ([docs](docs/signature-extraction.md)) | `backend/app/pipeline/signature_detector.py` · injected in `structuring.py` (`_detect_signatures`) · crop `storage.py` (`save_signature_crop`) |
 | Rule engine (primitives + escape hatches) | `backend/app/rules/definition.py` (`build_ruleset`) |
 | Doc-type registry (built-ins in code + custom from DB) | `backend/app/doc_types.py` |
 | Inspector: highlights + color model | `src/lib/grounding.ts` · `src/lib/highlights.ts` · `src/features/inspector/` |

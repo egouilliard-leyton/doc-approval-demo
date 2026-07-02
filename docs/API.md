@@ -105,3 +105,8 @@ returns the last persisted result without recomputing.
 Response shapes are Pydantic models in `backend/app/schemas.py`; the TypeScript mirrors
 live in `src/lib/types.ts` (+ `src/lib/doc-type-schema.ts`). The frontend client is
 `src/lib/api.ts`.
+
+
+---
+
+📚 **Docs:** [Index](./README.md) · [Architecture](./ARCHITECTURE.md) · **API** · [Roadmap](./ROADMAP.md) · [Validation rules](./validation-rules.md) · [Large-doc extraction](./large-document-extraction.md) · [Signatures](./signature-extraction.md) · [Validation brainstorm](./VALIDATION-BRAINSTORM.md) · [↑ Root README](../README.md)
