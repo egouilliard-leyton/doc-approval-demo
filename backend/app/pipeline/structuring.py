@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.extraction import get_spec
-from app.extraction.base import FlatExtraction, GroundingCtx
+from app.extraction.base import FlatExtraction, GroundingCtx, ground_field
 from app.models import Document, DocumentStatus
 from app.schemas import FieldValue, Grounding, OCRPage, OCRResult, OCRTable, StructuredResult
 from app import storage
@@ -84,7 +84,7 @@ def run_structuring(
                 models.append(spec.assemble(sec_flats, section_ctx))
                 ctx.warnings.extend(section_ctx.warnings)
                 all_flats.extend(sec_flats)
-            fields_model = _merge_section_fields(models)
+            fields_model = _merge_section_fields(models, dedup_fields=set(spec.dedup_fields))
             artifact = _artifact_jsonl(all_flats)
             ctx.warnings.append(
                 f"document split into {len(sections)} sections for extraction"
@@ -93,6 +93,11 @@ def run_structuring(
             ctx.warnings.append(section_warning)
         model = settings.structuring_model
     latency_ms = int((perf_counter() - start) * 1000)
+
+    # Recovery pass: re-ground any ungrounded text leaf against the WHOLE document (the
+    # ``ctx`` built above). Mutates ``fields_model`` in place; a no-op outside the
+    # sectioned case whose section-local substrate could miss a spilled span.
+    _apply_grounding_fallback(fields_model, ctx)
 
     # Optional fallback: backfill missing core fields from persisted Docling tables.
     fields_model, fallback_used = _backfill_from_tables(fields_model, ocr_result, doc_type, ctx)
@@ -181,6 +186,13 @@ _HEADING_LABELS = {"section_header", "title"}
 # A markdown ATX heading line (``# ``..``###### ``) for engines whose page text is raw
 # markdown (VLMs emit one block/page labelled ``text`` but ``page.text`` carries ``#``).
 _MD_HEADING = re.compile(r"^#{1,6}\s+")
+
+# Cross-section list dedup (opt-in per ``FieldDef.dedup``). ``_TRAILING_ROLE_PAREN``
+# strips a trailing role annotation like `` (Provider)`` a party name may carry in one
+# section but not another; ``_DEDUP_PUNCTUATION`` strips remaining punctuation so
+# `"Acme Robotics Inc."` and `"ACME ROBOTICS INC. (Provider)"` collapse to one key.
+_TRAILING_ROLE_PAREN = re.compile(r"\s*\([^)]*\)\s*$")
+_DEDUP_PUNCTUATION = re.compile(r"[^\w\s]")
 
 
 @dataclass
@@ -472,7 +484,52 @@ def _build_sections(
     return sections, None
 
 
-def _merge_section_fields(models: list) -> object:
+def _normalize_for_dedup(value: str) -> str:
+    """Normalization key for exact-match list dedup — NEVER fuzzy/substring.
+
+    Two items collapse only when this returns the SAME string. Order matters:
+    (1) ``casefold`` for case-insensitivity; (2) strip a trailing role annotation like
+    `` (Provider)`` (a party may carry a role in one section but not another); (3) strip
+    remaining punctuation; (4) collapse internal whitespace. The paren-strip MUST precede
+    the punctuation-strip: otherwise the ``(`` / ``)`` are gone first and the annotation
+    text survives inside the key. As a side effect date separators are stripped too
+    (``"2024-09-15" -> "20240915"``), which is harmless — dedup is exact-key only, so it
+    still never conflates two distinct dates.
+
+    ``"Acme Robotics Inc."`` and ``"ACME ROBOTICS INC. (Provider)"`` both normalize to
+    ``"acme robotics inc"``; ``"Acme Robotics"`` normalizes to ``"acme robotics"`` — a
+    DIFFERENT key, so a shorter prefix is never treated as a duplicate.
+    """
+    text = value.casefold()
+    text = _TRAILING_ROLE_PAREN.sub("", text)
+    text = _DEDUP_PUNCTUATION.sub("", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _dedup_list_scalar(items: list) -> list:
+    """Collapse exact-normalized duplicate ``FieldValue`` items, keeping the FIRST.
+
+    Keeps the first item per :func:`_normalize_for_dedup` key in document order, with its
+    grounding/confidence untouched. DEFENSIVE: any element that is not a ``FieldValue``
+    carrying a ``str`` value is passed through unchanged and does NOT seed the seen-set —
+    so a misconfigured composite/non-text list degrades to a no-op rather than crashing or
+    silently dropping rows (dedup is only ever opted into for ``kind="list_scalar"``).
+    """
+    seen: set[str] = set()
+    out: list = []
+    for item in items:
+        if not (isinstance(item, FieldValue) and isinstance(item.value, str)):
+            out.append(item)  # not a text leaf -> pass through, never dedup
+            continue
+        key = _normalize_for_dedup(item.value)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def _merge_section_fields(models: list, dedup_fields: set[str] | None = None) -> object:
     """Merge per-section field-model instances into one, dispatching on value shape.
 
     Generic over any ``DocTypeSpec.field_model`` instance (no ``definition.py`` coupling)
@@ -485,25 +542,31 @@ def _merge_section_fields(models: list) -> object:
     field) takes the FIRST section whose composite is grounded, WHOLE — sub-fields are
     never merged across sections (that would graft one clause's attribute onto another's
     span). A single model is returned unchanged so the single-section path is a no-op.
+
+    ``dedup_fields`` names the list_scalar fields opted into cross-section dedup (from
+    ``spec.dedup_fields``): after those fields concatenate, exact-normalized duplicate
+    items are collapsed keeping the first (see :func:`_dedup_list_scalar`). Opt-in and
+    off by default — a field not named here keeps every concatenated item.
     """
     if len(models) == 1:
         return models[0]
+    dedup_fields = dedup_fields or set()
     template = models[0]
     merged = {
-        name: _merge_field([getattr(m, name) for m in models])
+        name: _merge_field([getattr(m, name) for m in models], dedup=name in dedup_fields)
         for name in type(template).model_fields
     }
     return type(template)(**merged)
 
 
-def _merge_field(values: list):
+def _merge_field(values: list, dedup: bool = False):
     """Merge one field's value across sections per the :func:`_merge_section_fields` rules."""
     first = values[0]
     if isinstance(first, list):
         out: list = []
         for v in values:
             out.extend(v)
-        return out
+        return _dedup_list_scalar(out) if dedup else out
     if isinstance(first, FieldValue):
         for v in values:
             if v.grounding is not None:
@@ -525,6 +588,61 @@ def _merge_field(values: list):
                 return v
         return first  # every section's composite is ungrounded -> keep the first
     return first  # pragma: no cover - field models are FieldValue/list/BaseModel only
+
+
+# --- whole-document grounding fallback ---------------------------------------
+
+
+def _apply_grounding_fallback(model: BaseModel, ctx: GroundingCtx) -> None:
+    """Recovery pass: re-ground any ungrounded text leaf against the whole document.
+
+    Section-aware extraction grounds each field against its own section's local
+    substrate; a span whose context spilled into an adjacent section can come back
+    with a value but ``grounding=None``. Walk the assembled field tree (scalar /
+    composite / list_scalar / list_composite) and re-attempt ``ground_field`` against
+    ``ctx`` — the WHOLE-DOCUMENT GroundingCtx. Mutates ``model`` in place. Section-local
+    grounding always wins: only an UNANCHORED ``FieldValue`` (no grounding, or a
+    ``Grounding`` whose ``char_start is None``) is touched, and only when the whole-doc
+    attempt actually finds it. Safe to call on every path:
+    re-finding a not-found span against the same substrate is a no-op, so this is
+    idempotent outside the sectioned case it targets.
+    """
+    for name in type(model).model_fields:
+        value = getattr(model, name)
+        if isinstance(value, FieldValue):
+            setattr(model, name, _reground_leaf(value, ctx))
+        elif isinstance(value, BaseModel):
+            _apply_grounding_fallback(value, ctx)
+        elif isinstance(value, list):
+            for i, item in enumerate(value):
+                if isinstance(item, FieldValue):
+                    value[i] = _reground_leaf(item, ctx)
+                elif isinstance(item, BaseModel):
+                    _apply_grounding_fallback(item, ctx)
+
+
+def _reground_leaf(fv: FieldValue, ctx: GroundingCtx) -> FieldValue:
+    """Whole-document grounding fallback for one leaf; unchanged unless it newly grounds.
+
+    Only TEXT values (``isinstance(fv.value, str)``) currently ungrounded are attempted:
+    a presence field's ``value=False`` or a numeric field's stringified value could
+    coincidentally match unrelated text and attach a spurious grounding, so those are
+    left untouched. Reuses ``ground_field`` (never reimplements ``_ground``) via a
+    throwaway ``FlatExtraction`` from the coerced value.
+
+    "Ungrounded" here means UNANCHORED, i.e. no ``Grounding`` at all OR a ``Grounding``
+    whose ``char_start is None`` — because ``ground_field`` always returns a ``Grounding``
+    object (an unfound span yields ``char_start=None, alignment="ungrounded"``), never
+    Python ``None``. Guarding only on ``grounding is not None`` would skip exactly the
+    section-spill case this pass exists to recover.
+    """
+    anchored = fv.grounding is not None and fv.grounding.char_start is not None
+    if anchored or not isinstance(fv.value, str) or fv.value == "":
+        return fv
+    grounding, confidence = ground_field(FlatExtraction(cls="_fallback", text=fv.value), ctx)
+    if grounding.char_start is None:  # whole-doc attempt also failed -> leave as-is
+        return fv
+    return fv.model_copy(update={"grounding": grounding, "confidence": confidence})
 
 
 def _structure_langextract(spec, full_text: str) -> tuple[list[FlatExtraction], str]:

@@ -37,7 +37,7 @@ CONTRACT_DEFINITION = DocTypeDefinition(
     prompt=PROMPT,
     core_paths=["parties", "effective_date", "term", "governing_law"],
     fields=[
-        FieldDef(name="parties", kind="list_scalar", cls="party", coerce="text"),
+        FieldDef(name="parties", kind="list_scalar", cls="party", coerce="text", dedup=True),
         FieldDef(name="effective_date", kind="scalar", cls="effective_date", coerce="text"),
         FieldDef(name="term", kind="scalar", cls="term", coerce="text"),
         FieldDef(name="renewal_clause", kind="scalar", cls="renewal_clause", coerce="text"),
@@ -54,7 +54,11 @@ CONTRACT_DEFINITION = DocTypeDefinition(
         FieldDef(name="total_value", kind="scalar", cls="total_value", coerce="number"),
         FieldDef(name="liability_cap", kind="scalar", cls="liability_cap", coerce="number"),
         FieldDef(name="signatures_present", kind="presence", cls="signature"),
-        FieldDef(name="key_dates", kind="list_scalar", cls="key_date", coerce="text"),
+        # Spatially-detected signature crops (YOLOv8 post-pass over the page images).
+        # ``cls="signature_visual"`` is distinct from the text ``signature`` class so the
+        # LLM never populates it; the structuring post-pass fills it from the detector.
+        FieldDef(name="signatures", kind="signature", cls="signature_visual"),
+        FieldDef(name="key_dates", kind="list_scalar", cls="key_date", coerce="text", dedup=True),
     ],
     examples=[
         ExampleData(

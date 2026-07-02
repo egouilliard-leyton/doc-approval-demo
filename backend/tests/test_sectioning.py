@@ -18,14 +18,16 @@ from app.extraction.base import FlatExtraction, GroundingCtx
 from app.models import Document, DocumentStatus
 from app.pipeline import structuring
 from app.pipeline.structuring import (
+    _apply_grounding_fallback,
     _build_sections,
     _build_structuring_text,
     _detect_docling_headings,
     _detect_markdown_headings,
     _merge_section_fields,
+    _normalize_for_dedup,
     run_structuring,
 )
-from app.schemas import OCRBlock, OCRPage, OCRResult
+from app.schemas import FieldValue, OCRBlock, OCRPage, OCRResult
 
 
 # --- synthetic OCRResult builders ---------------------------------------------
@@ -397,3 +399,127 @@ def test_run_structuring_kill_switch_single_section(monkeypatch):
     # Kill switch -> one whole-document extraction call, no split warning.
     assert len(calls) == 1
     assert not any("split into" in w for w in result.warnings)
+
+
+# --- 6. cross-section list dedup (opt-in per FieldDef.dedup) -------------------
+
+
+def _two_party_contract_sections():
+    """Two contract section models: same Acme + same Beta party in each, Acme role-tagged.
+
+    ``"Acme Robotics Inc."`` (section 1) and ``"ACME ROBOTICS INC. (Provider)"`` (section
+    2) normalize to the same dedup key; ``"Beta LLC"`` appears verbatim in both. So the
+    concatenation is 4 parties spanning 2 distinct normalized keys.
+    """
+    m1 = _contract_model(
+        [
+            FlatExtraction(cls="party", text="Acme Robotics Inc."),
+            FlatExtraction(cls="party", text="Beta LLC"),
+        ],
+        "Acme Robotics Inc. and Beta LLC entered this agreement",
+    )
+    m2 = _contract_model(
+        [
+            FlatExtraction(cls="party", text="ACME ROBOTICS INC. (Provider)"),
+            FlatExtraction(cls="party", text="Beta LLC"),
+        ],
+        "ACME ROBOTICS INC. (Provider) and Beta LLC are bound hereby",
+    )
+    return m1, m2
+
+
+def test_merge_dedup_collapses_normalized_duplicates_keeping_first():
+    m1, m2 = _two_party_contract_sections()
+    merged = _merge_section_fields([m1, m2], dedup_fields={"parties"})
+    # Two normalized keys survive; the kept items are section 1's (document-order first).
+    assert [p.value for p in merged.parties] == ["Acme Robotics Inc.", "Beta LLC"]
+    assert merged.parties[0].grounding is not None
+    assert merged.parties[0].grounding.char_start is not None  # grounded in section 1
+    assert merged.parties[1].grounding is not None
+
+
+def test_merge_without_dedup_keeps_all_items():
+    m1, m2 = _two_party_contract_sections()
+    merged = _merge_section_fields([m1, m2])  # dedup opt-in, off by default
+    assert [p.value for p in merged.parties] == [
+        "Acme Robotics Inc.",
+        "Beta LLC",
+        "ACME ROBOTICS INC. (Provider)",
+        "Beta LLC",
+    ]
+
+
+def test_merge_dedup_composite_list_is_defensive_noop():
+    """A list of composite rows (not text FieldValues) opted into dedup passes through."""
+    attrs = {"desc": "Widget", "qty": "1", "unit_price": "12.50", "amount": "12.50"}
+    span = "1 x Widget @ 12.50 = 12.50"
+    m1 = _invoice_model([FlatExtraction(cls="line_item", text=span, attributes=attrs)], span)
+    m2 = _invoice_model([FlatExtraction(cls="line_item", text=span, attributes=attrs)], span)
+    merged = _merge_section_fields([m1, m2], dedup_fields={"line_items"})
+    # Identical rows across sections both survive — the guard never dedups non-text leaves.
+    assert len(merged.line_items) == 2
+
+
+def test_normalize_for_dedup_keys_and_negative_no_fuzzy_match():
+    assert _normalize_for_dedup("Acme Robotics Inc.") == "acme robotics inc"
+    assert _normalize_for_dedup("ACME ROBOTICS INC. (Provider)") == "acme robotics inc"
+    assert _normalize_for_dedup("Acme Robotics Inc.") == _normalize_for_dedup(
+        "ACME ROBOTICS INC. (Provider)"
+    )
+    # NEGATIVE: a shorter prefix is a DIFFERENT key — exact-match only, never fuzzy/substring.
+    assert _normalize_for_dedup("Acme Robotics") != _normalize_for_dedup("Acme Robotics Inc")
+
+
+# --- 7. whole-document grounding fallback -------------------------------------
+
+
+def test_grounding_fallback_regrounds_spilled_text_leaf():
+    # The REAL section-spill state, produced by assembly (not hand-built): governing_law
+    # WAS extracted, but its verbatim span is absent from THIS section's text, so
+    # ground_field returns a Grounding object with char_start=None / alignment="ungrounded"
+    # (NOT grounding=None). This is exactly the state the old `grounding is not None` guard
+    # skipped. The whole-document ctx DOES contain the span, so the fallback re-grounds it.
+    span = "Delaware Superior Court"
+    model = _contract_model(
+        [FlatExtraction(cls="governing_law", text=span)],
+        "a section that does not mention the clause at all",  # span absent -> unanchored
+    )
+    assert model.governing_law.value == span
+    assert model.governing_law.grounding is not None  # a Grounding object exists...
+    assert model.governing_law.grounding.char_start is None  # ...but it is UNANCHORED
+    whole_ctx = _mock_ctx("Disputes are resolved in Delaware Superior Court under seal")
+    _apply_grounding_fallback(model, whole_ctx)
+    assert model.governing_law.grounding.char_start is not None  # recovered
+    assert model.governing_law.confidence > 0
+
+
+def test_grounding_fallback_leaves_already_grounded_field_untouched():
+    model = _contract_model(
+        [FlatExtraction(cls="governing_law", text="Delaware")],
+        "governed by the laws of Delaware",
+    )
+    before = model.governing_law
+    assert before.grounding is not None and before.grounding.char_start is not None
+    # A whole-doc ctx that does NOT contain the span: an already-grounded leaf must stay put.
+    _apply_grounding_fallback(model, _mock_ctx("totally unrelated whole-document text"))
+    assert model.governing_law is before  # returned unchanged (same object)
+
+
+def test_grounding_fallback_skips_presence_and_numeric_leaves():
+    inv = _invoice_model([], "no bank details in this section")
+    assert inv.bank_details_present.value is False
+    assert inv.bank_details_present.grounding is None
+    # A numeric leaf with a value but grounding=None must also be left alone.
+    inv.total = FieldValue(value=1234.56, confidence=0.4, grounding=None)
+    _apply_grounding_fallback(inv, _mock_ctx("bank details 1234.56 False appear here"))
+    # Presence (bool) and numeric (float) values are never re-grounded (spurious matches).
+    assert inv.bank_details_present.grounding is None
+    assert inv.total.grounding is None
+
+
+def test_grounding_fallback_skips_missing_field_none_value():
+    inv = _invoice_model([], "nothing to see")
+    inv.due_date = FieldValue(value=None, confidence=0.0, grounding=None)  # missing_field-like
+    _apply_grounding_fallback(inv, _mock_ctx("due date 2024-01-01 is here"))
+    assert inv.due_date.value is None
+    assert inv.due_date.grounding is None

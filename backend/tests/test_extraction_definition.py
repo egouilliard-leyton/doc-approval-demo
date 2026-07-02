@@ -114,6 +114,28 @@ def test_presence_true_and_false():
     assert absent["bank_details_present"]["grounding"] is None
 
 
+def test_contract_signature_field_is_a_signature_field():
+    spec = build_spec(CONTRACT_DEFINITION)
+    # The spatial signature field is exposed for the structuring post-pass, and assembles
+    # to an empty list (its class is never LLM-emitted).
+    assert spec.signature_fields == ["signatures"]
+    dumped = _assemble(CONTRACT_DEFINITION, [])
+    assert dumped["signatures"] == []
+
+
+def test_invoice_has_no_signature_fields():
+    assert build_spec(INVOICE_DEFINITION).signature_fields == []
+
+
+def test_contract_dedup_fields_are_parties_and_key_dates():
+    # ``parties`` and ``key_dates`` are the two list_scalar fields opted into dedup.
+    assert set(build_spec(CONTRACT_DEFINITION).dedup_fields) == {"parties", "key_dates"}
+
+
+def test_invoice_has_no_dedup_fields():
+    assert build_spec(INVOICE_DEFINITION).dedup_fields == []
+
+
 def test_invoice_extraction_classes():
     assert build_spec(INVOICE_DEFINITION).extraction_classes == {
         "vendor",

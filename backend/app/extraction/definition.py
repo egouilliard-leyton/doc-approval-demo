@@ -63,11 +63,17 @@ class FieldDef:
     """
 
     name: str
-    kind: Literal["scalar", "presence", "list_scalar", "list_composite", "composite"]
+    kind: Literal[
+        "scalar", "presence", "list_scalar", "list_composite", "composite", "signature"
+    ]
     cls: str
     coerce: Literal["text", "number"] = "text"
     is_core: bool = False
     sub_fields: list[SubFieldDef] = field(default_factory=list)
+    # Only meaningful for ``kind="list_scalar"``: collapses exact-normalized duplicate
+    # items across merged sections (see ``structuring._dedup_list_scalar``). A no-op for
+    # every other kind — the merge only consults it for list_scalar fields.
+    dedup: bool = False
 
 
 @dataclass
@@ -133,7 +139,9 @@ def _build_field_model(defn: DocTypeDefinition) -> tuple[type, dict[str, type]]:
     for f in defn.fields:
         if f.kind in ("scalar", "presence"):
             top_fields[f.name] = (FieldValue, ...)
-        elif f.kind == "list_scalar":
+        elif f.kind in ("list_scalar", "signature"):
+            # ``signature`` is a list[FieldValue] filled by the spatial post-pass, not
+            # the LLM; it assembles to ``[]`` here (its ``cls`` is never emitted).
             top_fields[f.name] = (list[FieldValue], ...)
         elif f.kind in ("composite", "list_composite"):
             sub_model = create_model(
@@ -197,7 +205,9 @@ def _make_assemble(
                 result[f.name] = scalar_field(grouped, f.cls, ctx, _COERCE[f.coerce])
             elif f.kind == "presence":
                 result[f.name] = presence_field(grouped, f.cls, ctx)
-            elif f.kind == "list_scalar":
+            elif f.kind in ("list_scalar", "signature"):
+                # ``signature`` fields carry no LLM-emitted ``cls``, so this assembles
+                # to ``[]``; the structuring post-pass fills them from the detector.
                 items: list[FieldValue] = []
                 for flat in grouped.get(f.cls, []):
                     grounding, confidence = ground_field(flat, ctx)
@@ -298,4 +308,6 @@ def build_spec(defn: DocTypeDefinition) -> DocTypeSpec:
         field_model=top_model,
         assemble=_make_assemble(defn.fields, sub_models, top_model),
         core_paths=defn.core_paths,
+        signature_fields=[f.name for f in defn.fields if f.kind == "signature"],
+        dedup_fields=[f.name for f in defn.fields if f.dedup],
     )

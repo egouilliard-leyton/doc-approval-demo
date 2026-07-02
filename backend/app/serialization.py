@@ -28,7 +28,9 @@ from app.extraction.definition import (
 from app.rules.definition import (
     AggregateRuleDef,
     ArithmeticIdentityRuleDef,
+    AtLeastNOfRuleDef,
     CodedRuleDef,
+    ConditionalPresenceRuleDef,
     DateConstraintRuleDef,
     DocTypeRuleDefinition,
     EqualityRuleDef,
@@ -36,9 +38,11 @@ from app.rules.definition import (
     FieldDependencyRuleDef,
     FormatRuleDef,
     LlmAdvisoryRuleDef,
+    MutualExclusivityRuleDef,
     NumericRangeRuleDef,
     PercentageToleranceRuleDef,
     PresenceRuleDef,
+    RequiredTogetherRuleDef,
     SetMembershipRuleDef,
     ThresholdCompareRuleDef,
     UniquenessVsHistoryRuleDef,
@@ -118,6 +122,10 @@ _KIND_MAP: dict[type, str] = {
     NumericRangeRuleDef: "numeric_range",
     PercentageToleranceRuleDef: "percentage_tolerance",
     FormatRuleDef: "format",
+    ConditionalPresenceRuleDef: "conditional_presence",
+    MutualExclusivityRuleDef: "mutual_exclusivity",
+    AtLeastNOfRuleDef: "at_least_n_of",
+    RequiredTogetherRuleDef: "required_together",
     LlmAdvisoryRuleDef: "llm_advisory",
 }
 
@@ -488,6 +496,38 @@ def validate_custom_rule_dict(d: dict, declared_field_names: set[str]) -> list[s
                     f"{where}: 'format' must be one of {list(FORMAT_KEYS)} "
                     f"(got {rule.get('format')!r})"
                 )
+        elif kind in ("mutual_exclusivity", "at_least_n_of", "required_together"):
+            # ``field_paths`` is a LIST (ends in ``_paths``, not ``_path``), so the
+            # generic ``*_path`` resolution loop below never validates it — check it
+            # here: non-empty list of strings, each resolving to a declared field.
+            paths = rule.get("field_paths")
+            if not isinstance(paths, list) or not paths:
+                errors.append(f"{where}: 'field_paths' must be a non-empty list")
+                paths = []
+            for p in paths:
+                if not isinstance(p, str) or not p:
+                    errors.append(f"{where}: each 'field_paths' entry must be a non-empty string")
+                    continue
+                base = p.split(".", 1)[0]
+                if base not in declared_field_names:
+                    errors.append(
+                        f"{where}: 'field_paths' references undeclared field {base!r}"
+                    )
+            if kind == "mutual_exclusivity":
+                if "mode" in rule and rule["mode"] not in {"exactly_one", "at_most_one"}:
+                    errors.append(
+                        f"{where}: 'mode' must be one of ['at_most_one','exactly_one'] "
+                        f"(got {rule.get('mode')!r})"
+                    )
+            elif kind == "at_least_n_of":
+                n = rule.get("n")
+                if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+                    errors.append(f"{where}: 'n' must be an integer >= 1")
+                elif isinstance(paths, list) and n > len(paths):
+                    errors.append(
+                        f"{where}: 'n' ({n}) must be <= the number of field_paths "
+                        f"({len(paths)})"
+                    )
 
         # Every referenced field path must resolve to a declared field (by base name).
         for key, value in rule.items():

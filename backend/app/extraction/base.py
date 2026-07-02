@@ -53,6 +53,9 @@ class DocTypeSpec:
     # Field names populated by the spatial signature post-pass (not the LLM). Empty
     # for doc types with no ``kind="signature"`` field.
     signature_fields: list[str] = field(default_factory=list)
+    # Field names opted into cross-section list dedup (per ``FieldDef.dedup``). Exact
+    # match after normalization, never fuzzy; only meaningful for list_scalar fields.
+    dedup_fields: list[str] = field(default_factory=list)
 
 
 @dataclass
