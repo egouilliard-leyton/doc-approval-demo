@@ -63,6 +63,22 @@ class PipelineRun(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
+class CaseRun(SQLModel, table=True):
+    """A run of the cross-document reasoning against a case (Phase 2).
+
+    Mirrors :class:`PipelineRun` field-for-field but keyed by case rather than document:
+    the classify / reconcile / decide stage results accumulate as JSON under
+    ``stage_results``. Lands via ``create_all`` like every other table here.
+    """
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    case_id: str = Field(foreign_key="case.id", index=True)
+    status: str = "pending"
+    stage_results: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 class DocTypeDefinitionRow(SQLModel, table=True):
     """Persisted definition of a document type (built-in or custom).
 

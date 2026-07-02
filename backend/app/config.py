@@ -109,6 +109,22 @@ class Settings(BaseSettings):
     signature_input_size: int = 640  # model input square (letterboxed).
     signature_crop_padding_px: int = 6  # padding added around a detected box before cropping.
 
+    # Classifier stage (Phase 2 multi-document cases). Guesses each file's doc-type
+    # before extraction. The default "heuristic" provider is fully offline (token overlap
+    # against each doc type's extraction vocabulary); the optional "llm" path lazily
+    # imports openai and degrades to no-guess on any failure. Mirrors the ocr/structuring
+    # provider naming.
+    classify_provider: str = "heuristic"  # "heuristic" | "llm"
+    classify_model: str = ""  # OpenRouter slug (only used by the "llm" provider)
+    classify_base_url: str = ""  # OpenAI-compatible base URL (only used by the "llm" provider)
+
+    # Reconciler tolerances (Phase 2). How close two candidate values must be to "agree"
+    # per kind. Env-overridable so they can be tuned live.
+    reconcile_money_abs_tolerance: float = 0.01  # |a - b| within this -> money agrees.
+    reconcile_money_pct_tolerance: float = 0.0  # OR within this fraction of the larger value.
+    reconcile_date_tolerance_days: int = 3  # dates within this many days agree.
+    reconcile_string_fuzzy_threshold: float = 0.85  # SequenceMatcher ratio at/above this agrees.
+
     # Browser origins allowed to call the API (Vite dev server by default).
     cors_origins: list[str] = ["http://localhost:5173"]
 

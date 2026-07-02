@@ -24,11 +24,13 @@ from app.models import (
     _utcnow,
 )
 from app.pipeline.agent import run_decision
+from app.pipeline.classify import run_classify
 from app.pipeline.ocr import get_engine
 from app.pipeline.prescan import run_prescan
 from app.pipeline.structuring import run_structuring
 from app.rules import DecisionContext
 from app.schemas import (
+    ClassifyResult,
     DecisionResult,
     FieldEditRequest,
     OCRResult,
@@ -225,6 +227,46 @@ def get_ocr(
             status_code=404, detail=f"No OCR result for engine '{engine}' on this document."
         )
     return OCRResult(**result)
+
+
+@router.post("/classify", response_model=ClassifyResult)
+async def classify_document(
+    doc_id: str,
+    ocr_engine: str = Query(default=""),
+    provider: str = Query(default=""),
+    session: Session = Depends(get_session),
+) -> ClassifyResult:
+    """Guess a document's doc-type from its persisted OCR text (advisory + STATELESS).
+
+    Reads the OCR result for ``ocr_engine`` (default ``OCR_DEFAULT_ENGINE``) — run OCR first
+    (409 otherwise), mirroring how ``structure`` reads OCR. Deliberately deviates from the
+    stage convention: the guess is NOT persisted, does NOT advance ``DocumentStatus``, and
+    has no GET twin — classification is advisory ("auto-classify + confirm"), so a wrong or
+    empty guess is safe and never mutates pipeline state.
+    """
+    ocr_engine = ocr_engine or settings.ocr_default_engine
+
+    doc = session.get(Document, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    # Spreadsheets always OCR under the dedicated engine; classify off that result.
+    if storage.is_spreadsheet(doc.mime):
+        ocr_engine = "spreadsheet"
+
+    run = _latest_run(session, doc_id)
+    ocr = (run.stage_results.get("ocr") or {}) if run else {}
+    ocr_data = ocr.get(ocr_engine)
+    if not ocr_data:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run OCR (engine '{ocr_engine}') before classifying this document.",
+        )
+    ocr_result = OCRResult(**ocr_data)
+
+    return await _run_stage(
+        "Classify", settings.llm_timeout_s, run_classify, doc, ocr_result, provider
+    )
 
 
 @router.post("/structure", response_model=StructuredResult)

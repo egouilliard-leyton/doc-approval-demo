@@ -715,6 +715,9 @@ def _structure_mock(doc_type: str, full_text: str) -> list[FlatExtraction]:
     return [
         FlatExtraction(cls="party", text="MOCK INVOICE"),
         FlatExtraction(cls="effective_date", text="page 1"),
+        # A deterministic monetary value grounded in the mock OCR text ("Total: $1,234.56"),
+        # so an invoice/contract case can exercise a real total_amount reconciliation.
+        FlatExtraction(cls="total_value", text="$1,234.56"),
     ]
 
 

@@ -154,6 +154,9 @@ class Grounding(BaseModel):
     # crop URL. Both optional/None so text-grounded fields are unaffected.
     bbox: BBox | None = None
     image_url: str | None = None  # /files URL for a saved crop of the grounded region
+    # Case reconciliation (Phase 2): which member document this span came from, so a
+    # reconciled canonical value can cite its source document. None for single-doc use.
+    document_id: str | None = None
 
 
 class FieldValue(BaseModel):
@@ -214,6 +217,9 @@ class Citation(BaseModel):
 
     field: str  # dotted field path, e.g. "total"
     source: str  # e.g. "page 1"
+    # Case reconciliation (Phase 2): which member document this citation points at, so a
+    # reconciled canonical value can cite its source document. None for single-doc use.
+    document_id: str | None = None
 
 
 class DecisionResult(BaseModel):
@@ -510,3 +516,72 @@ class CaseDetail(BaseModel):
     label: str
     created_at: datetime
     members: list[CaseMemberAssembly]
+
+
+# --- Phase 2: classifier + reconciler ----------------------------------------
+
+
+class ClassifyCandidate(BaseModel):
+    """One doc-type guess for a document, with its normalized confidence score."""
+
+    doc_type: str
+    score: float
+
+
+class ClassifyResult(BaseModel):
+    """A document's classification: the winning doc-type + the full candidate ranking."""
+
+    document_id: str
+    provider: str  # "heuristic" | "llm"
+    doc_type: str | None  # None when nothing scored above zero
+    confidence: float  # 0-1; the normalized top score (0.0 when all scores were zero)
+    candidates: list[ClassifyCandidate]
+
+
+class CandidateInfo(BaseModel):
+    """One grounded value drawn from a member document for a canonical field."""
+
+    document_id: str
+    doc_type: str
+    field_path: str  # dotted path this value was read from, e.g. "total" or "parties.0"
+    value: str | float | int | bool | None
+    confidence: float
+    page: int | None = None  # from the candidate's grounding, if any
+
+
+class CanonicalFieldResult(BaseModel):
+    """One reconciled canonical field: its value, whether its sources agree, and why."""
+
+    name: str
+    value: str | float | int | bool | None
+    agreement: bool
+    kind: str  # "money" | "date" | "string" (the tolerance rule applied)
+    candidates: list[CandidateInfo]
+    conflict_detail: str | None = None  # set when agreement is False
+    citations: list[Citation] = []  # one per contributing document (document_id set)
+
+
+class CaseReconciliation(BaseModel):
+    """Cross-document reconciliation of a case into its canonical fields."""
+
+    case_id: str
+    case_type: str | None
+    status: str  # "reconciled" at this stage
+    canonical_fields: list[CanonicalFieldResult]
+    member_count: int
+    structured_count: int
+    warnings: list[str] = []
+
+
+class CaseDecisionResult(BaseModel):
+    """Case-level decision (parallel to :class:`DecisionResult`, but case-shaped)."""
+
+    case_id: str
+    case_type: str | None
+    status: str  # "decided" (approve/flag) | "needs_review"
+    decision: str  # approve | flag | needs_review
+    confidence: float  # 0-1
+    reasons: list[str]  # human-readable bullets (LLM judgment + any code-forced reason)
+    checks: list[Check]  # authoritative, code-computed rule-by-rule trace
+    citations: list[Citation] = []  # built from the reconciled canonical fields
+    llm_decision: str | None = None  # what the LLM proposed before reconciliation

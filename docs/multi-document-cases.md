@@ -1,6 +1,7 @@
 # Multi-Document Cases — Design & Phase Plan
 
-Status: **Phase 1 SHIPPED** (backend Case foundation, commit `19ce56c`) / Phases 2–3 pending.
+Status: **Phases 1–2 SHIPPED** (backend Case foundation `19ce56c`; cross-document
+reasoning — classify/reconcile/decide `73f9106`) / Phase 3 (frontend) pending.
 Author: brainstormed with the owner 2026-07-02.
 
 ## Problem

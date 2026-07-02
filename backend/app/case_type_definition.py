@@ -102,5 +102,21 @@ AP_MATCH_DEFINITION = CaseTypeDefinition(
             doc_type="delivery_note", min_count=0, max_count=1, label="Delivery Note"
         ),
     ],
-    canonical_fields={},
+    # Canonical fields the Phase 2 reconciler fills from the members. Each entry maps a
+    # canonical name to the per-doc-type source paths that feed it (a bag of grounded
+    # candidates). Deliberately omits any date field: an invoice date and a contract
+    # effective date are DIFFERENT facts and would fire a false conflict every time.
+    canonical_fields={
+        "total_amount": [
+            {"doc_type": "invoice", "field_path": "total"},
+            {"doc_type": "contract", "field_path": "total_value"},
+        ],
+        "vendor_name": [
+            {"doc_type": "invoice", "field_path": "vendor"},
+            {"doc_type": "contract", "field_path": "parties"},
+        ],
+        "po_number": [
+            {"doc_type": "invoice", "field_path": "po_number"},
+        ],
+    },
 )

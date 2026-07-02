@@ -11,6 +11,7 @@ from sqlmodel import Session
 from app.config import settings
 from app.db import engine, init_db
 from app.routes import (
+    case_pipeline,
     case_types,
     cases,
     corrections,
@@ -103,6 +104,7 @@ app.mount("/files", StaticFiles(directory=settings.data_path), name="files")
 app.include_router(documents.router)
 app.include_router(pipeline.router)
 app.include_router(cases.router)
+app.include_router(case_pipeline.router)
 app.include_router(case_types.router)
 app.include_router(doc_types.router)
 app.include_router(doctype_assist.router)
