@@ -159,9 +159,21 @@ and (2) the approval rules — interpreted at runtime:
 
 `backend/app/rules/` evaluates a doc type's rule set against the extracted fields, in code:
 
-- Primitive vocabulary: `presence`, `threshold`, `arithmetic`, `set_membership`,
-  `field_dependency`, `uniqueness`, plus an **LLM-advisory** rule that is structurally
-  capped at `needs_review` severity (it can never auto-`flag`).
+- **Primitive vocabulary** — a broad set of declarative validation primitives interpreted
+  from JSON: equality/comparison (`equality` with exact/normalized/regex/fuzzy modes,
+  `set_membership`, `threshold`, `numeric_range`, `percentage_tolerance`), arithmetic &
+  aggregation (`arithmetic`, `aggregate` — e.g. *total == Σ line_items*, `expression` — a
+  **sandboxed formula DSL**), dates (`date_constraint`), presence & cardinality
+  (`presence`, `field_dependency`, `conditional_presence`, `mutual_exclusivity`,
+  `at_least_n_of`, `required_together`), format/checksum (`format` — IBAN/Luhn/email/UUID/
+  ISO codes), text (`contains`, `length_bounds`), confidence/provenance (`field_confidence_floor`,
+  `grounded_on_page`), `signature_presence`, `uniqueness`, plus an **LLM-advisory** rule
+  structurally capped at `needs_review` (it can never auto-`flag`). Each emits a
+  `Check(name, passed, detail, severity)`. **The full catalogue, the DSL, and how to add a
+  primitive are in [validation-rules.md](./validation-rules.md).**
+- **Safety** — custom (user-built) types are validated JSON that can *never* carry code; the
+  `expression` DSL is evaluated by a default-deny AST interpreter (no `eval`), not arbitrary
+  Python. Built-in `invoice`/`contract` may use a coded escape hatch; custom types cannot.
 - `pipeline/agent.py` reconciles: the LLM proposes a decision + reasons, but any hard-failed
   code rule wins, and low confidence caps at `needs_review`. The `DecisionResult` carries a
   rule-by-rule trace, citations built from the grounding map, and the LLM's pre-reconciliation

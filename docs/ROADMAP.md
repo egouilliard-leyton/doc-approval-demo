@@ -24,6 +24,27 @@ Doc types became **data, not code**:
   process/example docs, refining a Markdown spec, Plannotator annotation) and emits a
   validated definition.
 
+### Configurable validation model
+The rule layer grew from 6 primitives to a broad **single-document validation surface** — 23
+declarative kinds, each wired end-to-end (interpreter + serialization + save-time 422
+validation + builder UI + tests), all as *data, not code*:
+- **Equality & comparison** — `equality` (exact/normalized/regex/**fuzzy** with a threshold
+  slider), `numeric_range`, `percentage_tolerance`.
+- **Arithmetic & aggregation** — `aggregate` (*total == Σ line_items*), and an
+  **`expression`** kind: a **sandboxed formula DSL** (default-deny AST interpreter, no `eval`;
+  helpers like `sum_of`/`days_between`/`matches`).
+- **Dates** — `date_constraint` (not-future / min-max / field ordering).
+- **Presence & cardinality** — `conditional_presence`, `mutual_exclusivity`, `at_least_n_of`,
+  `required_together`.
+- **Format/checksum** — `format` (IBAN, Luhn, email, UUID, ISO country/currency, …).
+- **Text & provenance** — `contains`, `length_bounds`, `field_confidence_floor`,
+  `grounded_on_page`, and `signature_presence` (over the signature post-pass).
+
+Cross-document validations (same value/date across a set, bundle completeness, signature
+*matching*) are deferred — they need the multi-document/bundle substrate (see the backlog and
+[validation-rules.md §6](./validation-rules.md#6-cross-document-validations-not-yet-built)).
+Full catalogue: **[validation-rules.md](./validation-rules.md)**.
+
 ### Multi-VLM OCR (data-driven engine registry)
 OCR VLMs became data-driven, the same way doc types are:
 - Generic `VLMEngine(name, model)`; the registry resolves static engines (`docling`/`mock`)
@@ -88,6 +109,12 @@ Not built yet — candidate next steps, roughly ordered by value.
 - **Batch actions** — multi-select in the Documents table (re-run a stage, re-decide, delete).
 - **Auth & multi-user** — the app is single-user/local today (Plannotator is loopback-only).
   A deployed version needs auth, per-user data, and a native in-app annotation layer.
+- **Cross-document validations** — same value/date across a set of documents, bundle
+  completeness, cross-references, and same-signatory *matching*. Needs a **bundle** concept
+  (multiple documents' extractions evaluated together) that the multi-document extraction &
+  configuration work builds first. Design in
+  [validation-rules.md §6](./validation-rules.md#6-cross-document-validations-not-yet-built)
+  and [VALIDATION-BRAINSTORM.md §3](./VALIDATION-BRAINSTORM.md).
 - **Export** — download a decision + citations as a PDF/JSON audit record.
 - **Confidence calibration** — use the corrections log to measure and tune per-field
   confidence.

@@ -47,6 +47,11 @@ returns the last persisted result without recomputing.
 
 ## Doc types — `routes/doc_types.py` (prefix `/doc-types`)
 
+> A custom type's `rule_definition` is a list of validation primitives. `POST`/`PUT`
+> validate them (422 on a bad rule or unsafe formula) via `validate_custom_rule_dict`. For
+> the full rule vocabulary and the expression DSL, see
+> [validation-rules.md](./validation-rules.md).
+
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/doc-types` | List built-in + custom types (`DocTypeResponse[]`). |
