@@ -78,15 +78,15 @@ Every primitive returns a `Check(name, passed, detail, severity)` where **severi
 - **Required-together** — `RequiredTogetherRuleDef`: if any of `field_paths` present, all must be.
 
 ### 2.5 Text / semantic (LLM-advisory territory)
-- **Contains / mentions** a required clause or keyword (governing-law clause present).
-- **Semantic equivalence**: "does the payment-terms text mean Net-30?" → `LlmAdvisoryRuleDef`.
-- **Language / script** of the document matches expectation.
-- **Length bounds** on a text field.
+- ✅ **SHIPPED** — **Contains / mentions** a required clause or keyword — `ContainsRuleDef` (any/all of a keyword list, case-insensitive toggle).
+- **Semantic equivalence**: "does the payment-terms text mean Net-30?" → `LlmAdvisoryRuleDef` (already exists).
+- **Language / script** of the document matches expectation. *(not yet built)*
+- ✅ **SHIPPED** — **Length bounds** on a text field — `LengthBoundsRuleDef` (min/max character length).
 
-### 2.6 Confidence / provenance gates (partly exist)
-- Per-**field** confidence floor (today's confidence gate is document-wide).
-- **Grounded-on-page** requirement: a critical field must have a bounding-box citation, not just a value (fights hallucinated fields). Ties into your existing grounding/highlight stack.
-- **Edited-field** signal: field was corrected by a reviewer → downstream caution.
+### 2.6 Confidence / provenance gates
+- ✅ **SHIPPED** — Per-**field** confidence floor — `FieldConfidenceFloorRuleDef` (the document-wide gate still exists separately).
+- ✅ **SHIPPED** — **Grounded-on-page** requirement — `GroundedOnPageRuleDef`: a field must carry a grounding with a page, not just a value (fights hallucinated fields). Uses the existing grounding stack.
+- **Edited-field** signal: field was corrected by a reviewer → downstream caution. *(not yet built — the `edited` flag exists on FieldValue; a small follow-up primitive.)*
 
 ---
 

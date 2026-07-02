@@ -28,7 +28,7 @@ from typing import Literal, Union
 from app.config import settings
 from app.schemas import Check
 
-from .base import DecisionContext, Ruleset, as_date, as_number, fval, present, _values_only
+from .base import DecisionContext, Ruleset, as_date, as_number, fval, present, _node, _values_only
 from .expression import evaluate_expression, aggregate_list
 from .formats import FORMAT_VALIDATORS
 
@@ -321,6 +321,52 @@ class RequiredTogetherRuleDef:
 
 
 @dataclass
+class ContainsRuleDef:
+    """The field's text must contain the given keyword(s)."""
+    name: str
+    field_path: str
+    keywords: list[str]
+    severity: Literal["hard", "review", "advisory"]
+    mode: Literal["any", "all"] = "any"
+    case_insensitive: bool = True
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
+class LengthBoundsRuleDef:
+    """The field's string length must fall within [min_length, max_length]."""
+    name: str
+    field_path: str
+    severity: Literal["hard", "review", "advisory"]
+    min_length: int | None = None
+    max_length: int | None = None
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
+class FieldConfidenceFloorRuleDef:
+    """The field's extraction confidence must be >= floor (per-field gate)."""
+    name: str
+    field_path: str
+    floor: float
+    severity: Literal["hard", "review", "advisory"]
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
+class GroundedOnPageRuleDef:
+    """The field must be grounded to a source page (has a grounding with a page)."""
+    name: str
+    field_path: str
+    severity: Literal["hard", "review", "advisory"]
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
 class CodedRuleDef:
     """Tier-3 escape hatch: delegate entirely to a hand-written function.
 
@@ -363,6 +409,10 @@ RuleDef = Union[
     MutualExclusivityRuleDef,
     AtLeastNOfRuleDef,
     RequiredTogetherRuleDef,
+    ContainsRuleDef,
+    LengthBoundsRuleDef,
+    FieldConfidenceFloorRuleDef,
+    GroundedOnPageRuleDef,
     CodedRuleDef,
     LlmAdvisoryRuleDef,
 ]
@@ -811,6 +861,98 @@ def _interpret(rule: RuleDef, fields: dict, ctx: DecisionContext) -> Check | Non
             severity=rule.severity,
         )
 
+    if isinstance(rule, ContainsRuleDef):
+        val = fval(fields, rule.field_path)
+        if val is None:
+            return None
+        hay = str(val).lower() if rule.case_insensitive else str(val)
+        hits = [
+            kw
+            for kw in rule.keywords
+            if (kw.lower() if rule.case_insensitive else kw) in hay
+        ]
+        passed = (
+            len(hits) == len(rule.keywords) if rule.mode == "all" else len(hits) > 0
+        )
+        if passed:
+            default = f"{rule.field_path} contains {hits}"
+        else:
+            missing = [kw for kw in rule.keywords if kw not in hits]
+            default = f"{rule.field_path} missing {missing}"
+        fmt = {"value": val, "field_path": rule.field_path}
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
+    if isinstance(rule, LengthBoundsRuleDef):
+        val = fval(fields, rule.field_path)
+        if val is None:
+            return None
+        n = len(str(val))
+        failures: list[str] = []
+        if rule.min_length is not None and n < rule.min_length:
+            failures.append(f"shorter than {rule.min_length}")
+        if rule.max_length is not None and n > rule.max_length:
+            failures.append(f"longer than {rule.max_length}")
+        passed = not failures
+        default = (
+            f"{rule.field_path} length {n} ok"
+            if passed
+            else f"{rule.field_path} length {n}: " + "; ".join(failures)
+        )
+        fmt = {"value": val, "field_path": rule.field_path}
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
+    if isinstance(rule, FieldConfidenceFloorRuleDef):
+        node = _node(fields, rule.field_path)
+        if node is None:
+            return None
+        conf = node.get("confidence")
+        if not isinstance(conf, (int, float)):
+            return None
+        passed = conf >= rule.floor
+        default = (
+            f"{rule.field_path} confidence {conf:.2f} "
+            f"{'>=' if passed else '<'} {rule.floor}"
+        )
+        fmt = {"value": node.get("value"), "field_path": rule.field_path}
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
+    if isinstance(rule, GroundedOnPageRuleDef):
+        node = _node(fields, rule.field_path)
+        if node is None:
+            return None
+        grounding = node.get("grounding")
+        passed = isinstance(grounding, dict) and grounding.get("page") is not None
+        default = (
+            f"{rule.field_path} "
+            + (
+                "is grounded on page " + str(grounding.get("page"))
+                if passed
+                else "is not grounded to a page"
+            )
+        )
+        fmt = {"value": node.get("value"), "field_path": rule.field_path}
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
     if isinstance(rule, CodedRuleDef):
         return rule.fn(fields, ctx)
 
@@ -927,6 +1069,10 @@ __all__ = [
     "MutualExclusivityRuleDef",
     "AtLeastNOfRuleDef",
     "RequiredTogetherRuleDef",
+    "ContainsRuleDef",
+    "LengthBoundsRuleDef",
+    "FieldConfidenceFloorRuleDef",
+    "GroundedOnPageRuleDef",
     "CodedRuleDef",
     "LlmAdvisoryRuleDef",
     "DocTypeRuleDefinition",

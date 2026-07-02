@@ -16,12 +16,16 @@ from app.rules.definition import (
     AtLeastNOfRuleDef,
     CodedRuleDef,
     ConditionalPresenceRuleDef,
+    ContainsRuleDef,
     DateConstraintRuleDef,
     DocTypeRuleDefinition,
     EqualityRuleDef,
     ExpressionRuleDef,
+    FieldConfidenceFloorRuleDef,
     FieldDependencyRuleDef,
     FormatRuleDef,
+    GroundedOnPageRuleDef,
+    LengthBoundsRuleDef,
     LlmAdvisoryRuleDef,
     MutualExclusivityRuleDef,
     NumericRangeRuleDef,
@@ -905,3 +909,124 @@ def test_format_email_and_checksum():
     assert _interpret(_fmt("e", "email"), {"e": fv("a@b.co")}, ctx()).passed is True
     assert _interpret(_fmt("n", "luhn"), {"n": fv("79927398713")}, ctx()).passed is True
     assert _interpret(_fmt("n", "luhn"), {"n": fv("79927398714")}, ctx()).passed is False
+
+
+# --- primitives: ContainsRuleDef ----------------------------------------------
+
+
+def test_contains_any_pass_and_fail():
+    rule = ContainsRuleDef(
+        name="c", field_path="desc", keywords=["urgent", "priority"], severity="review",
+        mode="any",
+    )
+    ok = _interpret(rule, {"desc": fv("This is urgent")}, ctx())
+    assert ok.passed and ok.severity == "review"
+    bad = _interpret(rule, {"desc": fv("nothing special")}, ctx())
+    assert not bad.passed
+
+
+def test_contains_all_pass_and_fail():
+    rule = ContainsRuleDef(
+        name="c", field_path="desc", keywords=["net", "tax"], severity="hard", mode="all",
+    )
+    assert _interpret(rule, {"desc": fv("net amount plus tax")}, ctx()).passed
+    assert not _interpret(rule, {"desc": fv("net amount only")}, ctx()).passed
+
+
+def test_contains_case_insensitive_default():
+    rule = ContainsRuleDef(name="c", field_path="desc", keywords=["URGENT"], severity="review")
+    assert _interpret(rule, {"desc": fv("this is urgent")}, ctx()).passed
+    sensitive = ContainsRuleDef(
+        name="c", field_path="desc", keywords=["URGENT"], severity="review",
+        case_insensitive=False,
+    )
+    assert not _interpret(sensitive, {"desc": fv("this is urgent")}, ctx()).passed
+
+
+def test_contains_skips_when_absent():
+    rule = ContainsRuleDef(name="c", field_path="desc", keywords=["x"], severity="review")
+    assert _interpret(rule, {}, ctx()) is None
+
+
+# --- primitives: LengthBoundsRuleDef ------------------------------------------
+
+
+def test_length_bounds_within_pass():
+    rule = LengthBoundsRuleDef(
+        name="lb", field_path="code", severity="review", min_length=2, max_length=5,
+    )
+    out = _interpret(rule, {"code": fv("abc")}, ctx())
+    assert out.passed and out.severity == "review"
+
+
+def test_length_bounds_too_short_and_too_long():
+    rule = LengthBoundsRuleDef(
+        name="lb", field_path="code", severity="hard", min_length=3, max_length=5,
+    )
+    short = _interpret(rule, {"code": fv("ab")}, ctx())
+    assert not short.passed and "shorter than 3" in short.detail
+    long = _interpret(rule, {"code": fv("abcdef")}, ctx())
+    assert not long.passed and "longer than 5" in long.detail
+
+
+def test_length_bounds_one_sided():
+    only_min = LengthBoundsRuleDef(name="lb", field_path="code", severity="review", min_length=3)
+    assert _interpret(only_min, {"code": fv("abcd")}, ctx()).passed
+    assert not _interpret(only_min, {"code": fv("ab")}, ctx()).passed
+    only_max = LengthBoundsRuleDef(name="lb", field_path="code", severity="review", max_length=3)
+    assert _interpret(only_max, {"code": fv("ab")}, ctx()).passed
+    assert not _interpret(only_max, {"code": fv("abcd")}, ctx()).passed
+
+
+def test_length_bounds_skips_when_absent():
+    rule = LengthBoundsRuleDef(
+        name="lb", field_path="code", severity="review", min_length=1, max_length=5,
+    )
+    assert _interpret(rule, {}, ctx()) is None
+
+
+# --- primitives: FieldConfidenceFloorRuleDef ----------------------------------
+
+
+def test_field_confidence_floor_pass():
+    rule = FieldConfidenceFloorRuleDef(
+        name="cf", field_path="x", floor=0.8, severity="review",
+    )
+    out = _interpret(rule, {"x": fv("v", conf=0.95)}, ctx())
+    assert out.passed and out.severity == "review"
+
+
+def test_field_confidence_floor_fail():
+    rule = FieldConfidenceFloorRuleDef(
+        name="cf", field_path="x", floor=0.8, severity="hard",
+    )
+    out = _interpret(rule, {"x": fv("v", conf=0.3)}, ctx())
+    assert not out.passed and out.severity == "hard"
+
+
+def test_field_confidence_floor_skips_when_absent():
+    rule = FieldConfidenceFloorRuleDef(
+        name="cf", field_path="x", floor=0.8, severity="review",
+    )
+    assert _interpret(rule, {}, ctx()) is None
+
+
+# --- primitives: GroundedOnPageRuleDef ----------------------------------------
+
+
+def test_grounded_on_page_pass():
+    rule = GroundedOnPageRuleDef(name="g", field_path="x", severity="review")
+    out = _interpret(rule, {"x": fv("v", page=2)}, ctx())
+    assert out.passed and out.severity == "review"
+    assert "page 2" in out.detail
+
+
+def test_grounded_on_page_fail_when_no_grounding():
+    rule = GroundedOnPageRuleDef(name="g", field_path="x", severity="hard")
+    out = _interpret(rule, {"x": fv("v", page=None)}, ctx())
+    assert not out.passed and out.severity == "hard"
+
+
+def test_grounded_on_page_skips_when_absent():
+    rule = GroundedOnPageRuleDef(name="g", field_path="x", severity="review")
+    assert _interpret(rule, {}, ctx()) is None

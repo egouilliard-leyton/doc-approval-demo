@@ -31,12 +31,16 @@ from app.rules.definition import (
     AtLeastNOfRuleDef,
     CodedRuleDef,
     ConditionalPresenceRuleDef,
+    ContainsRuleDef,
     DateConstraintRuleDef,
     DocTypeRuleDefinition,
     EqualityRuleDef,
     ExpressionRuleDef,
+    FieldConfidenceFloorRuleDef,
     FieldDependencyRuleDef,
     FormatRuleDef,
+    GroundedOnPageRuleDef,
+    LengthBoundsRuleDef,
     LlmAdvisoryRuleDef,
     MutualExclusivityRuleDef,
     NumericRangeRuleDef,
@@ -126,6 +130,10 @@ _KIND_MAP: dict[type, str] = {
     MutualExclusivityRuleDef: "mutual_exclusivity",
     AtLeastNOfRuleDef: "at_least_n_of",
     RequiredTogetherRuleDef: "required_together",
+    ContainsRuleDef: "contains",
+    LengthBoundsRuleDef: "length_bounds",
+    FieldConfidenceFloorRuleDef: "field_confidence_floor",
+    GroundedOnPageRuleDef: "grounded_on_page",
     LlmAdvisoryRuleDef: "llm_advisory",
 }
 
@@ -528,6 +536,53 @@ def validate_custom_rule_dict(d: dict, declared_field_names: set[str]) -> list[s
                         f"{where}: 'n' ({n}) must be <= the number of field_paths "
                         f"({len(paths)})"
                     )
+        elif kind == "contains":
+            # ``keywords`` does NOT end in ``_path``, so the generic loop never touches
+            # it — validate explicitly: a non-empty list of strings.
+            keywords = rule.get("keywords")
+            if not isinstance(keywords, list) or not keywords:
+                errors.append(f"{where}: 'keywords' must be a non-empty list")
+            else:
+                for kw in keywords:
+                    if not isinstance(kw, str) or not kw:
+                        errors.append(
+                            f"{where}: each 'keywords' entry must be a non-empty string"
+                        )
+            if "mode" in rule and rule["mode"] not in {"any", "all"}:
+                errors.append(
+                    f"{where}: 'mode' must be one of ['all','any'] (got {rule['mode']!r})"
+                )
+        elif kind == "length_bounds":
+            has_min = rule.get("min_length") is not None
+            has_max = rule.get("max_length") is not None
+            if not has_min and not has_max:
+                errors.append(
+                    f"{where}: length_bounds requires at least one of "
+                    "'min_length' / 'max_length'"
+                )
+            for key in ("min_length", "max_length"):
+                value = rule.get(key)
+                if value is not None and (
+                    isinstance(value, bool) or not isinstance(value, int) or value < 0
+                ):
+                    errors.append(f"{where}: '{key}' must be an integer >= 0")
+            lo, hi = rule.get("min_length"), rule.get("max_length")
+            if (
+                isinstance(lo, int)
+                and not isinstance(lo, bool)
+                and isinstance(hi, int)
+                and not isinstance(hi, bool)
+                and lo > hi
+            ):
+                errors.append(f"{where}: 'min_length' must be <= 'max_length'")
+        elif kind == "field_confidence_floor":
+            value = rule.get("floor")
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not (0.0 <= value <= 1.0)
+            ):
+                errors.append(f"{where}: 'floor' must be a number between 0 and 1")
 
         # Every referenced field path must resolve to a declared field (by base name).
         for key, value in rule.items():

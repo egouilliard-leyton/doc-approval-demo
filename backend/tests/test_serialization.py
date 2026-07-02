@@ -9,11 +9,15 @@ from app.rules.definition import (
     AggregateRuleDef,
     AtLeastNOfRuleDef,
     ConditionalPresenceRuleDef,
+    ContainsRuleDef,
     DateConstraintRuleDef,
     DocTypeRuleDefinition,
     EqualityRuleDef,
     ExpressionRuleDef,
+    FieldConfidenceFloorRuleDef,
     FormatRuleDef,
+    GroundedOnPageRuleDef,
+    LengthBoundsRuleDef,
     MutualExclusivityRuleDef,
     NumericRangeRuleDef,
     PercentageToleranceRuleDef,
@@ -678,3 +682,125 @@ def test_presence_cardinality_valid_has_no_errors():
         },
     ):
         assert validate_custom_rule_dict(_defn(rule), DECLARED) == [], rule["kind"]
+
+
+# --- text / provenance kinds: round-trip --------------------------------------
+
+
+def test_round_trip_contains():
+    original = DocTypeRuleDefinition(
+        name="ct",
+        rules=[
+            ContainsRuleDef(
+                name="has_kw", field_path="currency", keywords=["USD", "EUR"],
+                severity="review", mode="any", case_insensitive=True,
+            ),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "contains"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], ContainsRuleDef)
+
+
+def test_round_trip_length_bounds():
+    original = DocTypeRuleDefinition(
+        name="lb",
+        rules=[
+            LengthBoundsRuleDef(
+                name="len_ok", field_path="currency", severity="hard",
+                min_length=3, max_length=3,
+            ),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "length_bounds"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], LengthBoundsRuleDef)
+
+
+def test_round_trip_field_confidence_floor():
+    original = DocTypeRuleDefinition(
+        name="cf",
+        rules=[
+            FieldConfidenceFloorRuleDef(
+                name="conf_ok", field_path="currency", floor=0.8, severity="review",
+            ),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "field_confidence_floor"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], FieldConfidenceFloorRuleDef)
+
+
+def test_round_trip_grounded_on_page():
+    original = DocTypeRuleDefinition(
+        name="g",
+        rules=[
+            GroundedOnPageRuleDef(name="grounded", field_path="currency", severity="hard"),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "grounded_on_page"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], GroundedOnPageRuleDef)
+
+
+# --- text / provenance kinds: validation rejections ---------------------------
+
+
+def test_contains_empty_keywords_errors():
+    rule = {
+        "kind": "contains",
+        "name": "ct",
+        "field_path": "currency",
+        "keywords": [],
+        "severity": "review",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("keywords" in e for e in errors)
+
+
+def test_contains_bad_mode_errors():
+    rule = {
+        "kind": "contains",
+        "name": "ct",
+        "field_path": "currency",
+        "keywords": ["USD"],
+        "severity": "review",
+        "mode": "nonsense",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("'mode'" in e for e in errors)
+
+
+def test_length_bounds_no_bounds_errors():
+    rule = {
+        "kind": "length_bounds",
+        "name": "lb",
+        "field_path": "currency",
+        "severity": "review",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("at least one of" in e for e in errors)
+
+
+def test_field_confidence_floor_too_high_errors():
+    rule = {
+        "kind": "field_confidence_floor",
+        "name": "cf",
+        "field_path": "currency",
+        "floor": 1.5,
+        "severity": "review",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("'floor'" in e for e in errors)

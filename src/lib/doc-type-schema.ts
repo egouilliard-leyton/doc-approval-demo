@@ -59,9 +59,14 @@ export type RuleKind =
   | "conditional_presence"
   | "mutual_exclusivity"
   | "at_least_n_of"
-  | "required_together";
+  | "required_together"
+  | "contains"
+  | "length_bounds"
+  | "field_confidence_floor"
+  | "grounded_on_page";
 export type RuleSeverity = "advisory" | "review" | "hard";
 export type MutualExclusivityMode = "exactly_one" | "at_most_one";
+export type ContainsMode = "any" | "all";
 export type FormatKind =
   | "alphanumeric"
   | "digits"
@@ -276,6 +281,48 @@ export interface RequiredTogetherRule {
   detail_fail?: string;
 }
 
+export interface ContainsRule {
+  kind: "contains";
+  name: string;
+  field_path: string;
+  keywords: string[];
+  severity: RuleSeverity;
+  mode?: ContainsMode;
+  case_insensitive?: boolean;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
+export interface LengthBoundsRule {
+  kind: "length_bounds";
+  name: string;
+  field_path: string;
+  severity: RuleSeverity;
+  min_length?: number | null;
+  max_length?: number | null;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
+export interface FieldConfidenceFloorRule {
+  kind: "field_confidence_floor";
+  name: string;
+  field_path: string;
+  floor: number;
+  severity: RuleSeverity;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
+export interface GroundedOnPageRule {
+  kind: "grounded_on_page";
+  name: string;
+  field_path: string;
+  severity: RuleSeverity;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
 export type RuleDef =
   | PresenceRule
   | ThresholdRule
@@ -294,7 +341,11 @@ export type RuleDef =
   | ConditionalPresenceRule
   | MutualExclusivityRule
   | AtLeastNOfRule
-  | RequiredTogetherRule;
+  | RequiredTogetherRule
+  | ContainsRule
+  | LengthBoundsRule
+  | FieldConfidenceFloorRule
+  | GroundedOnPageRule;
 
 export interface RuleDefinition {
   name: string;

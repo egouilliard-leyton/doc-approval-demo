@@ -21,6 +21,7 @@ import {
 import type {
   AggregateFn,
   AggregateOp,
+  ContainsMode,
   FieldDef,
   FormatKind,
   MutualExclusivityMode,
@@ -49,11 +50,20 @@ const RULE_KINDS: { value: RuleKind; label: string }[] = [
   { value: "mutual_exclusivity", label: "Mutual exclusivity" },
   { value: "at_least_n_of", label: "At least N of" },
   { value: "required_together", label: "Required together" },
+  { value: "contains", label: "Contains keyword(s)" },
+  { value: "length_bounds", label: "Length bounds" },
+  { value: "field_confidence_floor", label: "Field confidence floor" },
+  { value: "grounded_on_page", label: "Grounded on page" },
 ];
 
 const MUTEX_MODES: { value: MutualExclusivityMode; label: string }[] = [
   { value: "exactly_one", label: "Exactly one" },
   { value: "at_most_one", label: "At most one" },
+];
+
+const CONTAINS_MODES: { value: ContainsMode; label: string }[] = [
+  { value: "any", label: "Any" },
+  { value: "all", label: "All" },
 ];
 
 const SEVERITIES: { value: RuleSeverity; label: string }[] = [
@@ -241,6 +251,35 @@ function blankRule(kind: RuleKind, name: string): RuleDef {
       return { kind, name, field_paths: [], n: 1, severity: "review" };
     case "required_together":
       return { kind, name, field_paths: [], severity: "review" };
+    case "contains":
+      return {
+        kind,
+        name,
+        field_path: "",
+        keywords: [],
+        mode: "any",
+        case_insensitive: true,
+        severity: "review",
+      };
+    case "length_bounds":
+      return {
+        kind,
+        name,
+        field_path: "",
+        min_length: null,
+        max_length: null,
+        severity: "review",
+      };
+    case "field_confidence_floor":
+      return {
+        kind,
+        name,
+        field_path: "",
+        floor: 0.7,
+        severity: "review",
+      };
+    case "grounded_on_page":
+      return { kind, name, field_path: "", severity: "review" };
   }
 }
 
@@ -1301,6 +1340,151 @@ function RuleParams({
             value={rule.field_paths ?? []}
             onChange={(field_paths) => onPatch({ field_paths })}
           />
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "contains":
+      return (
+        <>
+          <Field label="Field path">
+            <PathInput
+              value={rule.field_path}
+              placeholder="field_name"
+              onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
+          <Field label="Keywords (comma-separated)">
+            <Input
+              value={(rule.keywords ?? []).join(", ")}
+              placeholder="paid, approved, final"
+              onChange={(e) =>
+                onPatch({
+                  keywords: e.target.value
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                })
+              }
+            />
+          </Field>
+          <Field label="Mode">
+            <Select
+              value={rule.mode ?? "any"}
+              onValueChange={(v) => onPatch({ mode: v as ContainsMode })}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CONTAINS_MODES.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Toggle
+            variant="outline"
+            pressed={rule.case_insensitive ?? false}
+            onPressedChange={(pressed) =>
+              onPatch({ case_insensitive: pressed })
+            }
+          >
+            Case-insensitive
+          </Toggle>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "length_bounds":
+      return (
+        <>
+          <Field label="Field path">
+            <PathInput
+              value={rule.field_path}
+              placeholder="field_name"
+              onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="Min length">
+              <Input
+                type="number"
+                value={rule.min_length ?? ""}
+                onChange={(e) =>
+                  onPatch({
+                    min_length:
+                      e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+              />
+            </Field>
+            <Field label="Max length">
+              <Input
+                type="number"
+                value={rule.max_length ?? ""}
+                onChange={(e) =>
+                  onPatch({
+                    max_length:
+                      e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+              />
+            </Field>
+          </div>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "field_confidence_floor":
+      return (
+        <>
+          <Field label="Field path">
+            <PathInput
+              value={rule.field_path}
+              placeholder="field_name"
+              onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
+          <Field label="Floor (0–1)">
+            <Input
+              type="number"
+              value={rule.floor ?? 0}
+              onChange={(e) => onPatch({ floor: Number(e.target.value) })}
+            />
+          </Field>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "grounded_on_page":
+      return (
+        <>
+          <Field label="Field path">
+            <PathInput
+              value={rule.field_path}
+              placeholder="field_name"
+              onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
           <DetailInputs
             pass={rule.detail_pass ?? ""}
             fail={rule.detail_fail ?? ""}
