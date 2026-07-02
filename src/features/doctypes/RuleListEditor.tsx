@@ -23,6 +23,7 @@ import type {
   AggregateOp,
   FieldDef,
   FormatKind,
+  MutualExclusivityMode,
   RuleDef,
   RuleKind,
   RuleSeverity,
@@ -44,6 +45,15 @@ const RULE_KINDS: { value: RuleKind; label: string }[] = [
   { value: "numeric_range", label: "Numeric range" },
   { value: "percentage_tolerance", label: "Percentage tolerance" },
   { value: "format", label: "Format / checksum" },
+  { value: "conditional_presence", label: "Conditional presence" },
+  { value: "mutual_exclusivity", label: "Mutual exclusivity" },
+  { value: "at_least_n_of", label: "At least N of" },
+  { value: "required_together", label: "Required together" },
+];
+
+const MUTEX_MODES: { value: MutualExclusivityMode; label: string }[] = [
+  { value: "exactly_one", label: "Exactly one" },
+  { value: "at_most_one", label: "At most one" },
 ];
 
 const SEVERITIES: { value: RuleSeverity; label: string }[] = [
@@ -210,6 +220,27 @@ function blankRule(kind: RuleKind, name: string): RuleDef {
       };
     case "format":
       return { kind, name, field_path: "", format: "email", severity: "review" };
+    case "conditional_presence":
+      return {
+        kind,
+        name,
+        condition_field_path: "",
+        required_field_path: "",
+        equals: null,
+        severity: "review",
+      };
+    case "mutual_exclusivity":
+      return {
+        kind,
+        name,
+        field_paths: [],
+        mode: "exactly_one",
+        severity: "review",
+      };
+    case "at_least_n_of":
+      return { kind, name, field_paths: [], n: 1, severity: "review" };
+    case "required_together":
+      return { kind, name, field_paths: [], severity: "review" };
   }
 }
 
@@ -231,6 +262,59 @@ function PathInput({
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
     />
+  );
+}
+
+// One PathInput per entry with add/remove controls — the field-path analogue of
+// set_membership's allowed_list editor (whose entries are field paths, so each
+// row gets a PathInput backed by the shared field datalist).
+function FieldPathsList({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (paths: string[]) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label className="text-xs text-muted-foreground">Field paths</Label>
+      {value.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          No field paths yet. Add one below.
+        </p>
+      )}
+      {value.map((path, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <div className="flex-1">
+            <PathInput
+              value={path}
+              placeholder="field_name"
+              onChange={(v) =>
+                onChange(value.map((p, j) => (j === i ? v : p)))
+              }
+            />
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Remove field path"
+            onClick={() => onChange(value.filter((_, j) => j !== i))}
+          >
+            <Trash2 />
+          </Button>
+        </div>
+      ))}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => onChange([...value, ""])}
+      >
+        <Plus className="size-3.5" />
+        Add field path
+      </Button>
+    </div>
   );
 }
 
@@ -1114,6 +1198,109 @@ function RuleParams({
               </SelectContent>
             </Select>
           </Field>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "conditional_presence":
+      return (
+        <>
+          <Field label="Condition field path">
+            <PathInput
+              value={rule.condition_field_path}
+              placeholder="field_a"
+              onChange={(v) => onPatch({ condition_field_path: v })}
+            />
+          </Field>
+          <Field label="equals (optional)">
+            <Input
+              value={rule.equals ?? ""}
+              placeholder="value that triggers the requirement"
+              onChange={(e) => onPatch({ equals: e.target.value })}
+            />
+          </Field>
+          <Field label="Required field path">
+            <PathInput
+              value={rule.required_field_path}
+              placeholder="field_b"
+              onChange={(v) => onPatch({ required_field_path: v })}
+            />
+          </Field>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "mutual_exclusivity":
+      return (
+        <>
+          <FieldPathsList
+            value={rule.field_paths ?? []}
+            onChange={(field_paths) => onPatch({ field_paths })}
+          />
+          <Field label="Mode">
+            <Select
+              value={rule.mode ?? "exactly_one"}
+              onValueChange={(v) =>
+                onPatch({ mode: v as MutualExclusivityMode })
+              }
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MUTEX_MODES.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "at_least_n_of":
+      return (
+        <>
+          <FieldPathsList
+            value={rule.field_paths ?? []}
+            onChange={(field_paths) => onPatch({ field_paths })}
+          />
+          <Field label="N">
+            <Input
+              type="number"
+              value={rule.n ?? 1}
+              onChange={(e) => onPatch({ n: Number(e.target.value) })}
+            />
+          </Field>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "required_together":
+      return (
+        <>
+          <FieldPathsList
+            value={rule.field_paths ?? []}
+            onChange={(field_paths) => onPatch({ field_paths })}
+          />
           <DetailInputs
             pass={rule.detail_pass ?? ""}
             fail={rule.detail_fail ?? ""}

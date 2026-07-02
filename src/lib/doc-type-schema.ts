@@ -55,8 +55,13 @@ export type RuleKind =
   | "aggregate"
   | "numeric_range"
   | "percentage_tolerance"
-  | "format";
+  | "format"
+  | "conditional_presence"
+  | "mutual_exclusivity"
+  | "at_least_n_of"
+  | "required_together";
 export type RuleSeverity = "advisory" | "review" | "hard";
+export type MutualExclusivityMode = "exactly_one" | "at_most_one";
 export type FormatKind =
   | "alphanumeric"
   | "digits"
@@ -231,6 +236,46 @@ export interface FormatRule {
   detail_fail?: string;
 }
 
+export interface ConditionalPresenceRule {
+  kind: "conditional_presence";
+  name: string;
+  condition_field_path: string;
+  required_field_path: string;
+  severity: RuleSeverity;
+  equals?: string | null;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
+export interface MutualExclusivityRule {
+  kind: "mutual_exclusivity";
+  name: string;
+  field_paths: string[];
+  severity: RuleSeverity;
+  mode?: MutualExclusivityMode;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
+export interface AtLeastNOfRule {
+  kind: "at_least_n_of";
+  name: string;
+  field_paths: string[];
+  n: number;
+  severity: RuleSeverity;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
+export interface RequiredTogetherRule {
+  kind: "required_together";
+  name: string;
+  field_paths: string[];
+  severity: RuleSeverity;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
 export type RuleDef =
   | PresenceRule
   | ThresholdRule
@@ -245,7 +290,11 @@ export type RuleDef =
   | AggregateRule
   | NumericRangeRule
   | PercentageToleranceRule
-  | FormatRule;
+  | FormatRule
+  | ConditionalPresenceRule
+  | MutualExclusivityRule
+  | AtLeastNOfRule
+  | RequiredTogetherRule;
 
 export interface RuleDefinition {
   name: string;

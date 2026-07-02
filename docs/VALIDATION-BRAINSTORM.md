@@ -71,11 +71,11 @@ Every primitive returns a `Check(name, passed, detail, severity)` where **severi
 - **Duration**: `end - start` within an allowed span (contract term 12–36 months).
 - **Business-calendar**: falls on a business day, within a fiscal year/quarter.
 
-### 2.4 Presence / dependency / conditional
-- **Conditional presence** (generalize `FieldDependencyRuleDef`): if `country == "FR"` then `vat_number` required; if `payment_method == "wire"` then `iban` required.
-- **Mutual exclusivity**: exactly one of {A, B} present.
-- **At-least-N-of**: at least one contact method present.
-- **Required-together**: if any of a group present, all must be.
+### 2.4 Presence / dependency / conditional — ✅ **SHIPPED**
+- **Conditional presence** — `ConditionalPresenceRuleDef`: if `condition_field` is present (optionally `== equals`) then `required_field` must be present (e.g. country==FR ⇒ vat_number required).
+- **Mutual exclusivity** — `MutualExclusivityRuleDef`: `exactly_one` or `at_most_one` of `field_paths` present.
+- **At-least-N-of** — `AtLeastNOfRuleDef`: at least `n` of `field_paths` present.
+- **Required-together** — `RequiredTogetherRuleDef`: if any of `field_paths` present, all must be.
 
 ### 2.5 Text / semantic (LLM-advisory territory)
 - **Contains / mentions** a required clause or keyword (governing-law clause present).

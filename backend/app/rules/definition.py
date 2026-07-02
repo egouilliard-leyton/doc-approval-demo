@@ -275,6 +275,52 @@ class FormatRuleDef:
 
 
 @dataclass
+class ConditionalPresenceRuleDef:
+    """If the condition field is present (and, when `equals` is set, equals that value),
+    then `required_field_path` must be present. Vacuously passes when the condition is
+    not met (mirrors FieldDependencyRuleDef)."""
+    name: str
+    condition_field_path: str
+    required_field_path: str
+    severity: Literal["hard", "review", "advisory"]
+    equals: str | None = None
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
+class MutualExclusivityRuleDef:
+    """Of the given field paths, `mode` controls how many may be present."""
+    name: str
+    field_paths: list[str]
+    severity: Literal["hard", "review", "advisory"]
+    mode: Literal["exactly_one", "at_most_one"] = "exactly_one"
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
+class AtLeastNOfRuleDef:
+    """At least `n` of the given field paths must be present."""
+    name: str
+    field_paths: list[str]
+    n: int
+    severity: Literal["hard", "review", "advisory"]
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
+class RequiredTogetherRuleDef:
+    """If ANY of the given field paths is present, ALL must be present (all-or-nothing)."""
+    name: str
+    field_paths: list[str]
+    severity: Literal["hard", "review", "advisory"]
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
 class CodedRuleDef:
     """Tier-3 escape hatch: delegate entirely to a hand-written function.
 
@@ -313,6 +359,10 @@ RuleDef = Union[
     NumericRangeRuleDef,
     PercentageToleranceRuleDef,
     FormatRuleDef,
+    ConditionalPresenceRuleDef,
+    MutualExclusivityRuleDef,
+    AtLeastNOfRuleDef,
+    RequiredTogetherRuleDef,
     CodedRuleDef,
     LlmAdvisoryRuleDef,
 ]
@@ -685,6 +735,82 @@ def _interpret(rule: RuleDef, fields: dict, ctx: DecisionContext) -> Check | Non
             severity=rule.severity,
         )
 
+    if isinstance(rule, ConditionalPresenceRuleDef):
+        cond_present = present(fields, rule.condition_field_path)
+        condition_met = cond_present and (
+            rule.equals is None
+            or str(fval(fields, rule.condition_field_path)) == rule.equals
+        )
+        passed = (not condition_met) or present(fields, rule.required_field_path)
+        if passed and not condition_met:
+            default = f"{rule.condition_field_path} condition not met"
+        elif passed:
+            default = f"{rule.required_field_path} present as required"
+        else:
+            default = (
+                f"{rule.condition_field_path} met but {rule.required_field_path} missing"
+            )
+        fmt = {"field_path": rule.condition_field_path}
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
+    if isinstance(rule, MutualExclusivityRuleDef):
+        present_paths = [p for p in rule.field_paths if present(fields, p)]
+        count = len(present_paths)
+        passed = (count == 1) if rule.mode == "exactly_one" else (count <= 1)
+        default = f"{count} of {len(rule.field_paths)} present ({rule.mode}): {present_paths}"
+        fmt = {
+            "field_path": rule.field_paths[0] if rule.field_paths else "",
+            "present": present_paths,
+            "count": count,
+        }
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
+    if isinstance(rule, AtLeastNOfRuleDef):
+        count = sum(1 for p in rule.field_paths if present(fields, p))
+        passed = count >= rule.n
+        default = f"{count} of {len(rule.field_paths)} present (need >= {rule.n})"
+        fmt = {
+            "field_path": rule.field_paths[0] if rule.field_paths else "",
+            "count": count,
+        }
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
+    if isinstance(rule, RequiredTogetherRuleDef):
+        present_paths = [p for p in rule.field_paths if present(fields, p)]
+        count = len(present_paths)
+        passed = count == 0 or count == len(rule.field_paths)
+        if passed:
+            default = f"{count} of {len(rule.field_paths)} present (all-or-nothing)"
+        else:
+            missing = [p for p in rule.field_paths if p not in present_paths]
+            default = f"present {present_paths} but missing {missing}"
+        fmt = {
+            "field_path": rule.field_paths[0] if rule.field_paths else "",
+            "present": present_paths,
+            "count": count,
+        }
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
     if isinstance(rule, CodedRuleDef):
         return rule.fn(fields, ctx)
 
@@ -797,6 +923,10 @@ __all__ = [
     "NumericRangeRuleDef",
     "PercentageToleranceRuleDef",
     "FormatRuleDef",
+    "ConditionalPresenceRuleDef",
+    "MutualExclusivityRuleDef",
+    "AtLeastNOfRuleDef",
+    "RequiredTogetherRuleDef",
     "CodedRuleDef",
     "LlmAdvisoryRuleDef",
     "DocTypeRuleDefinition",

@@ -13,7 +13,9 @@ from app.rules.contract import CONTRACT_RULE_DEFINITION
 from app.rules.definition import (
     AggregateRuleDef,
     ArithmeticIdentityRuleDef,
+    AtLeastNOfRuleDef,
     CodedRuleDef,
+    ConditionalPresenceRuleDef,
     DateConstraintRuleDef,
     DocTypeRuleDefinition,
     EqualityRuleDef,
@@ -21,9 +23,11 @@ from app.rules.definition import (
     FieldDependencyRuleDef,
     FormatRuleDef,
     LlmAdvisoryRuleDef,
+    MutualExclusivityRuleDef,
     NumericRangeRuleDef,
     PercentageToleranceRuleDef,
     PresenceRuleDef,
+    RequiredTogetherRuleDef,
     SetMembershipRuleDef,
     ThresholdCompareRuleDef,
     UniquenessVsHistoryRuleDef,
@@ -690,6 +694,104 @@ def test_percentage_tolerance_skips_when_reference_absent_or_zero():
     )
     assert _interpret(rule, {"actual": fv(100.0)}, ctx()) is None
     assert _interpret(rule, {"actual": fv(100.0), "expected": fv(0.0)}, ctx()) is None
+
+
+# --- primitives: ConditionalPresenceRuleDef -----------------------------------
+
+
+def test_conditional_presence_condition_met_required_present_passes():
+    rule = ConditionalPresenceRuleDef(
+        name="cp", condition_field_path="pay_by_wire",
+        required_field_path="iban", severity="hard",
+    )
+    out = _interpret(rule, {"pay_by_wire": fv("yes"), "iban": fv("DE123")}, ctx())
+    assert out.passed and out.severity == "hard"
+
+
+def test_conditional_presence_condition_met_required_absent_fails():
+    rule = ConditionalPresenceRuleDef(
+        name="cp", condition_field_path="pay_by_wire",
+        required_field_path="iban", severity="hard",
+    )
+    out = _interpret(rule, {"pay_by_wire": fv("yes")}, ctx())
+    assert not out.passed and out.severity == "hard"
+
+
+def test_conditional_presence_condition_not_met_vacuous_pass():
+    rule = ConditionalPresenceRuleDef(
+        name="cp", condition_field_path="pay_by_wire",
+        required_field_path="iban", severity="hard",
+    )
+    out = _interpret(rule, {}, ctx())
+    assert out.passed
+
+
+def test_conditional_presence_equals_match_requires_field():
+    rule = ConditionalPresenceRuleDef(
+        name="cp", condition_field_path="method",
+        required_field_path="iban", severity="hard", equals="wire",
+    )
+    ok = _interpret(rule, {"method": fv("wire"), "iban": fv("DE1")}, ctx())
+    assert ok.passed
+    bad = _interpret(rule, {"method": fv("wire")}, ctx())
+    assert not bad.passed
+
+
+def test_conditional_presence_equals_mismatch_vacuous_pass():
+    rule = ConditionalPresenceRuleDef(
+        name="cp", condition_field_path="method",
+        required_field_path="iban", severity="hard", equals="wire",
+    )
+    out = _interpret(rule, {"method": fv("cash")}, ctx())
+    assert out.passed  # condition present but not equal -> vacuous pass
+
+
+# --- primitives: MutualExclusivityRuleDef -------------------------------------
+
+
+def test_mutual_exclusivity_exactly_one():
+    rule = MutualExclusivityRuleDef(
+        name="mx", field_paths=["a", "b"], severity="hard", mode="exactly_one",
+    )
+    assert not _interpret(rule, {}, ctx()).passed  # 0 present
+    assert _interpret(rule, {"a": fv("x")}, ctx()).passed  # 1 present
+    assert not _interpret(rule, {"a": fv("x"), "b": fv("y")}, ctx()).passed  # 2 present
+
+
+def test_mutual_exclusivity_at_most_one():
+    rule = MutualExclusivityRuleDef(
+        name="mx", field_paths=["a", "b"], severity="review", mode="at_most_one",
+    )
+    out0 = _interpret(rule, {}, ctx())
+    assert out0.passed and out0.severity == "review"  # 0 present
+    assert not _interpret(rule, {"a": fv("x"), "b": fv("y")}, ctx()).passed  # 2 present
+
+
+# --- primitives: AtLeastNOfRuleDef --------------------------------------------
+
+
+def test_at_least_n_of_below_and_at_and_above():
+    rule = AtLeastNOfRuleDef(
+        name="atl", field_paths=["a", "b", "c"], n=2, severity="review",
+    )
+    assert not _interpret(rule, {"a": fv("x")}, ctx()).passed  # 1 < 2
+    at = _interpret(rule, {"a": fv("x"), "b": fv("y")}, ctx())
+    assert at.passed and at.severity == "review"  # 2 >= 2
+    assert _interpret(rule, {"a": fv("x"), "b": fv("y"), "c": fv("z")}, ctx()).passed  # 3
+
+
+# --- primitives: RequiredTogetherRuleDef --------------------------------------
+
+
+def test_required_together_none_all_partial():
+    rule = RequiredTogetherRuleDef(
+        name="rt", field_paths=["a", "b", "c"], severity="hard",
+    )
+    none = _interpret(rule, {}, ctx())
+    assert none.passed and none.severity == "hard"  # 0 present
+    assert _interpret(rule, {"a": fv("x"), "b": fv("y"), "c": fv("z")}, ctx()).passed  # all
+    partial = _interpret(rule, {"a": fv("x")}, ctx())
+    assert not partial.passed  # some but not all
 
 
 # --- parity: invoice ----------------------------------------------------------

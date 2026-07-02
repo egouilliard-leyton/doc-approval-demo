@@ -7,13 +7,17 @@ directly, mirroring the dict shapes ``test_doc_types_api.py`` builds.
 
 from app.rules.definition import (
     AggregateRuleDef,
+    AtLeastNOfRuleDef,
+    ConditionalPresenceRuleDef,
     DateConstraintRuleDef,
     DocTypeRuleDefinition,
     EqualityRuleDef,
     ExpressionRuleDef,
     FormatRuleDef,
+    MutualExclusivityRuleDef,
     NumericRangeRuleDef,
     PercentageToleranceRuleDef,
+    RequiredTogetherRuleDef,
 )
 from app.serialization import (
     dict_to_rule_defn,
@@ -506,3 +510,171 @@ def test_format_known_key_valid():
         "severity": "review",
     }
     assert validate_custom_rule_dict(_defn(rule), DECLARED) == []
+
+
+# --- presence/cardinality kinds: round-trip -----------------------------------
+
+
+def test_round_trip_conditional_presence():
+    original = DocTypeRuleDefinition(
+        name="cp",
+        rules=[
+            ConditionalPresenceRuleDef(
+                name="wire_needs_iban", condition_field_path="currency",
+                required_field_path="bill_to", severity="hard", equals="USD",
+            ),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "conditional_presence"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], ConditionalPresenceRuleDef)
+
+
+def test_round_trip_mutual_exclusivity():
+    original = DocTypeRuleDefinition(
+        name="mx",
+        rules=[
+            MutualExclusivityRuleDef(
+                name="one_of", field_paths=["bill_to", "ship_to"],
+                severity="review", mode="at_most_one",
+            ),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "mutual_exclusivity"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], MutualExclusivityRuleDef)
+
+
+def test_round_trip_at_least_n_of():
+    original = DocTypeRuleDefinition(
+        name="atl",
+        rules=[
+            AtLeastNOfRuleDef(
+                name="two_of", field_paths=["bill_to", "ship_to", "currency"],
+                n=2, severity="hard",
+            ),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "at_least_n_of"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], AtLeastNOfRuleDef)
+
+
+def test_round_trip_required_together():
+    original = DocTypeRuleDefinition(
+        name="rt",
+        rules=[
+            RequiredTogetherRuleDef(
+                name="together", field_paths=["start", "end"], severity="hard",
+            ),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "required_together"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], RequiredTogetherRuleDef)
+
+
+# --- presence/cardinality kinds: validation rejections ------------------------
+
+
+def test_field_paths_undeclared_field_errors():
+    rule = {
+        "kind": "mutual_exclusivity",
+        "name": "mx",
+        "field_paths": ["bill_to", "nope"],
+        "severity": "review",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("nope" in e for e in errors)
+
+
+def test_field_paths_empty_list_errors():
+    rule = {
+        "kind": "required_together",
+        "name": "rt",
+        "field_paths": [],
+        "severity": "hard",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("non-empty list" in e for e in errors)
+
+
+def test_mutual_exclusivity_bad_mode_errors():
+    rule = {
+        "kind": "mutual_exclusivity",
+        "name": "mx",
+        "field_paths": ["bill_to", "ship_to"],
+        "severity": "review",
+        "mode": "nonsense",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("'mode'" in e for e in errors)
+
+
+def test_at_least_n_of_zero_errors():
+    rule = {
+        "kind": "at_least_n_of",
+        "name": "atl",
+        "field_paths": ["bill_to", "ship_to"],
+        "n": 0,
+        "severity": "hard",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("'n'" in e for e in errors)
+
+
+def test_at_least_n_of_n_greater_than_len_errors():
+    rule = {
+        "kind": "at_least_n_of",
+        "name": "atl",
+        "field_paths": ["bill_to", "ship_to"],
+        "n": 3,
+        "severity": "hard",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("must be <= the number of field_paths" in e for e in errors)
+
+
+def test_presence_cardinality_valid_has_no_errors():
+    for rule in (
+        {
+            "kind": "conditional_presence",
+            "name": "cp",
+            "condition_field_path": "currency",
+            "required_field_path": "bill_to",
+            "severity": "hard",
+        },
+        {
+            "kind": "mutual_exclusivity",
+            "name": "mx",
+            "field_paths": ["bill_to", "ship_to"],
+            "severity": "review",
+            "mode": "exactly_one",
+        },
+        {
+            "kind": "at_least_n_of",
+            "name": "atl",
+            "field_paths": ["bill_to", "ship_to", "currency"],
+            "n": 2,
+            "severity": "hard",
+        },
+        {
+            "kind": "required_together",
+            "name": "rt",
+            "field_paths": ["start", "end"],
+            "severity": "hard",
+        },
+    ):
+        assert validate_custom_rule_dict(_defn(rule), DECLARED) == [], rule["kind"]
