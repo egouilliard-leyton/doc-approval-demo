@@ -98,6 +98,7 @@ export function useCase(): UseCase {
           caseId: detail.id,
           caseType: detail.case_type,
           label: detail.label,
+          ocrEngine,
         });
       } catch (e) {
         toast.error("Could not create case", { description: errMessage(e) });

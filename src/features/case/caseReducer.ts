@@ -29,6 +29,8 @@ export interface CaseState {
   caseId: string | null;
   caseType: string | null;
   label: string;
+  ocrEngine: string; // case-global OCR engine, chosen at upload and reused for extraction
+
   members: Record<string, CaseMemberState>;
   memberOrder: string[]; // memberIds in insertion order
   reconciliation: CaseReconciliation | null;
@@ -51,6 +53,7 @@ export function initialCaseState(): CaseState {
     caseId: null,
     caseType: null,
     label: "",
+    ocrEngine: "",
     members: {},
     memberOrder: [],
     reconciliation: null,
@@ -63,7 +66,13 @@ export function initialCaseState(): CaseState {
 }
 
 export type CaseAction =
-  | { type: "CREATE_CASE_DONE"; caseId: string; caseType: string | null; label: string }
+  | {
+      type: "CREATE_CASE_DONE";
+      caseId: string;
+      caseType: string | null;
+      label: string;
+      ocrEngine: string;
+    }
   | { type: "ADD_MEMBERS"; members: NewCaseMember[] }
   | { type: "MEMBER_STAGE_START"; memberId: string; status: CaseMemberStatus }
   | {
@@ -108,6 +117,7 @@ export function caseReducer(state: CaseState, action: CaseAction): CaseState {
         caseId: action.caseId,
         caseType: action.caseType,
         label: action.label,
+        ocrEngine: action.ocrEngine,
       };
     case "ADD_MEMBERS": {
       const members = { ...state.members };

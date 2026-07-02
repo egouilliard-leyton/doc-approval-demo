@@ -13,15 +13,14 @@ export type AdminSection = "overview" | "documents" | "corrections" | "config";
 
 /** A parsed location — the single shape the shell routes on. */
 export type Route =
-  | { view: "workspace" }
+  | { view: "home" }
   | { view: "document"; id: string; tab: InspectorTab; field?: string }
   | { view: "cases" }
-  | { view: "case-new" }
   | { view: "case"; id: string; member?: string }
   | { view: "admin"; section: AdminSection; doctype?: string };
 
 /** Where an empty or unrecognizable hash lands. */
-export const DEFAULT_ROUTE: Route = { view: "workspace" };
+export const DEFAULT_ROUTE: Route = { view: "home" };
 
 const INSPECTOR_TABS: InspectorTab[] = [
   "ocr",
@@ -57,7 +56,7 @@ function coerceSection(raw: string | undefined): AdminSection {
  * DEFAULT_ROUTE, so the shell always has a route to render.
  */
 export function parseHash(hash: string): Route {
-  // Drop the leading "#", then any leading "/". "" and "#/" both mean workspace.
+  // Drop the leading "#", then any leading "/". "" and "#/" both mean home.
   const raw = hash.replace(/^#/, "").replace(/^\//, "");
   const [pathPart, queryPart = ""] = raw.split("?");
   const segments = pathPart
@@ -83,7 +82,9 @@ export function parseHash(hash: string): Route {
   if (head === "cases") {
     const sub = rest[0];
     if (!sub) return { view: "cases" };
-    if (sub === "new") return { view: "case-new" };
+    // Old `#/cases/new` bookmarks gracefully redirect to the case list — the
+    // "new case" entry now lives on Home, not a dedicated route.
+    if (sub === "new") return { view: "cases" };
     const member = query.get("member");
     return member
       ? { view: "case", id: sub, member }
@@ -109,7 +110,7 @@ export function parseHash(hash: string): Route {
  */
 export function formatHash(route: Route): string {
   switch (route.view) {
-    case "workspace":
+    case "home":
       return "#/";
     case "document": {
       const params = new URLSearchParams();
@@ -121,8 +122,6 @@ export function formatHash(route: Route): string {
     }
     case "cases":
       return "#/cases";
-    case "case-new":
-      return "#/cases/new";
     case "case": {
       const base = `#/cases/${encodeURIComponent(route.id)}`;
       return route.member
@@ -159,7 +158,7 @@ export function routesEqual(a: Route, b: Route): boolean {
       return a.section === other.section && a.doctype === other.doctype;
     }
     default:
-      // workspace / cases / case-new carry no modifiers — same view is enough.
+      // home / cases carry no modifiers — same view is enough.
       return true;
   }
 }

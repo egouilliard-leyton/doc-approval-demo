@@ -9,6 +9,7 @@ function seeded(): CaseState {
     caseId: "case-1",
     caseType: "loan_application",
     label: "My case",
+    ocrEngine: "docling",
   });
   s = caseReducer(s, {
     type: "ADD_MEMBERS",
@@ -35,10 +36,12 @@ describe("caseReducer", () => {
       caseId: "case-1",
       caseType: "loan_application",
       label: "L",
+      ocrEngine: "docling",
     });
     expect(s.caseId).toBe("case-1");
     expect(s.caseType).toBe("loan_application");
     expect(s.label).toBe("L");
+    expect(s.ocrEngine).toBe("docling");
   });
 
   it("ADD_MEMBERS seeds queued members in order", () => {

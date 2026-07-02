@@ -8,10 +8,10 @@ import {
 } from "@/lib/route";
 
 describe("parseHash", () => {
-  it("maps the roots to workspace", () => {
-    expect(parseHash("")).toEqual({ view: "workspace" });
-    expect(parseHash("#")).toEqual({ view: "workspace" });
-    expect(parseHash("#/")).toEqual({ view: "workspace" });
+  it("maps the roots to home", () => {
+    expect(parseHash("")).toEqual({ view: "home" });
+    expect(parseHash("#")).toEqual({ view: "home" });
+    expect(parseHash("#/")).toEqual({ view: "home" });
   });
 
   it("parses a document with the default tab", () => {
@@ -49,10 +49,13 @@ describe("parseHash", () => {
     });
   });
 
-  it("parses the cases list, new, and a single case", () => {
+  it("parses the cases list and a single case", () => {
     expect(parseHash("#/cases")).toEqual({ view: "cases" });
-    expect(parseHash("#/cases/new")).toEqual({ view: "case-new" });
     expect(parseHash("#/cases/case_9")).toEqual({ view: "case", id: "case_9" });
+  });
+
+  it("redirects the retired `#/cases/new` route to the case list", () => {
+    expect(parseHash("#/cases/new")).toEqual({ view: "cases" });
   });
 
   it("parses a case member overlay", () => {
@@ -102,10 +105,9 @@ describe("parseHash", () => {
 });
 
 describe("formatHash", () => {
-  it("formats workspace and cases roots", () => {
-    expect(formatHash({ view: "workspace" })).toBe("#/");
+  it("formats home and cases roots", () => {
+    expect(formatHash({ view: "home" })).toBe("#/");
     expect(formatHash({ view: "cases" })).toBe("#/cases");
-    expect(formatHash({ view: "case-new" })).toBe("#/cases/new");
   });
 
   it("omits the default tab modifier", () => {
@@ -150,12 +152,11 @@ describe("formatHash", () => {
 
 describe("round-trip parseHash(formatHash(r))", () => {
   const routes: Route[] = [
-    { view: "workspace" },
+    { view: "home" },
     { view: "document", id: "doc_1", tab: "structured" },
     { view: "document", id: "doc_1", tab: "ocr" },
     { view: "document", id: "doc/42", tab: "compare", field: "total_amount" },
     { view: "cases" },
-    { view: "case-new" },
     { view: "case", id: "case_9" },
     { view: "case", id: "case_9", member: "doc_3" },
     { view: "admin", section: "overview" },
@@ -171,7 +172,7 @@ describe("round-trip parseHash(formatHash(r))", () => {
 
 describe("routesEqual", () => {
   it("is true for structurally identical routes", () => {
-    expect(routesEqual({ view: "workspace" }, { view: "workspace" })).toBe(true);
+    expect(routesEqual({ view: "home" }, { view: "home" })).toBe(true);
     expect(
       routesEqual(
         { view: "document", id: "doc_1", tab: "ocr", field: "x" },
@@ -181,7 +182,7 @@ describe("routesEqual", () => {
   });
 
   it("is false across different views", () => {
-    expect(routesEqual({ view: "workspace" }, { view: "cases" })).toBe(false);
+    expect(routesEqual({ view: "home" }, { view: "cases" })).toBe(false);
   });
 
   it("distinguishes on a modifier difference", () => {

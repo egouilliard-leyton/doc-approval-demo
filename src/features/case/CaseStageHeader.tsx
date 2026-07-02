@@ -1,7 +1,7 @@
 // Shared case-flow header: a breadcrumb ("Cases › <label>") so you always know which
 // case you're in, a three-step stage stepper (Upload → Classify → Review) with the
 // current stage highlighted so you always know where you are, and a consistent back
-// action. Used by NewCaseView, ClassifyConfirmView and CaseOverview so the whole flow
+// action. Used by ClassifyConfirmView and CaseOverview so the whole flow
 // reads as one connected experience.
 import { ChevronRight, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";

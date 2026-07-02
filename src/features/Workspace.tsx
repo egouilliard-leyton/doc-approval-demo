@@ -49,9 +49,9 @@ export function Workspace() {
             onClick={() => {
               reset();
               // replace (not push) so the route update batches synchronously with
-              // reset() — one render straight to the upload screen, no LoadingDocument
+              // reset() — one render straight to the home screen, no LoadingDocument
               // flash — and "start over" doesn't leave a dead doc entry in history.
-              navigate({ view: "workspace" }, { replace: true });
+              navigate({ view: "home" }, { replace: true });
             }}
           >
             <Plus className="size-4" />
