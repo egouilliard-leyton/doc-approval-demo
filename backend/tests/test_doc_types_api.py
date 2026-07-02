@@ -61,6 +61,9 @@ def test_list_includes_builtins():
         assert "invoice" in by_name and "contract" in by_name
         assert by_name["invoice"]["builtin"] is True
         assert by_name["contract"]["builtin"] is True
+        # Multi-word built-ins get humanized labels (not "Delivery_note").
+        assert by_name["po"]["label"] == "Purchase Order"
+        assert by_name["delivery_note"]["label"] == "Delivery Note"
 
 
 def test_get_single_and_404():

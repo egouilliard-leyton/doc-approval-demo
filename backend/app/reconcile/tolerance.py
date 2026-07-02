@@ -20,20 +20,53 @@ from app.rules.base import as_date
 # Field-name hints that a field carries a date (vs a plain string).
 _DATE_NAME = re.compile(r"date|_dt|effective|expiry|due|renewal", re.IGNORECASE)
 
+# Common legal/company-form suffixes stripped from the TAIL of a company name so two
+# spellings of the same entity agree ("Acme Ltd" == "Acme Limited" == "Acme Limited
+# Company"). Kept deliberately small and applied only as trailing tokens, so it never
+# rewrites the middle of a name or loosens the global fuzzy threshold.
+_LEGAL_SUFFIXES = frozenset(
+    {
+        "ltd", "limited", "inc", "incorporated", "llc", "corp", "corporation",
+        "co", "company", "plc", "gmbh", "sa",
+    }
+)
+
 
 def _is_number(value: object) -> bool:
     """A real numeric value (bools are NOT numbers here — they're presence flags)."""
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _strip_legal_suffixes(text: str) -> str:
+    """Drop trailing legal-suffix tokens from an already-normalized company name.
+
+    Operates on whitespace tokens (a trailing ``.``/``,`` on the last token is tolerated
+    so ``"acme ltd."`` still matches ``"ltd"``) and only ever removes tokens from the END,
+    so ``"acme ltd" -> "acme"`` and ``"acme limited company" -> "acme"`` while an interior
+    word is never touched. If a name is ENTIRELY suffix tokens (e.g. just ``"company"``),
+    the original is returned unchanged rather than collapsing to the empty string — that
+    would make every all-suffix name spuriously agree.
+    """
+    tokens = text.split()
+    end = len(tokens)
+    while end > 0 and tokens[end - 1].strip(".,") in _LEGAL_SUFFIXES:
+        end -= 1
+    if end == 0:
+        return text  # all-suffix name -> keep as-is, never collapse to empty
+    return " ".join(tokens[:end])
+
+
 def _normalize(value: object) -> str:
-    """String normalization key: casefold -> collapse whitespace -> strip.
+    """String normalization key: casefold -> collapse whitespace -> strip legal suffixes.
 
     Mirrors the casefold/collapse/strip approach of the codebase's other normalizers
     (``structuring._normalize_for_dedup`` / ``rules.definition._normalize_equality_value``),
-    kept minimal here: exact-equality after this key means the two strings agree.
+    then strips trailing company-form suffixes (see :func:`_strip_legal_suffixes`) so
+    exact-equality after this key means the two strings agree — including two spellings of
+    the same company ("Acme Ltd" / "Acme Limited" both reduce to "acme").
     """
-    return " ".join(str(value).casefold().split()).strip()
+    base = " ".join(str(value).casefold().split()).strip()
+    return _strip_legal_suffixes(base)
 
 
 def infer_kind(field_path: str, sample_values: list) -> str:

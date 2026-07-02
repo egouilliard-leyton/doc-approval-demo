@@ -38,8 +38,10 @@ class _RegistryEntry:
 _REGISTRY: dict[str, _RegistryEntry] = {}
 _BUILTINS_LOADED = False
 
-# The two built-in types, resolved from code (their CodedRuleDefs can't round-trip JSON).
-_BUILTIN_NAMES = ("invoice", "contract")
+# The built-in types, resolved from code (their CodedRuleDefs can't round-trip JSON). The
+# AP-match members po/delivery_note carry a minimal (empty) ruleset, but still resolve from
+# code here so they list/seed identically to invoice/contract.
+_BUILTIN_NAMES = ("invoice", "contract", "po", "delivery_note")
 
 
 def _ensure_builtins() -> None:
@@ -49,10 +51,14 @@ def _ensure_builtins() -> None:
         return
 
     from app.extraction.contract import SPEC as CON_SPEC
+    from app.extraction.delivery_note import SPEC as DN_SPEC
     from app.extraction.invoice import SPEC as INV_SPEC
+    from app.extraction.po import SPEC as PO_SPEC
     from app.rules.contract import CONTRACT_RULE_DEFINITION
     from app.rules.definition import build_ruleset
+    from app.rules.delivery_note import DELIVERY_NOTE_RULE_DEFINITION
     from app.rules.invoice import INVOICE_RULE_DEFINITION
+    from app.rules.po import PO_RULE_DEFINITION
 
     _REGISTRY["invoice"] = _RegistryEntry(
         spec=INV_SPEC,
@@ -65,6 +71,20 @@ def _ensure_builtins() -> None:
         spec=CON_SPEC,
         ruleset=build_ruleset(CONTRACT_RULE_DEFINITION),
         citation_paths=CONTRACT_RULE_DEFINITION.citation_paths,
+        builtin=True,
+        version=0,
+    )
+    _REGISTRY["po"] = _RegistryEntry(
+        spec=PO_SPEC,
+        ruleset=build_ruleset(PO_RULE_DEFINITION),
+        citation_paths=PO_RULE_DEFINITION.citation_paths,
+        builtin=True,
+        version=0,
+    )
+    _REGISTRY["delivery_note"] = _RegistryEntry(
+        spec=DN_SPEC,
+        ruleset=build_ruleset(DELIVERY_NOTE_RULE_DEFINITION),
+        citation_paths=DELIVERY_NOTE_RULE_DEFINITION.citation_paths,
         builtin=True,
         version=0,
     )
@@ -157,21 +177,39 @@ def seed_builtins(session) -> None:
     _ensure_builtins()
 
     from app.extraction.contract import CONTRACT_DEFINITION
+    from app.extraction.delivery_note import DELIVERY_NOTE_DEFINITION
     from app.extraction.invoice import INVOICE_DEFINITION
+    from app.extraction.po import PO_DEFINITION
     from app.models import DocTypeDefinitionRow
     from app.rules.contract import CONTRACT_RULE_DEFINITION
+    from app.rules.delivery_note import DELIVERY_NOTE_RULE_DEFINITION
     from app.rules.invoice import INVOICE_RULE_DEFINITION
+    from app.rules.po import PO_RULE_DEFINITION
     from app.serialization import extraction_defn_to_dict, rule_defn_to_dict
 
-    extraction_defns = {"invoice": INVOICE_DEFINITION, "contract": CONTRACT_DEFINITION}
-    rule_defns = {"invoice": INVOICE_RULE_DEFINITION, "contract": CONTRACT_RULE_DEFINITION}
+    extraction_defns = {
+        "invoice": INVOICE_DEFINITION,
+        "contract": CONTRACT_DEFINITION,
+        "po": PO_DEFINITION,
+        "delivery_note": DELIVERY_NOTE_DEFINITION,
+    }
+    rule_defns = {
+        "invoice": INVOICE_RULE_DEFINITION,
+        "contract": CONTRACT_RULE_DEFINITION,
+        "po": PO_RULE_DEFINITION,
+        "delivery_note": DELIVERY_NOTE_RULE_DEFINITION,
+    }
+
+    # Display labels for multi-word built-ins; str.capitalize() would render
+    # "delivery_note" as "Delivery_note", so humanize explicitly.
+    labels = {"po": "Purchase Order", "delivery_note": "Delivery Note"}
 
     for name in _BUILTIN_NAMES:
         if session.get(DocTypeDefinitionRow, name) is not None:
             continue  # idempotent: never overwrite an existing row
         row = DocTypeDefinitionRow(
             name=name,
-            label=name.capitalize(),
+            label=labels.get(name, name.replace("_", " ").title()),
             extraction_definition=extraction_defn_to_dict(extraction_defns[name]),
             rule_definition=rule_defn_to_dict(rule_defns[name]),
             citation_paths=list(_REGISTRY[name].citation_paths),

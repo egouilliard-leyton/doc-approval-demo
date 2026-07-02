@@ -49,6 +49,49 @@ def _ap_match_case(client: TestClient) -> tuple[str, str, str, str]:
     return case_id, inv_id, con_id, po_id
 
 
+def _full_ap_match_case(client: TestClient) -> str:
+    """A full FOUR-document ap_match case: invoice + po + contract + delivery_note.
+
+    Every member is structured via the mock provider, and the mock branches emit values
+    that agree (matching total/vendor across invoice/po/contract; the PO supplies the
+    po_number the invoice omits), so the case reconciles cleanly and auto-approves offline.
+    """
+    case_id = client.post("/cases", json={"case_type": "ap_match", "label": "4-way"}).json()["id"]
+    inv_id = _structured(client, "invoice-clean.pdf", "invoice")
+    po_id = _structured(client, "invoice-clean.pdf", "po")
+    con_id = _structured(client, "contract-standard.pdf", "contract")
+    dn_id = _structured(client, "invoice-clean.pdf", "delivery_note")
+    for doc_id in (inv_id, po_id, con_id, dn_id):
+        assert client.post(f"/cases/{case_id}/documents/{doc_id}").status_code == 200
+    return case_id
+
+
+def test_full_four_document_case_reconciles_and_approves():
+    with TestClient(app) as client:
+        case_id = _full_ap_match_case(client)
+
+        recon = client.post(f"/cases/{case_id}/reconcile")
+        assert recon.status_code == 200, recon.text
+        body = recon.json()
+        assert body["member_count"] == 4
+        assert body["structured_count"] == 4
+        fields = {f["name"]: f for f in body["canonical_fields"]}
+        assert fields["total_amount"]["agreement"] is True
+        assert fields["vendor_name"]["agreement"] is True
+        assert fields["po_number"]["agreement"] is True
+        assert fields["po_number"]["value"] == "PO-1001"  # sourced from the PO alone
+
+        decide = client.post(f"/cases/{case_id}/decide", params={"provider": "mock"})
+        assert decide.status_code == 200, decide.text
+        dbody = decide.json()
+        assert dbody["decision"] == "approve"
+        assert dbody["status"] == "decided"
+        # Both required members (invoice + po) are present AND structured.
+        check_names = {c["name"] for c in dbody["checks"]}
+        assert "present:invoice" in check_names
+        assert "present:po" in check_names
+
+
 def test_reconcile_and_decide_happy_path():
     with TestClient(app) as client:
         case_id, _inv, _con, _po = _ap_match_case(client)

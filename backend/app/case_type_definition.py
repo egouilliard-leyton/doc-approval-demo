@@ -109,14 +109,17 @@ AP_MATCH_DEFINITION = CaseTypeDefinition(
     canonical_fields={
         "total_amount": [
             {"doc_type": "invoice", "field_path": "total"},
+            {"doc_type": "po", "field_path": "total"},
             {"doc_type": "contract", "field_path": "total_value"},
         ],
         "vendor_name": [
             {"doc_type": "invoice", "field_path": "vendor"},
+            {"doc_type": "po", "field_path": "vendor"},
             {"doc_type": "contract", "field_path": "parties"},
         ],
         "po_number": [
             {"doc_type": "invoice", "field_path": "po_number"},
+            {"doc_type": "po", "field_path": "po_number"},
         ],
     },
 )

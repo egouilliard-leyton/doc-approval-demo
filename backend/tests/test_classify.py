@@ -49,7 +49,12 @@ def test_heuristic_classifies_invoice_text():
     assert result.candidates[0].doc_type == "invoice"
     assert result.confidence > 0.0
     # candidates are a sorted, best-first ranking of every registered type.
-    assert {c.doc_type for c in result.candidates} == {"invoice", "contract"}
+    assert {c.doc_type for c in result.candidates} == {
+        "invoice",
+        "contract",
+        "po",
+        "delivery_note",
+    }
     assert result.candidates == sorted(result.candidates, key=lambda c: -c.score)
 
 

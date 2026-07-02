@@ -693,6 +693,12 @@ def _structure_mock(doc_type: str, full_text: str) -> list[FlatExtraction]:
     For invoices: grounds vendor/invoice_no/total/line_item against the real
     ``full_text`` (so page mapping runs for real), emits an intentionally ungrounded
     ``currency``, and OMITS ``po_number`` to prove the null + low-confidence path.
+
+    The ``po`` and ``delivery_note`` branches emit values that AGREE with the invoice /
+    contract happy path so a full four-document ap_match case reconciles cleanly offline:
+    the PO's ``total`` / ``vendor`` mirror the invoice's ("$1,234.56" / "MOCK INVOICE") and
+    it supplies the ``po_number`` the invoice omits; the delivery note carries plausible
+    grounded values (it is a completeness-only member, so it feeds no canonical field).
     """
     if doc_type == "invoice":
         return [
@@ -711,6 +717,36 @@ def _structure_mock(doc_type: str, full_text: str) -> list[FlatExtraction]:
                 },
             ),
             # po_number deliberately omitted.
+        ]
+    if doc_type == "po":
+        return [
+            # A PO-shaped number the invoice branch omits, so the case's po_number canonical
+            # field has exactly one non-null source (the PO) and trivially agrees.
+            FlatExtraction(cls="po_number", text="PO-1001"),  # absent in OCR text -> ungrounded
+            FlatExtraction(cls="vendor", text="MOCK INVOICE"),  # matches the invoice vendor
+            FlatExtraction(cls="order_date", text="page 1"),
+            FlatExtraction(cls="total", text="$1,234.56"),  # matches invoice total + contract value
+            FlatExtraction(
+                cls="line_item",
+                text="$1,234.56",
+                attributes={
+                    "desc": "Mock Widget",
+                    "qty": "1",
+                    "unit_price": "1234.56",
+                    "amount": "1234.56",
+                },
+            ),
+        ]
+    if doc_type == "delivery_note":
+        return [
+            FlatExtraction(cls="delivery_note_no", text="DN-1001"),  # absent in OCR text -> ungrounded
+            FlatExtraction(cls="delivery_date", text="page 1"),
+            FlatExtraction(cls="vendor", text="MOCK INVOICE"),  # matches the invoice vendor
+            FlatExtraction(
+                cls="line_item",
+                text="$1,234.56",
+                attributes={"desc": "Mock Widget", "qty": "1"},  # received quantity
+            ),
         ]
     return [
         FlatExtraction(cls="party", text="MOCK INVOICE"),

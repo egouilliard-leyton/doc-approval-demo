@@ -108,6 +108,52 @@ def test_string_fuzzy_match_agrees(monkeypatch):
     assert _field(result, "vendor_name").agreement is True
 
 
+def test_company_suffix_names_agree_at_default_threshold():
+    """Legal-suffix variants of one company agree WITHOUT loosening the fuzzy threshold.
+
+    At the default 0.85 threshold the raw fuzzy ratio of "Acme Ltd"/"Acme Limited" (0.8) is
+    NOT enough; suffix normalization reduces both to "acme" so they exact-match instead.
+    """
+    assert settings.reconcile_string_fuzzy_threshold == 0.85  # threshold untouched
+    for a, b in [
+        ("Acme Ltd", "Acme Limited"),
+        ("Acme Ltd", "Acme Limited Company"),
+        ("Acme Limited", "Acme Limited Company"),
+    ]:
+        members = [
+            _member("d1", "invoice", {"vendor": fv(a)}),
+            _member("d2", "contract", {"parties": [fv(b)]}),
+        ]
+        result = reconcile_case(_case(), AP_MATCH_DEFINITION, members)
+        vn = _field(result, "vendor_name")
+        assert vn.agreement is True, (a, b)
+        assert vn.conflict_detail is None, (a, b)
+
+
+def test_genuinely_different_vendor_still_conflicts():
+    """Suffix normalization must not conflate two DIFFERENT companies."""
+    members = [
+        _member("d1", "invoice", {"vendor": fv("Acme Ltd")}),
+        _member("d2", "contract", {"parties": [fv("Globex Inc")]}),
+    ]
+    result = reconcile_case(_case(), AP_MATCH_DEFINITION, members)
+    vn = _field(result, "vendor_name")
+    assert vn.agreement is False
+    assert vn.conflict_detail is not None
+
+
+def test_values_agree_strips_legal_suffixes():
+    """Focused unit test on the string comparator's company-suffix normalization."""
+    from app.reconcile.tolerance import values_agree
+
+    assert values_agree("string", "Acme Ltd", "Acme Limited", settings) is True
+    assert values_agree("string", "Acme Ltd.", "Acme Limited Company", settings) is True
+    assert values_agree("string", "Acme Ltd", "Globex Inc", settings) is False
+    # A name that is ENTIRELY a suffix token never collapses to empty (which would make
+    # every all-suffix name spuriously agree).
+    assert values_agree("string", "Company", "Limited", settings) is False
+
+
 # --- date --------------------------------------------------------------------
 
 
