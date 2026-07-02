@@ -6,9 +6,13 @@ directly, mirroring the dict shapes ``test_doc_types_api.py`` builds.
 """
 
 from app.rules.definition import (
+    AggregateRuleDef,
     DateConstraintRuleDef,
     DocTypeRuleDefinition,
     EqualityRuleDef,
+    ExpressionRuleDef,
+    NumericRangeRuleDef,
+    PercentageToleranceRuleDef,
 )
 from app.serialization import (
     dict_to_rule_defn,
@@ -255,3 +259,207 @@ def test_date_constraint_only_empty_strings_still_errors():
     }
     errors = validate_custom_rule_dict(_defn(rule), DECLARED)
     assert any("at least one constraint" in e for e in errors)
+
+
+# --- round-trip: Wave B kinds -------------------------------------------------
+
+
+def test_round_trip_expression():
+    original = DocTypeRuleDefinition(
+        name="expr",
+        rules=[
+            ExpressionRuleDef(
+                name="balances", expression="start == end", severity="hard",
+                detail_fail="mismatch",
+            ),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "expression"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], ExpressionRuleDef)
+
+
+def test_round_trip_aggregate():
+    original = DocTypeRuleDefinition(
+        name="agg",
+        rules=[
+            AggregateRuleDef(
+                name="sum_amounts", list_path="start", agg="sum", severity="review",
+                sub_field="amount", op="lte", compare_value=1000.0, tolerance=0.5,
+            ),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "aggregate"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], AggregateRuleDef)
+
+
+def test_round_trip_numeric_range():
+    original = DocTypeRuleDefinition(
+        name="nr",
+        rules=[
+            NumericRangeRuleDef(
+                name="qty_range", field_path="start", severity="hard", min=0.0, max=100.0,
+            ),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "numeric_range"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], NumericRangeRuleDef)
+
+
+def test_round_trip_percentage_tolerance():
+    original = DocTypeRuleDefinition(
+        name="pct",
+        rules=[
+            PercentageToleranceRuleDef(
+                name="within_5pct", value_path="start", reference_path="end",
+                pct=0.05, severity="review",
+            ),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "percentage_tolerance"
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], PercentageToleranceRuleDef)
+
+
+# --- validation: Wave B rejections --------------------------------------------
+
+
+def test_expression_undeclared_field_errors():
+    rule = {
+        "kind": "expression",
+        "name": "expr",
+        "expression": "gross == 1",
+        "severity": "hard",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("gross" in e for e in errors)
+
+
+def test_expression_valid_has_no_errors():
+    rule = {
+        "kind": "expression",
+        "name": "expr",
+        "expression": "start == end",
+        "severity": "hard",
+    }
+    assert validate_custom_rule_dict(_defn(rule), DECLARED) == []
+
+
+def test_aggregate_both_compare_set_errors():
+    rule = {
+        "kind": "aggregate",
+        "name": "agg",
+        "list_path": "start",
+        "agg": "sum",
+        "severity": "review",
+        "sub_field": "amount",
+        "compare_value": 100.0,
+        "compare_field_path": "end",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("exactly one of 'compare_value'" in e for e in errors)
+
+
+def test_aggregate_bad_agg_errors():
+    rule = {
+        "kind": "aggregate",
+        "name": "agg",
+        "list_path": "start",
+        "agg": "median",
+        "severity": "review",
+        "compare_value": 100.0,
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("'agg'" in e for e in errors)
+
+
+def test_aggregate_sub_field_not_treated_as_undeclared_field():
+    """Regression: 'sub_field' is not a '*_path' and must NOT be checked against
+    declared field names, so a sub_field like 'amount' (not a declared field) is fine."""
+    rule = {
+        "kind": "aggregate",
+        "name": "agg",
+        "list_path": "start",
+        "agg": "sum",
+        "severity": "review",
+        "op": "eq",
+        "sub_field": "amount",
+        "compare_value": 100.0,
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert not any("amount" in e for e in errors)
+    assert errors == []
+
+
+def test_aggregate_non_numeric_compare_value_errors():
+    """A non-numeric compare_value must be rejected at save time — otherwise it passes
+    the dataclass (no runtime type enforcement) and raises TypeError in the interpreter's
+    arithmetic → an unhandled 500 at decision time. Reachable via the raw JSON API."""
+    rule = {
+        "kind": "aggregate",
+        "name": "agg",
+        "list_path": "start",
+        "agg": "sum",
+        "severity": "review",
+        "op": "eq",
+        "compare_value": "abc",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("'compare_value' must be a number" in e for e in errors)
+    # bool is an int subclass — must also be rejected.
+    rule["compare_value"] = True
+    assert any(
+        "'compare_value' must be a number" in e
+        for e in validate_custom_rule_dict(_defn(rule), DECLARED)
+    )
+
+
+def test_numeric_range_neither_bound_errors():
+    rule = {
+        "kind": "numeric_range",
+        "name": "nr",
+        "field_path": "start",
+        "severity": "hard",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("at least one of 'min'" in e for e in errors)
+
+
+def test_numeric_range_min_greater_than_max_errors():
+    rule = {
+        "kind": "numeric_range",
+        "name": "nr",
+        "field_path": "start",
+        "severity": "hard",
+        "min": 100.0,
+        "max": 0.0,
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("'min' must be <= 'max'" in e for e in errors)
+
+
+def test_percentage_tolerance_negative_pct_errors():
+    rule = {
+        "kind": "percentage_tolerance",
+        "name": "pct",
+        "value_path": "start",
+        "reference_path": "end",
+        "pct": -0.1,
+        "severity": "review",
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("'pct'" in e for e in errors)

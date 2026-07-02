@@ -155,6 +155,8 @@ Design notes:
 
 **Open question:** expose the raw DSL to authors, or keep a friendly builder UI that *generates* expressions (safer, discoverable) with the DSL as an "advanced" escape hatch? Probably both, mirroring primitives + Tier-3.
 
+> ✅ **SHIPPED** — `ExpressionRuleDef` is live (`backend/app/rules/expression.py`): a sandboxed AST evaluator (default-deny node whitelist — no `Attribute`/`Subscript`, so gadget chains are unparseable; DoS caps on length/nodes/depth; re-parsed on every run, never trusting save-time validation; fail-soft to skip). Helpers: `sum_of/min_of/max_of/avg_of/count`, `abs/round/len/lower/upper/trim`, `matches`, `days_between/today/to_date`, `is_present/field`. Exposed in the builder as a **Formula** textarea with a helper hint (the "both" answer — DSL engine + a UI field for it). Also shipped as friendly dedicated primitives so authors don't *have* to write formulas: `AggregateRuleDef` (total == Σ line_items), `NumericRangeRuleDef`, `PercentageToleranceRuleDef`.
+
 ---
 
 ## 5. Cross-cutting concerns to decide
@@ -253,9 +255,11 @@ Cross-doc primitives need the engine to pass **the bundle** into the interpreter
 3. ✅ **SHIPPED** — `DateConstraintRuleDef` (ranges + ordering + not-future). Dates parsed best-effort by a stdlib `as_date()` — ambiguous formats like `05/02/2024` assume US MM/DD and unparseable dates skip the rule (a known limitation; the long-term fix is a `coerce: date` extraction-time normalizer).
 4. Aggregate arithmetic (total == Σ line items) via a small expression eval.
 
+4b. ✅ **SHIPPED** — Aggregate arithmetic (`total == Σ line_items`) as `AggregateRuleDef`, plus `NumericRangeRuleDef` and `PercentageToleranceRuleDef`.
+
 **Build next (needs new capability):**
-5. `ExpressionRuleDef` — the general formula layer.
-6. `BundleCompletenessRuleDef` — required types + cardinality + dedupe.
+5. ✅ **SHIPPED** — `ExpressionRuleDef` — the general formula layer (safe sandboxed DSL, see §4).
+6. `BundleCompletenessRuleDef` — required types + cardinality + dedupe. *Blocked on the bundle-type concept (§0).*
 
 **Build when dependencies land:**
 7. `SignatureMatchRuleDef` (waits on signature extraction).

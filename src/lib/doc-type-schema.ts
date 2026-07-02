@@ -50,9 +50,15 @@ export type RuleKind =
   | "uniqueness"
   | "equality"
   | "date_constraint"
-  | "llm_advisory";
+  | "llm_advisory"
+  | "expression"
+  | "aggregate"
+  | "numeric_range"
+  | "percentage_tolerance";
 export type RuleSeverity = "advisory" | "review" | "hard";
 export type ThresholdOp = "lte" | "gte" | "lt" | "gt";
+export type AggregateFn = "sum" | "count" | "min" | "max" | "avg";
+export type AggregateOp = "eq" | "lte" | "gte" | "lt" | "gt";
 
 export interface PresenceRule {
   kind: "presence";
@@ -158,6 +164,52 @@ export interface LlmAdvisoryRule {
   question: string;
 }
 
+export interface ExpressionRule {
+  kind: "expression";
+  name: string;
+  expression: string;
+  severity: RuleSeverity;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
+export interface AggregateRule {
+  kind: "aggregate";
+  name: string;
+  list_path: string;
+  agg: AggregateFn;
+  severity: RuleSeverity;
+  sub_field?: string | null;
+  op?: AggregateOp;
+  compare_value?: number | null;
+  compare_field_path?: string | null;
+  tolerance?: number;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
+export interface NumericRangeRule {
+  kind: "numeric_range";
+  name: string;
+  field_path: string;
+  severity: RuleSeverity;
+  min?: number | null;
+  max?: number | null;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
+export interface PercentageToleranceRule {
+  kind: "percentage_tolerance";
+  name: string;
+  value_path: string;
+  reference_path: string;
+  pct: number;
+  severity: RuleSeverity;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
 export type RuleDef =
   | PresenceRule
   | ThresholdRule
@@ -167,7 +219,11 @@ export type RuleDef =
   | UniquenessRule
   | EqualityRule
   | DateConstraintRule
-  | LlmAdvisoryRule;
+  | LlmAdvisoryRule
+  | ExpressionRule
+  | AggregateRule
+  | NumericRangeRule
+  | PercentageToleranceRule;
 
 export interface RuleDefinition {
   name: string;

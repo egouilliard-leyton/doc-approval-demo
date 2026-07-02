@@ -19,6 +19,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type {
+  AggregateFn,
+  AggregateOp,
   FieldDef,
   RuleDef,
   RuleKind,
@@ -36,6 +38,10 @@ const RULE_KINDS: { value: RuleKind; label: string }[] = [
   { value: "equality", label: "Equality" },
   { value: "date_constraint", label: "Date constraint" },
   { value: "llm_advisory", label: "LLM advisory" },
+  { value: "expression", label: "Formula (expression)" },
+  { value: "aggregate", label: "Aggregate (sum/count/min/max/avg)" },
+  { value: "numeric_range", label: "Numeric range" },
+  { value: "percentage_tolerance", label: "Percentage tolerance" },
 ];
 
 const SEVERITIES: { value: RuleSeverity; label: string }[] = [
@@ -45,6 +51,22 @@ const SEVERITIES: { value: RuleSeverity; label: string }[] = [
 ];
 
 const THRESHOLD_OPS: { value: ThresholdOp; label: string }[] = [
+  { value: "lte", label: "≤ (lte)" },
+  { value: "gte", label: "≥ (gte)" },
+  { value: "lt", label: "< (lt)" },
+  { value: "gt", label: "> (gt)" },
+];
+
+const AGGREGATE_FNS: { value: AggregateFn; label: string }[] = [
+  { value: "sum", label: "Sum" },
+  { value: "count", label: "Count" },
+  { value: "min", label: "Min" },
+  { value: "max", label: "Max" },
+  { value: "avg", label: "Avg" },
+];
+
+const AGGREGATE_OPS: { value: AggregateOp; label: string }[] = [
+  { value: "eq", label: "= (eq)" },
   { value: "lte", label: "≤ (lte)" },
   { value: "gte", label: "≥ (gte)" },
   { value: "lt", label: "< (lt)" },
@@ -139,6 +161,39 @@ function blankRule(kind: RuleKind, name: string): RuleDef {
       };
     case "llm_advisory":
       return { kind, name, question: "" };
+    case "expression":
+      return { kind, name, expression: "", severity: "review" };
+    case "aggregate":
+      return {
+        kind,
+        name,
+        list_path: "",
+        agg: "sum",
+        severity: "review",
+        sub_field: "",
+        op: "eq",
+        compare_value: 0,
+        compare_field_path: null,
+        tolerance: 0,
+      };
+    case "numeric_range":
+      return {
+        kind,
+        name,
+        field_path: "",
+        severity: "review",
+        min: null,
+        max: null,
+      };
+    case "percentage_tolerance":
+      return {
+        kind,
+        name,
+        value_path: "",
+        reference_path: "",
+        pct: 0.05,
+        severity: "review",
+      };
   }
 }
 
@@ -796,6 +851,224 @@ function RuleParams({
             onChange={(e) => onPatch({ question: e.target.value })}
           />
         </Field>
+      );
+
+    case "expression":
+      return (
+        <>
+          <Field label="Formula">
+            <Textarea
+              value={rule.expression}
+              placeholder={`abs(total - sum_of("line_items","amount")) <= 0.01`}
+              onChange={(e) => onPatch({ expression: e.target.value })}
+            />
+          </Field>
+          <p className="text-xs text-muted-foreground">
+            Helpers: <code>sum_of(list,"field")</code>,{" "}
+            <code>count(list)</code>, <code>min_of/max_of/avg_of</code>,{" "}
+            <code>abs</code>, <code>round</code>, <code>len</code>,{" "}
+            <code>lower/upper/trim</code>, <code>matches(v,"regex")</code>,{" "}
+            <code>days_between(a,b)</code>, <code>today()</code>,{" "}
+            <code>to_date(x)</code>, <code>is_present("path")</code>,{" "}
+            <code>field("path")</code>. Example:{" "}
+            <code>abs(total - sum_of("line_items","amount")) &lt;= 0.01</code>.
+          </p>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "aggregate": {
+      const agg = rule.agg ?? "sum";
+      const op = rule.op ?? "eq";
+      const useField = rule.compare_field_path != null;
+      return (
+        <>
+          <Field label="List path">
+            <PathInput
+              value={rule.list_path}
+              placeholder="line_items"
+              onChange={(v) => onPatch({ list_path: v })}
+            />
+          </Field>
+          <Field label="Aggregate">
+            <Select
+              value={agg}
+              onValueChange={(v) => onPatch({ agg: v as AggregateFn })}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {AGGREGATE_FNS.map((f) => (
+                  <SelectItem key={f.value} value={f.value}>
+                    {f.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          {agg !== "count" && (
+            <Field label="Row field (for composite lists)">
+              <Input
+                value={rule.sub_field ?? ""}
+                placeholder="amount"
+                onChange={(e) => onPatch({ sub_field: e.target.value })}
+              />
+            </Field>
+          )}
+          <Field label="Operator">
+            <Select
+              value={op}
+              onValueChange={(v) => onPatch({ op: v as AggregateOp })}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {AGGREGATE_OPS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              <Label className="text-xs text-muted-foreground">
+                {useField ? "Compare field path" : "Compare value"}
+              </Label>
+              {useField ? (
+                <PathInput
+                  value={rule.compare_field_path ?? ""}
+                  placeholder="other_field"
+                  onChange={(v) => onPatch({ compare_field_path: v })}
+                />
+              ) : (
+                <Input
+                  type="number"
+                  value={rule.compare_value ?? 0}
+                  onChange={(e) =>
+                    onPatch({ compare_value: Number(e.target.value) })
+                  }
+                />
+              )}
+            </div>
+            <Toggle
+              variant="outline"
+              pressed={useField}
+              onPressedChange={(pressed) =>
+                onPatch(
+                  pressed
+                    ? { compare_value: null, compare_field_path: "" }
+                    : { compare_value: 0, compare_field_path: null },
+                )
+              }
+            >
+              Compare to field
+            </Toggle>
+          </div>
+          {op === "eq" && (
+            <Field label="Tolerance">
+              <Input
+                type="number"
+                value={rule.tolerance ?? 0}
+                onChange={(e) =>
+                  onPatch({ tolerance: Number(e.target.value) })
+                }
+              />
+            </Field>
+          )}
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+    }
+
+    case "numeric_range":
+      return (
+        <>
+          <Field label="Field path">
+            <PathInput
+              value={rule.field_path}
+              placeholder="field_name"
+              onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="Min">
+              <Input
+                type="number"
+                value={rule.min ?? ""}
+                onChange={(e) =>
+                  onPatch({
+                    min:
+                      e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+              />
+            </Field>
+            <Field label="Max">
+              <Input
+                type="number"
+                value={rule.max ?? ""}
+                onChange={(e) =>
+                  onPatch({
+                    max:
+                      e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+              />
+            </Field>
+          </div>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "percentage_tolerance":
+      return (
+        <>
+          <Field label="Value path">
+            <PathInput
+              value={rule.value_path}
+              placeholder="total"
+              onChange={(v) => onPatch({ value_path: v })}
+            />
+          </Field>
+          <Field label="Reference path">
+            <PathInput
+              value={rule.reference_path}
+              placeholder="expected_total"
+              onChange={(v) => onPatch({ reference_path: v })}
+            />
+          </Field>
+          <Field label="Percentage tolerance">
+            <Input
+              type="number"
+              value={rule.pct ?? 0}
+              onChange={(e) => onPatch({ pct: Number(e.target.value) })}
+            />
+          </Field>
+          <p className="text-xs text-muted-foreground">
+            Fraction, not a percent — e.g. <code>0.05</code> = 5%.
+          </p>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
       );
   }
 }

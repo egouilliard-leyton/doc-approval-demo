@@ -29,6 +29,7 @@ from app.config import settings
 from app.schemas import Check
 
 from .base import DecisionContext, Ruleset, as_date, as_number, fval, present, _values_only
+from .expression import evaluate_expression, aggregate_list
 
 
 # --- declarative rule primitives ----------------------------------------------
@@ -181,6 +182,82 @@ class DateConstraintRuleDef:
 
 
 @dataclass
+class ExpressionRuleDef:
+    """Evaluate a sandboxed author-written formula (see :mod:`app.rules.expression`).
+
+    ``expression`` is a small Python-flavoured boolean/arithmetic formula. It is run via
+    :func:`evaluate_expression`, which returns ``None`` on any missing field / unsafe or
+    invalid formula — that ``None`` is the skip signal (no check emitted). Otherwise the
+    result is coerced to ``bool`` for the pass/fail verdict.
+    """
+
+    name: str
+    expression: str
+    severity: Literal["hard", "review", "advisory"]
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
+class AggregateRuleDef:
+    """Aggregate a list field's numeric values and compare against a value or field.
+
+    ``aggregate_list`` reduces ``list_path`` (optionally digging into ``sub_field`` for
+    list_composite rows) to a single number via ``agg``. Skipped (no check emitted) when
+    the list is absent/empty-for-min-max-avg or the comparison operand is absent. For
+    ``op == "eq"`` the comparison is ``abs(agg - rhs) <= tolerance``; otherwise the
+    standard numeric operator is used.
+    """
+
+    name: str
+    list_path: str
+    agg: Literal["sum", "count", "min", "max", "avg"]
+    severity: Literal["hard", "review", "advisory"]
+    sub_field: str | None = None
+    op: Literal["eq", "lte", "gte", "lt", "gt"] = "eq"
+    compare_value: float | None = None
+    compare_field_path: str | None = None
+    tolerance: float = 0.0
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
+class NumericRangeRuleDef:
+    """Check a numeric field falls within an inclusive ``[min, max]`` range.
+
+    At least one bound is set; each configured bound is checked and any breaches are
+    joined into one detail (like :class:`DateConstraintRuleDef`). Skipped (no check
+    emitted) when the field is absent or non-numeric.
+    """
+
+    name: str
+    field_path: str
+    severity: Literal["hard", "review", "advisory"]
+    min: float | None = None
+    max: float | None = None
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
+class PercentageToleranceRuleDef:
+    """Check a value is within ``pct`` (a fraction) of a reference field.
+
+    ``passed`` iff ``abs(value - reference) / abs(reference) <= pct``. Skipped (no check
+    emitted) when either field is absent/non-numeric or the reference is zero.
+    """
+
+    name: str
+    value_path: str
+    reference_path: str
+    pct: float
+    severity: Literal["hard", "review", "advisory"]
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
 class CodedRuleDef:
     """Tier-3 escape hatch: delegate entirely to a hand-written function.
 
@@ -214,6 +291,10 @@ RuleDef = Union[
     UniquenessVsHistoryRuleDef,
     EqualityRuleDef,
     DateConstraintRuleDef,
+    ExpressionRuleDef,
+    AggregateRuleDef,
+    NumericRangeRuleDef,
+    PercentageToleranceRuleDef,
     CodedRuleDef,
     LlmAdvisoryRuleDef,
 ]
@@ -483,6 +564,88 @@ def _interpret(rule: RuleDef, fields: dict, ctx: DecisionContext) -> Check | Non
             severity=rule.severity,
         )
 
+    if isinstance(rule, ExpressionRuleDef):
+        result = evaluate_expression(rule.expression, fields)
+        if result is None:
+            return None
+        passed = bool(result)
+        default = f"{rule.expression} -> {result!r}"
+        fmt = {"value": result, "expression": rule.expression}
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
+    if isinstance(rule, AggregateRuleDef):
+        agg_value = aggregate_list(fields, rule.list_path, rule.agg, rule.sub_field)
+        if agg_value is None:
+            return None
+        compare_to = (
+            as_number(fval(fields, rule.compare_field_path))
+            if rule.compare_field_path
+            else rule.compare_value
+        )
+        if compare_to is None:
+            return None
+        if rule.op == "eq":
+            passed = abs(agg_value - compare_to) <= rule.tolerance
+        else:
+            passed = _OPS[rule.op](agg_value, compare_to)
+        sub = f".{rule.sub_field}" if rule.sub_field else ""
+        default = (
+            f"{rule.agg}({rule.list_path}{sub}) = {agg_value} {rule.op} {compare_to}"
+        )
+        fmt = {"value": agg_value, "expected": compare_to, "field_path": rule.list_path}
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
+    if isinstance(rule, NumericRangeRuleDef):
+        v = as_number(fval(fields, rule.field_path))
+        if v is None:
+            return None
+        failures: list[str] = []
+        if rule.min is not None and v < rule.min:
+            failures.append(f"below {rule.min}")
+        if rule.max is not None and v > rule.max:
+            failures.append(f"above {rule.max}")
+        passed = not failures
+        default = (
+            f"{rule.field_path} {v} in range"
+            if passed
+            else f"{rule.field_path} {v}: " + "; ".join(failures)
+        )
+        fmt = {"value": v, "field_path": rule.field_path}
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
+    if isinstance(rule, PercentageToleranceRuleDef):
+        a = as_number(fval(fields, rule.value_path))
+        b = as_number(fval(fields, rule.reference_path))
+        if a is None or b is None:
+            return None
+        if b == 0:
+            return None
+        ratio = abs(a - b) / abs(b)
+        passed = ratio <= rule.pct
+        default = f"|{a} - {b}| / |{b}| = {ratio:.4f} {'<=' if passed else '>'} {rule.pct}"
+        fmt = {"value": a, "expected": b, "field_path": rule.value_path}
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
     if isinstance(rule, CodedRuleDef):
         return rule.fn(fields, ctx)
 
@@ -590,6 +753,10 @@ __all__ = [
     "UniquenessVsHistoryRuleDef",
     "EqualityRuleDef",
     "DateConstraintRuleDef",
+    "ExpressionRuleDef",
+    "AggregateRuleDef",
+    "NumericRangeRuleDef",
+    "PercentageToleranceRuleDef",
     "CodedRuleDef",
     "LlmAdvisoryRuleDef",
     "DocTypeRuleDefinition",

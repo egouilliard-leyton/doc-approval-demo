@@ -11,13 +11,17 @@ from datetime import date, timedelta
 from app.rules import DecisionContext
 from app.rules.contract import CONTRACT_RULE_DEFINITION
 from app.rules.definition import (
+    AggregateRuleDef,
     ArithmeticIdentityRuleDef,
     CodedRuleDef,
     DateConstraintRuleDef,
     DocTypeRuleDefinition,
     EqualityRuleDef,
+    ExpressionRuleDef,
     FieldDependencyRuleDef,
     LlmAdvisoryRuleDef,
+    NumericRangeRuleDef,
+    PercentageToleranceRuleDef,
     PresenceRuleDef,
     SetMembershipRuleDef,
     ThresholdCompareRuleDef,
@@ -515,6 +519,176 @@ def test_equality_and_date_constraint_wired_through_build_ruleset():
     assert set(got) == {"currency_usd", "issued_not_future"}
     assert (got["currency_usd"].passed, got["currency_usd"].severity) == (True, "hard")
     assert (got["issued_not_future"].passed, got["issued_not_future"].severity) == (True, "review")
+
+
+# --- primitives: AggregateRuleDef ---------------------------------------------
+
+
+def _line_items():
+    return [{"desc": fv("W"), "amount": fv(125.0)}, {"desc": fv("G"), "amount": fv(10.0)}]
+
+
+def test_aggregate_sum_eq_pass():
+    rule = AggregateRuleDef(
+        name="agg", list_path="line_items", agg="sum", severity="hard",
+        sub_field="amount", op="eq", compare_value=135.0,
+    )
+    out = _interpret(rule, {"line_items": _line_items()}, ctx())
+    assert out.passed and out.severity == "hard"
+
+
+def test_aggregate_sum_eq_fail_and_tolerance():
+    fields = {"line_items": _line_items()}
+    strict = AggregateRuleDef(
+        name="agg", list_path="line_items", agg="sum", severity="hard",
+        sub_field="amount", op="eq", compare_value=130.0,
+    )
+    assert not _interpret(strict, fields, ctx()).passed  # |135-130|=5 > 0
+    tol = AggregateRuleDef(
+        name="agg", list_path="line_items", agg="sum", severity="hard",
+        sub_field="amount", op="eq", compare_value=130.0, tolerance=10.0,
+    )
+    assert _interpret(tol, fields, ctx()).passed  # 5 <= 10
+
+
+def test_aggregate_lte_and_gte_ops():
+    fields = {"line_items": _line_items()}
+    lte = AggregateRuleDef(
+        name="agg", list_path="line_items", agg="sum", severity="review",
+        sub_field="amount", op="lte", compare_value=200.0,
+    )
+    assert _interpret(lte, fields, ctx()).passed  # 135 <= 200
+    gte = AggregateRuleDef(
+        name="agg", list_path="line_items", agg="sum", severity="review",
+        sub_field="amount", op="gte", compare_value=200.0,
+    )
+    assert not _interpret(gte, fields, ctx()).passed  # 135 < 200
+
+
+def test_aggregate_compare_field_path():
+    fields = {"line_items": _line_items(), "total": fv(135.0)}
+    rule = AggregateRuleDef(
+        name="agg", list_path="line_items", agg="sum", severity="hard",
+        sub_field="amount", op="eq", compare_field_path="total",
+    )
+    assert _interpret(rule, fields, ctx()).passed
+    mismatch = {"line_items": _line_items(), "total": fv(999.0)}
+    assert not _interpret(rule, mismatch, ctx()).passed
+
+
+def test_aggregate_count_op():
+    rule = AggregateRuleDef(
+        name="agg", list_path="line_items", agg="count", severity="review",
+        op="eq", compare_value=2.0,
+    )
+    assert _interpret(rule, {"line_items": _line_items()}, ctx()).passed
+
+
+def test_aggregate_skips_when_list_absent():
+    rule = AggregateRuleDef(
+        name="agg", list_path="line_items", agg="sum", severity="hard",
+        sub_field="amount", op="eq", compare_value=135.0,
+    )
+    assert _interpret(rule, {}, ctx()) is None
+
+
+def test_aggregate_skips_when_compare_field_absent():
+    rule = AggregateRuleDef(
+        name="agg", list_path="line_items", agg="sum", severity="hard",
+        sub_field="amount", op="eq", compare_field_path="total",
+    )
+    assert _interpret(rule, {"line_items": _line_items()}, ctx()) is None
+
+
+# --- primitives: ExpressionRuleDef --------------------------------------------
+
+
+def test_expression_pass():
+    rule = ExpressionRuleDef(
+        name="expr", expression="gross == net + tax", severity="hard",
+    )
+    fields = {"gross": fv(135.0), "net": fv(125.0), "tax": fv(10.0)}
+    out = _interpret(rule, fields, ctx())
+    assert out.passed and out.severity == "hard"
+
+
+def test_expression_fail():
+    rule = ExpressionRuleDef(
+        name="expr", expression="gross == net + tax", severity="hard",
+    )
+    fields = {"gross": fv(200.0), "net": fv(125.0), "tax": fv(10.0)}
+    assert not _interpret(rule, fields, ctx()).passed
+
+
+def test_expression_skips_when_field_absent():
+    rule = ExpressionRuleDef(
+        name="expr", expression="gross == net + tax", severity="hard",
+    )
+    assert _interpret(rule, {"gross": fv(135.0), "net": fv(125.0)}, ctx()) is None
+
+
+# --- primitives: NumericRangeRuleDef ------------------------------------------
+
+
+def test_numeric_range_in_range_pass():
+    rule = NumericRangeRuleDef(
+        name="nr", field_path="qty", severity="review", min=0.0, max=100.0,
+    )
+    out = _interpret(rule, {"qty": fv(50.0)}, ctx())
+    assert out.passed and out.severity == "review"
+
+
+def test_numeric_range_below_min_and_above_max_fail():
+    rule = NumericRangeRuleDef(
+        name="nr", field_path="qty", severity="hard", min=0.0, max=100.0,
+    )
+    below = _interpret(rule, {"qty": fv(-5.0)}, ctx())
+    assert not below.passed and "below 0" in below.detail
+    above = _interpret(rule, {"qty": fv(150.0)}, ctx())
+    assert not above.passed and "above 100" in above.detail
+
+
+def test_numeric_range_one_sided_bound():
+    only_min = NumericRangeRuleDef(name="nr", field_path="qty", severity="review", min=10.0)
+    assert _interpret(only_min, {"qty": fv(20.0)}, ctx()).passed
+    assert not _interpret(only_min, {"qty": fv(5.0)}, ctx()).passed
+    only_max = NumericRangeRuleDef(name="nr", field_path="qty", severity="review", max=10.0)
+    assert _interpret(only_max, {"qty": fv(5.0)}, ctx()).passed
+    assert not _interpret(only_max, {"qty": fv(20.0)}, ctx()).passed
+
+
+def test_numeric_range_skips_when_absent():
+    rule = NumericRangeRuleDef(
+        name="nr", field_path="qty", severity="review", min=0.0, max=100.0,
+    )
+    assert _interpret(rule, {}, ctx()) is None
+    assert _interpret(rule, {"qty": fv("not-a-number")}, ctx()) is None
+
+
+# --- primitives: PercentageToleranceRuleDef -----------------------------------
+
+
+def test_percentage_tolerance_within_pass():
+    rule = PercentageToleranceRuleDef(
+        name="pct", value_path="actual", reference_path="expected", pct=0.05, severity="review",
+    )
+    out = _interpret(rule, {"actual": fv(102.0), "expected": fv(100.0)}, ctx())
+    assert out.passed and out.severity == "review"  # 2% <= 5%
+
+
+def test_percentage_tolerance_outside_fail():
+    rule = PercentageToleranceRuleDef(
+        name="pct", value_path="actual", reference_path="expected", pct=0.05, severity="review",
+    )
+    assert not _interpret(rule, {"actual": fv(120.0), "expected": fv(100.0)}, ctx()).passed
+
+
+def test_percentage_tolerance_skips_when_reference_absent_or_zero():
+    rule = PercentageToleranceRuleDef(
+        name="pct", value_path="actual", reference_path="expected", pct=0.05, severity="review",
+    )
+    assert _interpret(rule, {"actual": fv(100.0)}, ctx()) is None
+    assert _interpret(rule, {"actual": fv(100.0), "expected": fv(0.0)}, ctx()) is None
 
 
 # --- parity: invoice ----------------------------------------------------------

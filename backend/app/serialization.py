@@ -26,18 +26,23 @@ from app.extraction.definition import (
     SubFieldDef,
 )
 from app.rules.definition import (
+    AggregateRuleDef,
     ArithmeticIdentityRuleDef,
     CodedRuleDef,
     DateConstraintRuleDef,
     DocTypeRuleDefinition,
     EqualityRuleDef,
+    ExpressionRuleDef,
     FieldDependencyRuleDef,
     LlmAdvisoryRuleDef,
+    NumericRangeRuleDef,
+    PercentageToleranceRuleDef,
     PresenceRuleDef,
     SetMembershipRuleDef,
     ThresholdCompareRuleDef,
     UniquenessVsHistoryRuleDef,
 )
+from app.rules.expression import validate_expression
 
 
 # --- extraction definition <-> dict -------------------------------------------
@@ -105,6 +110,10 @@ _KIND_MAP: dict[type, str] = {
     UniquenessVsHistoryRuleDef: "uniqueness",
     EqualityRuleDef: "equality",
     DateConstraintRuleDef: "date_constraint",
+    ExpressionRuleDef: "expression",
+    AggregateRuleDef: "aggregate",
+    NumericRangeRuleDef: "numeric_range",
+    PercentageToleranceRuleDef: "percentage_tolerance",
     LlmAdvisoryRuleDef: "llm_advisory",
 }
 
@@ -397,6 +406,78 @@ def validate_custom_rule_dict(d: dict, declared_field_names: set[str]) -> list[s
                         errors.append(
                             f"{where}: '{key}' must be an ISO date string YYYY-MM-DD"
                         )
+        elif kind == "expression":
+            expr = rule.get("expression")
+            if not isinstance(expr, str) or not expr or len(expr) > 400:
+                errors.append(
+                    f"{where}: 'expression' must be a non-empty string of at most 400 chars"
+                )
+            else:
+                errors.extend(validate_expression(expr, declared_field_names))
+        elif kind == "aggregate":
+            if rule.get("agg") not in {"sum", "count", "min", "max", "avg"}:
+                errors.append(
+                    f"{where}: 'agg' must be one of ['avg','count','max','min','sum'] "
+                    f"(got {rule.get('agg')!r})"
+                )
+            has_value = rule.get("compare_value") is not None
+            has_field = rule.get("compare_field_path") is not None
+            if has_value == has_field:
+                errors.append(
+                    f"{where}: set exactly one of 'compare_value' / 'compare_field_path'"
+                )
+            # A non-numeric compare_value would pass the dataclass (no runtime type
+            # enforcement) and later raise TypeError in the interpreter's arithmetic —
+            # guard it here like every other numeric literal (tolerance/min/max/pct).
+            if has_value:
+                cv = rule["compare_value"]
+                if isinstance(cv, bool) or not isinstance(cv, (int, float)):
+                    errors.append(f"{where}: 'compare_value' must be a number")
+            if rule.get("op") not in {"eq", "lte", "gte", "lt", "gt"}:
+                errors.append(
+                    f"{where}: 'op' must be one of ['eq','gt','gte','lt','lte'] "
+                    f"(got {rule.get('op')!r})"
+                )
+            if "tolerance" in rule:
+                value = rule["tolerance"]
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or value < 0
+                ):
+                    errors.append(f"{where}: 'tolerance' must be a non-negative number")
+            if rule.get("sub_field") is not None and not isinstance(rule["sub_field"], str):
+                errors.append(f"{where}: 'sub_field' must be a string")
+        elif kind == "numeric_range":
+            has_min = rule.get("min") is not None
+            has_max = rule.get("max") is not None
+            if not has_min and not has_max:
+                errors.append(
+                    f"{where}: numeric_range requires at least one of 'min' / 'max'"
+                )
+            for key in ("min", "max"):
+                value = rule.get(key)
+                if value is not None and (
+                    isinstance(value, bool) or not isinstance(value, (int, float))
+                ):
+                    errors.append(f"{where}: '{key}' must be a number")
+            lo, hi = rule.get("min"), rule.get("max")
+            if (
+                isinstance(lo, (int, float))
+                and not isinstance(lo, bool)
+                and isinstance(hi, (int, float))
+                and not isinstance(hi, bool)
+                and lo > hi
+            ):
+                errors.append(f"{where}: 'min' must be <= 'max'")
+        elif kind == "percentage_tolerance":
+            value = rule.get("pct")
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value < 0
+            ):
+                errors.append(f"{where}: 'pct' must be a non-negative number")
 
         # Every referenced field path must resolve to a declared field (by base name).
         for key, value in rule.items():
