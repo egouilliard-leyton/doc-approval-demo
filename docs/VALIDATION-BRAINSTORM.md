@@ -6,6 +6,19 @@
 
 ---
 
+## Implementation status
+
+The **entire single-document validation surface is shipped** — 21 declarative rule primitives, each wired end-to-end (interpreter + serialization + save-time validation + builder UI + tests), all inside the existing "rules as data" engine. Built-in invoice/contract rule sets are untouched; the full suite passes (backend 429, frontend build + 41).
+
+**Shipped primitives** (in `backend/app/rules/definition.py` unless noted):
+`PresenceRuleDef` · `ThresholdCompareRuleDef` · `ArithmeticIdentityRuleDef` · `SetMembershipRuleDef` · `FieldDependencyRuleDef` · `UniquenessVsHistoryRuleDef` (pre-existing) · **`EqualityRuleDef`** (exact/normalized/regex/fuzzy + threshold slider) · **`DateConstraintRuleDef`** · **`ExpressionRuleDef`** (sandboxed formula DSL — `rules/expression.py`) · **`AggregateRuleDef`** · **`NumericRangeRuleDef`** · **`PercentageToleranceRuleDef`** · **`FormatRuleDef`** (IBAN/checksum/email/UUID/ISO — `rules/formats.py`) · **`ConditionalPresenceRuleDef`** · **`MutualExclusivityRuleDef`** · **`AtLeastNOfRuleDef`** · **`RequiredTogetherRuleDef`** · **`ContainsRuleDef`** · **`LengthBoundsRuleDef`** · **`FieldConfidenceFloorRuleDef`** · **`GroundedOnPageRuleDef`** · **`SignaturePresenceRuleDef`** · plus the two Tier-3 hatches (`CodedRuleDef`, `LlmAdvisoryRuleDef`).
+
+**Deferred — cross-document (§3), and *only* because the substrate doesn't exist yet:** same-value/date across docs, bundle completeness, cross-references, roll-ups, and same-signatory *matching*. These need a **bundle** — a set of documents' extractions available together (§0) — which is the *multi-document extraction & configuration* work slated to be built first. Building them now would be dead scaffolding or a bundle model that collides with that effort. Once the bundle substrate lands, the natural next primitives are `CrossDocConsistencyRuleDef` and `BundleCompletenessRuleDef` (§6 sketch), and fuzzy matching (already shipped) pays off most there.
+
+**Smaller deferred single-doc items:** fuzzy examples generated from the author's own documents (vs the static table); a stronger similarity metric than `difflib`; an `edited-field` provenance primitive; language/script detection.
+
+---
+
 ## 0. Terminology (plain-language)
 
 A few terms used throughout — worth pinning down because the whole design hinges on the difference.
