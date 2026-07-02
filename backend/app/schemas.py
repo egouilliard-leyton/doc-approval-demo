@@ -18,6 +18,7 @@ class DocumentSummary(BaseModel):
     page_count: int
     status: DocumentStatus
     created_at: datetime
+    case_id: str | None = None  # the case this document belongs to, if any
 
 
 class PageInfo(BaseModel):
@@ -433,3 +434,79 @@ class OverviewStats(BaseModel):
     doc_types: int
     engines_enabled: int
     avg_extraction_confidence: float | None
+
+
+# --- Phase 1: multi-document cases -------------------------------------------
+
+
+class CaseTypeMember(BaseModel):
+    """One expected member doc-type of a case type, with its cardinality.
+
+    ``min_count`` / ``max_count`` are carried-but-not-enforced in Phase 1 (the
+    reconciler that consumes them lands in Phase 2).
+    """
+
+    doc_type: str
+    min_count: int = 1
+    max_count: int | None = 1
+    label: str = ""
+
+
+class CaseTypeResponse(BaseModel):
+    """A case type's full definition as returned by the CRUD endpoints."""
+
+    name: str
+    label: str
+    icon: str
+    members: list[CaseTypeMember]
+    canonical_fields: dict
+    builtin: bool
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CaseTypeCreate(BaseModel):
+    """Payload to create a custom case type (always non-built-in, version 1)."""
+
+    name: str
+    label: str
+    icon: str = ""
+    members: list[CaseTypeMember] = []
+    canonical_fields: dict = {}
+
+
+class CaseCreate(BaseModel):
+    """Payload to create a case: an open pile, or one bound to a case type."""
+
+    case_type: str | None = None
+    label: str = ""
+
+
+class CaseSummary(BaseModel):
+    """Compact shape for the case list view."""
+
+    id: str
+    case_type: str | None
+    label: str
+    created_at: datetime
+
+
+class CaseMemberAssembly(BaseModel):
+    """One member document of a case plus its persisted structured result (if any)."""
+
+    document_id: str
+    filename: str
+    doc_type: str | None
+    status: DocumentStatus
+    structured: StructuredResult | None = None
+
+
+class CaseDetail(BaseModel):
+    """A case with each member document's status + grouped structured result."""
+
+    id: str
+    case_type: str | None
+    label: str
+    created_at: datetime
+    members: list[CaseMemberAssembly]

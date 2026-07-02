@@ -101,6 +101,52 @@ class FieldCorrectionRow(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
+class Case(SQLModel, table=True):
+    """A case grouping N documents for cross-document reasoning (Phase 1).
+
+    A case is either an OPEN pile (``case_type is None``) or bound to a registered
+    case type (e.g. ``ap_match``). The cross-document reconciliation result lands here
+    in Phase 2; Phase 1 only groups its member documents' existing structured results.
+    """
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    case_type: str | None = None
+    label: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class CaseMembership(SQLModel, table=True):
+    """Links a document to a case (a document belongs to at most one case).
+
+    ``document_id`` is the primary key, so a document can appear in at most one case;
+    associating a document already in another case silently reassigns it (upsert by
+    document). Documents survive a case deletion — only the membership rows are removed.
+    """
+
+    document_id: str = Field(foreign_key="document.id", primary_key=True)
+    case_id: str = Field(foreign_key="case.id", index=True)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class CaseTypeDefinitionRow(SQLModel, table=True):
+    """Persisted definition of a case type (built-in or custom).
+
+    Mirrors :class:`DocTypeDefinitionRow`. Case-type definitions are fully
+    JSON-serializable (no callables), so custom types are rebuilt directly from these
+    stored rows by :func:`app.case_types.register_from_row` with no code-vs-DB split.
+    """
+
+    name: str = Field(primary_key=True)
+    label: str
+    icon: str = ""
+    members: list = Field(default_factory=list, sa_column=Column(JSON))
+    canonical_fields: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    builtin: bool = False
+    version: int = 1
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 class VlmEngineRow(SQLModel, table=True):
     """A vision-language OCR engine the user has connected (one OpenRouter model each).
 

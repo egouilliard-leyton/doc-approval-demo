@@ -1,6 +1,7 @@
 # Multi-Document Cases — Design & Phase Plan
 
-Status: **in design / Phase 1 build**. Author: brainstormed with the owner 2026-07-02.
+Status: **Phase 1 SHIPPED** (backend Case foundation, commit `19ce56c`) / Phases 2–3 pending.
+Author: brainstormed with the owner 2026-07-02.
 
 ## Problem
 
