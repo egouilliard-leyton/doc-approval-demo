@@ -9,17 +9,32 @@ import asyncio
 from typing import Callable, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session, select
 
+from app import storage
 from app.config import settings
 from app.db import get_session
-from app.models import Document, DocType, DocumentStatus, PipelineRun, _utcnow
+from app.doc_types import is_registered
+from app.models import (
+    Document,
+    DocumentStatus,
+    FieldCorrectionRow,
+    PipelineRun,
+    _utcnow,
+)
 from app.pipeline.agent import run_decision
-from app.pipeline.ocr import run_ocr
+from app.pipeline.ocr import get_engine
 from app.pipeline.prescan import run_prescan
 from app.pipeline.structuring import run_structuring
 from app.rules import DecisionContext
-from app.schemas import DecisionResult, OCRResult, QualityReport, StructuredResult
+from app.schemas import (
+    DecisionResult,
+    FieldEditRequest,
+    OCRResult,
+    QualityReport,
+    StructuredResult,
+)
 
 router = APIRouter(prefix="/documents/{doc_id}", tags=["pipeline"])
 
@@ -111,9 +126,21 @@ async def prescan_document(
     if doc.page_count == 0:
         raise HTTPException(status_code=409, detail="Document has no rasterized pages.")
 
-    report = await _run_stage(
-        "Prescan", settings.prescan_timeout_s, run_prescan, doc, deskew=deskew, clean=clean
-    )
+    if storage.is_spreadsheet(doc.mime):
+        # Spreadsheets have no page image to pre-flight; return a trivial pass so the
+        # pipeline advances (image-quality metrics are meaningless for a parsed grid).
+        report = QualityReport(
+            document_id=doc.id,
+            status=DocumentStatus.prescanned,
+            verdict="pass",
+            reasons=[],
+            preprocess_applied=False,
+            pages=[],
+        )
+    else:
+        report = await _run_stage(
+            "Prescan", settings.prescan_timeout_s, run_prescan, doc, deskew=deskew, clean=clean
+        )
 
     run = get_or_create_run(session, doc_id)
     _save_stage(
@@ -157,7 +184,18 @@ async def ocr_document(
     if doc.page_count == 0:
         raise HTTPException(status_code=409, detail="Document has no rasterized pages.")
 
-    result = await _run_stage("OCR", settings.ocr_timeout_s, run_ocr, doc, engine)
+    # Spreadsheets are parsed cell-by-cell by the dedicated engine regardless of the
+    # requested engine (docling/VLM operate on page images that don't exist here).
+    if storage.is_spreadsheet(doc.mime):
+        engine = "spreadsheet"
+
+    # Resolve the engine on the request thread (needs the DB session); the heavy OCR
+    # then runs in the threadpool with only the built engine, not the session.
+    try:
+        engine_obj = get_engine(engine, session)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result = await _run_stage("OCR", settings.ocr_timeout_s, engine_obj.run, doc)
 
     run = get_or_create_run(session, doc_id)
     existing_ocr = dict(run.stage_results.get("ocr") or {})
@@ -192,7 +230,7 @@ def get_ocr(
 @router.post("/structure", response_model=StructuredResult)
 async def structure_document(
     doc_id: str,
-    doc_type: DocType | None = Query(default=None),
+    doc_type: str | None = Query(default=None),
     provider: str = Query(default=""),
     ocr_engine: str = Query(default=""),
     session: Session = Depends(get_session),
@@ -208,12 +246,18 @@ async def structure_document(
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found.")
 
+    # Spreadsheets always OCR under the dedicated engine; structure off that result.
+    if storage.is_spreadsheet(doc.mime):
+        ocr_engine = "spreadsheet"
+
     resolved_type = doc_type or doc.doc_type
     if resolved_type is None:
         raise HTTPException(
             status_code=400,
             detail="doc_type is required (not set on the document); pass ?doc_type=invoice|contract.",
         )
+    if not is_registered(resolved_type):
+        raise HTTPException(status_code=422, detail=f"Unknown doc_type '{resolved_type}'")
 
     run = _latest_run(session, doc_id)
     ocr = (run.stage_results.get("ocr") or {}) if run else {}
@@ -248,6 +292,104 @@ def get_structure(doc_id: str, session: Session = Depends(get_session)) -> Struc
     structure = run.stage_results.get("structure") if run else None
     if not structure:
         raise HTTPException(status_code=404, detail="No structuring result for this document.")
+    return StructuredResult(**structure)
+
+
+def _field_node(fields: object, path: str) -> dict | None:
+    """Resolve a dotted path (e.g. ``line_items.0.amount``) to its FieldValue dict."""
+    node: object = fields
+    for part in path.split("."):
+        if isinstance(node, list):
+            try:
+                node = node[int(part)]
+            except (ValueError, IndexError):
+                return None
+        elif isinstance(node, dict):
+            if part not in node:
+                return None
+            node = node[part]
+        else:
+            return None
+    return node if isinstance(node, dict) and "value" in node else None
+
+
+def _coerce_like(reference: object, new: object) -> object:
+    """Coerce an edited value toward the field's existing type (best-effort)."""
+    if new is None:
+        return None
+    if isinstance(reference, bool):
+        return new if isinstance(new, bool) else str(new).strip().lower() in (
+            "true",
+            "yes",
+            "1",
+        )
+    if isinstance(reference, (int, float)) and not isinstance(reference, bool):
+        try:
+            return float(str(new).replace(",", "").replace("$", "").strip())
+        except (ValueError, TypeError):
+            return new  # leave as typed if it isn't numeric
+    return new
+
+
+@router.patch("/structure/field", response_model=StructuredResult)
+def edit_structure_field(
+    doc_id: str, body: FieldEditRequest, session: Session = Depends(get_session)
+) -> StructuredResult:
+    """Apply a reviewer's edit to one structured field and log the correction.
+
+    Writes the new value into the persisted structuring result (preserving the
+    model's original extraction on the field), and upserts a ``FieldCorrectionRow``
+    so edited fields can later be reviewed as likely extraction errors.
+    """
+    run = _latest_run(session, doc_id)
+    structure = run.stage_results.get("structure") if run else None
+    if not structure:
+        raise HTTPException(status_code=404, detail="No structuring result for this document.")
+
+    fields = structure.get("fields") or {}
+    node = _field_node(fields, body.path)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"No field at path '{body.path}'.")
+
+    # Original = the model's first extraction (pinned across repeated edits).
+    original = node["original_value"] if node.get("edited") else node.get("value")
+    new_value = _coerce_like(original, body.value)
+
+    node["value"] = new_value
+    node["edited"] = True
+    node["original_value"] = original
+
+    # ``run`` is non-None (structure existed). Reassign + flag so SQLAlchemy flushes
+    # the nested edit (a plain JSON column doesn't track in-place mutations).
+    run.stage_results = {**run.stage_results, "structure": structure}
+    flag_modified(run, "stage_results")
+    run.updated_at = _utcnow()
+    session.add(run)
+
+    doc_type = structure.get("doc_type") or ""
+    existing = session.exec(
+        select(FieldCorrectionRow).where(
+            FieldCorrectionRow.document_id == doc_id,
+            FieldCorrectionRow.field_path == body.path,
+        )
+    ).first()
+    if existing is None:
+        session.add(
+            FieldCorrectionRow(
+                document_id=doc_id,
+                doc_type=doc_type,
+                field_path=body.path,
+                original_value=original,
+                new_value=new_value,
+                updated_at=_utcnow(),
+            )
+        )
+    else:
+        existing.new_value = new_value  # keep original_value pinned
+        existing.updated_at = _utcnow()
+        session.add(existing)
+
+    session.commit()
     return StructuredResult(**structure)
 
 

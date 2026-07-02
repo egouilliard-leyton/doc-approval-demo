@@ -5,11 +5,29 @@ import type {
   DocumentSummary,
   DecisionResult,
   DocType,
+  EngineInfo,
+  FieldCorrection,
   OcrEngine,
   OCRResult,
+  OpenRouterModel,
+  OverviewStats,
   QualityReport,
+  Sheet,
   StructuredResult,
+  VlmEngineRow,
 } from "@/lib/types";
+import type {
+  AnnotatePollResponse,
+  AnnotateStartResponse,
+  AssistRequest,
+  AssistResponse,
+  DocTypeCreate,
+  DocTypePreviewRequest,
+  DocTypePreviewResponse,
+  DocTypeResponse,
+  DocTypeUpdate,
+  IngestResponse,
+} from "@/lib/doc-type-schema";
 
 const API_BASE_URL: string =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -44,10 +62,11 @@ interface RequestOpts {
   query?: Record<string, string | number | boolean | undefined>;
   body?: BodyInit;
   signal?: AbortSignal;
+  headers?: Record<string, string>;
 }
 
 async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
-  const { method = "GET", query, body, signal } = opts;
+  const { method = "GET", query, body, signal, headers } = opts;
   const qs = query
     ? "?" +
       Object.entries(query)
@@ -57,7 +76,12 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
     : "";
   let res: Response;
   try {
-    res = await fetch(`${API_BASE_URL}${path}${qs}`, { method, body, signal });
+    res = await fetch(`${API_BASE_URL}${path}${qs}`, {
+      method,
+      body,
+      signal,
+      headers,
+    });
   } catch {
     throw new ApiError(0, "Cannot reach the backend — is it running on :8000?");
   }
@@ -102,6 +126,11 @@ export async function uploadDocument(
 
 export async function getDocument(id: string): Promise<DocumentDetail> {
   return request<DocumentDetail>(`/documents/${id}`);
+}
+
+/** Parsed spreadsheet grid (one entry per sheet), written at ingest for CSV/XLSX. */
+export async function getSheets(id: string): Promise<Sheet[]> {
+  return request<Sheet[]>(`/files/${id}/sheets.json`);
 }
 
 export async function listDocuments(): Promise<DocumentSummary[]> {
@@ -171,6 +200,177 @@ export async function runStructure(
 
 export async function runDecide(id: string): Promise<DecisionResult> {
   return request<DecisionResult>(`/documents/${id}/decide`, { method: "POST" });
+}
+
+/** Apply a reviewer edit to one structured field; returns the updated result. */
+export async function editStructureField(
+  id: string,
+  body: { path: string; value: string | number | boolean | null },
+): Promise<StructuredResult> {
+  return request<StructuredResult>(`/documents/${id}/structure/field`, {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+// --- configurable doc types (CRUD + preview) ---------------------------------
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+export async function listDocTypes(): Promise<DocTypeResponse[]> {
+  return request<DocTypeResponse[]>("/doc-types");
+}
+
+export async function getDocType(name: string): Promise<DocTypeResponse> {
+  return request<DocTypeResponse>(`/doc-types/${name}`);
+}
+
+export async function createDocType(
+  body: DocTypeCreate,
+): Promise<DocTypeResponse> {
+  return request<DocTypeResponse>("/doc-types", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateDocType(
+  name: string,
+  body: DocTypeUpdate,
+): Promise<DocTypeResponse> {
+  return request<DocTypeResponse>(`/doc-types/${name}`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteDocType(name: string): Promise<void> {
+  await request<void>(`/doc-types/${name}`, { method: "DELETE" });
+}
+
+export async function previewDocType(
+  name: string,
+  body: DocTypePreviewRequest,
+): Promise<DocTypePreviewResponse> {
+  return request<DocTypePreviewResponse>(`/doc-types/${name}/preview`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+// --- OCR engines -------------------------------------------------------------
+
+/** Engines selectable at upload time (docling + enabled VLMs). */
+export async function listEngines(): Promise<EngineInfo[]> {
+  return request<EngineInfo[]>("/engines");
+}
+
+/** All connected VLM engines (enabled + disabled), for the settings dialog. */
+export async function listEngineCatalog(): Promise<VlmEngineRow[]> {
+  return request<VlmEngineRow[]>("/engines/catalog");
+}
+
+/** Image-capable models offered by OpenRouter, for the add-model dropdown. */
+export async function listOpenRouterModels(): Promise<OpenRouterModel[]> {
+  return request<OpenRouterModel[]>("/engines/openrouter-models");
+}
+
+export async function createEngine(body: {
+  label: string;
+  model: string;
+  key?: string;
+  enabled?: boolean;
+}): Promise<VlmEngineRow> {
+  return request<VlmEngineRow>("/engines", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateEngine(
+  key: string,
+  body: { label?: string; enabled?: boolean },
+): Promise<VlmEngineRow> {
+  return request<VlmEngineRow>(`/engines/${key}`, {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteEngine(key: string): Promise<void> {
+  await request<void>(`/engines/${key}`, { method: "DELETE" });
+}
+
+// --- admin ------------------------------------------------------------------
+
+export async function getOverview(): Promise<OverviewStats> {
+  return request<OverviewStats>("/overview");
+}
+
+export async function listCorrections(
+  documentId?: string,
+): Promise<FieldCorrection[]> {
+  return request<FieldCorrection[]>("/corrections", {
+    query: { document_id: documentId },
+  });
+}
+
+// --- AI doc-type wizard ------------------------------------------------------
+
+export async function assistTurn(req: AssistRequest): Promise<AssistResponse> {
+  return request<AssistResponse>("/doc-types/assist", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(req),
+  });
+}
+
+/** Extract plain text from an uploaded process/example doc (text passthrough or OCR). */
+export async function ingestDocForAssist(
+  file: File,
+  kind: "process" | "example",
+): Promise<IngestResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("kind", kind);
+  // No explicit content-type: the browser sets the multipart boundary.
+  return request<IngestResponse>("/doc-types/assist/ingest", {
+    method: "POST",
+    body: form,
+  });
+}
+
+/** Launch a Plannotator annotation session over the spec markdown. */
+export async function startAnnotation(
+  specMarkdown: string,
+): Promise<AnnotateStartResponse> {
+  return request<AnnotateStartResponse>("/doc-types/assist/annotate", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ spec_markdown: specMarkdown }),
+  });
+}
+
+/** Poll an annotation session's status (404 ApiError when the id is unknown). */
+export async function pollAnnotation(
+  sessionId: string,
+): Promise<AnnotatePollResponse> {
+  return request<AnnotatePollResponse>(
+    `/doc-types/assist/annotate/${sessionId}`,
+  );
+}
+
+/** Cancel an annotation session (idempotent 204). */
+export async function cancelAnnotation(sessionId: string): Promise<void> {
+  await request<void>(`/doc-types/assist/annotate/${sessionId}`, {
+    method: "DELETE",
+  });
 }
 
 export { API_BASE_URL };

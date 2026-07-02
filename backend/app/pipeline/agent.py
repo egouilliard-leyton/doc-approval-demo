@@ -27,6 +27,7 @@ from app.rules import (
     get_citation_paths,
     get_ruleset,
 )
+from app.rules.base import _values_only
 from app.schemas import Check, Decision, DecisionResult, StructuredResult
 
 PROVIDERS = {"llm", "mock"}
@@ -61,7 +62,7 @@ def run_decision(
         model = "mock"
     else:
         llm_decision, llm_conf, llm_reasons, llm_warnings = _decide_llm(
-            doc_type.value, fields, checks, ctx
+            doc_type, fields, checks, ctx
         )
         warnings.extend(llm_warnings)
         model = settings.decision_model
@@ -211,14 +212,3 @@ def _build_prompt(doc_type: str, fields: dict, checks: list[Check], ctx: Decisio
         f"Pre-flight quality verdict: {ctx.prescan_verdict or 'not run'}\n\n"
         "Give your decision, confidence, and concise reasons."
     )
-
-
-def _values_only(node: object) -> object:
-    """Strip FieldValue nodes down to their value for a compact LLM prompt."""
-    if isinstance(node, dict):
-        if "value" in node and "confidence" in node:
-            return node.get("value")
-        return {k: _values_only(v) for k, v in node.items()}
-    if isinstance(node, list):
-        return [_values_only(x) for x in node]
-    return node

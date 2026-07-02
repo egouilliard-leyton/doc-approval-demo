@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import path from "path";
 import { fileURLToPath } from "url";
 import { defineConfig } from "vite";
@@ -16,5 +17,11 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+  },
+  // Vitest: pure-logic unit tests only, so the default node environment is used
+  // (no jsdom). Tests live next to the code they cover as *.test.ts.
+  test: {
+    environment: "node",
+    include: ["src/**/*.test.ts"],
   },
 });

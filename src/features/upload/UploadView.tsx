@@ -1,14 +1,20 @@
-import { ArrowRight, ScanLine, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowRight, ScanLine, Settings2, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { usePipelineContext } from "@/features/pipeline/PipelineContext";
 import { Dropzone } from "@/features/upload/Dropzone";
 import { DocTypeToggle } from "@/features/upload/DocTypeToggle";
 import { EngineSelect } from "@/features/upload/EngineSelect";
+import { useEngines } from "@/features/upload/useEngines";
 import { DocumentLibrary } from "@/features/upload/DocumentLibrary";
+import { useDocTypes } from "@/features/doctypes/useDocTypes";
+import { DocTypeManagerDialog } from "@/features/doctypes/DocTypeManagerDialog";
+import { EngineSettingsDialog } from "@/features/settings/EngineSettingsDialog";
 
 const STAGES = [
   { label: "Pre-scan", hint: "quality & deskew" },
-  { label: "OCR", hint: "Qwen3-VL / Docling" },
+  { label: "OCR", hint: "VLM / Docling" },
   { label: "Structure", hint: "LangExtract" },
   { label: "Decide", hint: "approve / flag" },
 ];
@@ -22,6 +28,40 @@ export function UploadView() {
     ingestFile,
     ingesting,
   } = usePipelineContext();
+  const { docTypes, loading, error, refetch } = useDocTypes();
+  const {
+    engines,
+    loading: enginesLoading,
+    error: enginesError,
+    refetch: refetchEngines,
+  } = useEngines();
+  const [managerOpen, setManagerOpen] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(false);
+
+  // Keep the selected type valid once types load: if the current selection isn't
+  // among the fetched types (e.g. the hard-coded default no longer exists), fall
+  // back to the first available type.
+  useEffect(() => {
+    if (
+      !loading &&
+      docTypes.length > 0 &&
+      !docTypes.some((d) => d.name === docType)
+    ) {
+      setDocType(docTypes[0].name);
+    }
+  }, [docTypes, docType, loading, setDocType]);
+
+  // Same guard for engines: if the selected engine was disabled/removed, fall back
+  // to the first available one (docling is always present).
+  useEffect(() => {
+    if (
+      !enginesLoading &&
+      engines.length > 0 &&
+      !engines.some((e) => e.key === activeEngine)
+    ) {
+      setActiveEngine(engines[0].key);
+    }
+  }, [engines, activeEngine, enginesLoading, setActiveEngine]);
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center gap-10 px-6 py-12">
@@ -45,24 +85,78 @@ export function UploadView() {
           <CardContent className="space-y-6">
             <div className="grid gap-5 sm:grid-cols-2">
               <div className="space-y-2">
-                <label className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                  Document type
-                </label>
-                <DocTypeToggle
-                  value={docType}
-                  onChange={setDocType}
-                  disabled={ingesting}
-                />
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                    Document type
+                  </label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto gap-1 px-1.5 py-0.5 text-xs text-muted-foreground"
+                    onClick={() => setManagerOpen(true)}
+                  >
+                    <Settings2 className="size-3.5" />
+                    Manage types
+                  </Button>
+                </div>
+                {error ? (
+                  <div className="text-sm text-muted-foreground">
+                    {error}{" "}
+                    <button
+                      type="button"
+                      onClick={refetch}
+                      className="font-medium text-brand hover:underline"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : (
+                  <DocTypeToggle
+                    value={docType}
+                    onChange={setDocType}
+                    docTypes={docTypes}
+                    loading={loading}
+                    disabled={ingesting}
+                  />
+                )}
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                  OCR engine
-                </label>
-                <EngineSelect
-                  value={activeEngine}
-                  onChange={setActiveEngine}
-                  disabled={ingesting}
-                />
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                    OCR engine
+                  </label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto gap-1 px-1.5 py-0.5 text-xs text-muted-foreground"
+                    onClick={() => setModelsOpen(true)}
+                  >
+                    <Settings2 className="size-3.5" />
+                    Manage models
+                  </Button>
+                </div>
+                {enginesError ? (
+                  <div className="text-sm text-muted-foreground">
+                    {enginesError}{" "}
+                    <button
+                      type="button"
+                      onClick={refetchEngines}
+                      className="font-medium text-brand hover:underline"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : (
+                  <EngineSelect
+                    engines={engines}
+                    loading={enginesLoading}
+                    value={activeEngine}
+                    onChange={setActiveEngine}
+                    disabled={ingesting}
+                  />
+                )}
               </div>
             </div>
 
@@ -93,6 +187,18 @@ export function UploadView() {
       </div>
 
       <DocumentLibrary />
+
+      <DocTypeManagerDialog
+        open={managerOpen}
+        onClose={() => setManagerOpen(false)}
+        onChanged={refetch}
+      />
+
+      <EngineSettingsDialog
+        open={modelsOpen}
+        onClose={() => setModelsOpen(false)}
+        onChanged={refetchEngines}
+      />
     </div>
   );
 }

@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.models import DocType, DocumentStatus
+from app.models import DocumentStatus
 
 
 class DocumentSummary(BaseModel):
@@ -13,7 +13,7 @@ class DocumentSummary(BaseModel):
 
     id: str
     filename: str
-    doc_type: DocType | None
+    doc_type: str | None
     mime: str
     page_count: int
     status: DocumentStatus
@@ -149,6 +149,10 @@ class Grounding(BaseModel):
     char_end: int | None = None
     snippet: str | None = None  # the matched source substring (the verbatim span)
     alignment: Alignment | None = None
+    # Spatial grounding (signature post-pass): a pixel bbox on the page and the saved
+    # crop URL. Both optional/None so text-grounded fields are unaffected.
+    bbox: BBox | None = None
+    image_url: str | None = None  # /files URL for a saved crop of the grounded region
 
 
 class FieldValue(BaseModel):
@@ -161,6 +165,10 @@ class FieldValue(BaseModel):
     value: str | float | int | bool | None = None
     confidence: float = 0.0  # 0-1; alignment quality x propagated OCR confidence
     grounding: Grounding | None = None
+    # Human-in-the-loop correction: set when a reviewer edits the extracted value.
+    # ``original_value`` preserves the model's first extraction for the audit trail.
+    edited: bool = False
+    original_value: str | float | int | bool | None = None
 
 
 class StructuredResult(BaseModel):
@@ -168,7 +176,7 @@ class StructuredResult(BaseModel):
 
     document_id: str
     status: DocumentStatus  # `structured` at this stage
-    doc_type: DocType
+    doc_type: str
     provider: str  # "langextract" | "mock"
     model: str  # extractor model slug (or "mock")
     ocr_engine: str  # which OCR result this was built from
@@ -212,7 +220,7 @@ class DecisionResult(BaseModel):
 
     document_id: str
     status: DocumentStatus  # `decided` (approve/flag) | `needs_review`
-    doc_type: DocType
+    doc_type: str
     provider: str  # "llm" | "mock"
     model: str  # decision model slug (or "mock")
     decision: Decision
@@ -223,3 +231,205 @@ class DecisionResult(BaseModel):
     llm_decision: Decision | None = None  # what the LLM proposed before reconciliation
     warnings: list[str] = []
     latency_ms: int = 0
+
+
+# --- Phase 3 Wave 2: configurable doc-type CRUD ------------------------------
+
+
+class DocTypeResponse(BaseModel):
+    """A document type's full definition as returned by the CRUD endpoints."""
+
+    name: str
+    label: str
+    icon: str
+    extraction_definition: dict
+    rule_definition: dict
+    citation_paths: list[str]
+    builtin: bool
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocTypeCreate(BaseModel):
+    """Payload to create a custom document type (always non-built-in, version 1)."""
+
+    name: str
+    label: str
+    icon: str = ""
+    extraction_definition: dict
+    rule_definition: dict
+    citation_paths: list[str] = []
+
+
+class DocTypeUpdate(BaseModel):
+    """Full-replace payload for a custom document type (everything but ``name``).
+
+    A PUT replaces the editable definition wholesale rather than patching individual
+    keys: the editor always holds the complete definition, so a full replace keeps the
+    stored row consistent and avoids partial-update ambiguity. The immutable ``name`` is
+    taken from the URL path.
+    """
+
+    label: str
+    icon: str = ""
+    extraction_definition: dict
+    rule_definition: dict
+    citation_paths: list[str] = []
+
+
+class DocTypePreviewRequest(BaseModel):
+    """Run the structuring + rules pipeline over ad-hoc sample text for a doc type."""
+
+    sample_text: str
+    provider: str = "mock"
+
+
+class DocTypePreviewResponse(BaseModel):
+    """Preview output: the extracted fields plus the rule checks they trigger."""
+
+    doc_type: str
+    fields: dict
+    extraction_confidence: float
+    checks: list[Check]
+    warnings: list[str] = []
+
+
+# --- Phase 3 Wave 1: AI doc-type wizard --------------------------------------
+
+
+class AssistMessage(BaseModel):
+    """One turn in the wizard transcript exchanged with the assistant agent."""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class AssistRequest(BaseModel):
+    """Everything the wizard knows when asking the assistant for its next turn.
+
+    The transcript (``messages``) plus the ingested document texts, the spec drafted so
+    far, and any annotations collected from the last Plannotator review round.
+    """
+
+    messages: list[AssistMessage] = []
+    process_docs: list[str] = []
+    example_docs: list[str] = []
+    spec_markdown: str = ""
+    annotations: list[dict] = []
+
+
+class AssistResponse(BaseModel):
+    """The assistant's next turn: clarifying questions, the updated spec, and — when the
+    design is complete — the validated ``draft_doctype`` ready to create."""
+
+    questions: list[str]
+    updated_spec_markdown: str
+    done: bool
+    draft_doctype: DocTypeCreate | None
+    warnings: list[str]
+
+
+class IngestResponse(BaseModel):
+    """Plain text extracted from one uploaded process/example document."""
+
+    text: str
+    filename: str
+    kind: Literal["process", "example"]
+
+
+class AnnotateStartResponse(BaseModel):
+    """A launched Plannotator annotation session: its id and the URL to open."""
+
+    session_id: str
+    url: str
+
+
+class AnnotatePollResponse(BaseModel):
+    """Annotation session status; ``decision``/``feedback``/``raw`` are set once done."""
+
+    status: Literal["pending", "done"]
+    decision: str | None = None
+    feedback: str | None = None
+    raw: dict | None = None
+
+
+# --- OCR engines -------------------------------------------------------------
+
+
+class EngineInfo(BaseModel):
+    """One selectable OCR engine for the upload picker (docling + enabled VLMs)."""
+
+    key: str
+    label: str
+    kind: Literal["layout", "vlm"]
+
+
+class VlmEngineResponse(BaseModel):
+    """A connected VLM engine row, for the settings/catalog view."""
+
+    key: str
+    label: str
+    model: str
+    enabled: bool
+
+
+class EngineCreate(BaseModel):
+    """Connect a new VLM engine. ``key`` is derived from the model slug if omitted."""
+
+    label: str
+    model: str
+    key: str | None = None
+    enabled: bool = True
+
+
+class EngineUpdate(BaseModel):
+    """Patch an existing VLM engine (enable/disable or relabel)."""
+
+    label: str | None = None
+    enabled: bool | None = None
+
+
+class OpenRouterModel(BaseModel):
+    """An image-capable model offered by OpenRouter, for the add-model dropdown."""
+
+    id: str
+    name: str
+
+
+# --- field edits / corrections -----------------------------------------------
+
+
+class FieldEditRequest(BaseModel):
+    """Reviewer edit to one structured field, addressed by its dotted path."""
+
+    path: str  # e.g. "invoice_no" or "line_items.0.amount"
+    value: str | float | int | bool | None
+
+
+class FieldCorrection(BaseModel):
+    """A logged correction: what the model extracted vs. what the reviewer set."""
+
+    document_id: str
+    doc_type: str
+    field_path: str
+    original_value: str | float | int | bool | None
+    new_value: str | float | int | bool | None
+    created_at: datetime
+    updated_at: datetime
+
+
+# --- admin overview ----------------------------------------------------------
+
+
+class OverviewStats(BaseModel):
+    """Consolidated counts for the admin overview dashboard."""
+
+    documents_total: int
+    documents_by_status: dict[str, int]
+    decisions: dict[str, int]  # approve / flag / needs_review counts
+    corrections_total: int
+    corrected_documents: int
+    doc_types: int
+    engines_enabled: int
+    avg_extraction_confidence: float | None

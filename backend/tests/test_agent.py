@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 from app.models import Document, DocType, DocumentStatus
 from app.pipeline.agent import _reconcile, run_decision
 from app.rules import DecisionContext
-from app.schemas import Check, StructuredResult
+from app.rules.base import citations_from_grounding
+from app.schemas import Check, Citation, Grounding, StructuredResult
 
 from .conftest import SAMPLES
 from app.main import app
@@ -211,3 +212,51 @@ def test_contract_missing_signatures_forces_flag():
     assert result.decision == "flag"
     sig = next(c for c in result.checks if c.name == "signatures_present")
     assert not sig.passed and sig.severity == "hard"
+
+
+# --- field-aware citation matching -------------------------------------------
+
+
+def test_citations_exact_path_still_cited():
+    grounding_map = {
+        "total": Grounding(page=2),
+        "parties.0": Grounding(page=1),
+    }
+    cites = citations_from_grounding(grounding_map, ["total", "parties.0"])
+    assert cites == [
+        Citation(field="total", source="page 2"),
+        Citation(field="parties.0", source="page 1"),
+    ]
+
+
+def test_citations_parent_path_cited_once_by_prefix():
+    # Only leaf grounding exists; the parent field name matches by prefix and is
+    # emitted exactly once (not per leaf).
+    grounding_map = {
+        "line_items.0.amount": Grounding(page=3),
+        "line_items.1.amount": Grounding(page=4),
+    }
+    cites = citations_from_grounding(grounding_map, ["line_items"])
+    assert cites == [Citation(field="line_items", source="page 3")]
+
+
+def test_citations_no_grounding_or_page_none_not_cited():
+    grounding_map = {
+        "termination_clause.text": Grounding(page=None),
+    }
+    # No grounding at all for "total"; page-None prefix hit doesn't count.
+    cites = citations_from_grounding(grounding_map, ["total", "termination_clause"])
+    assert cites == []
+
+
+def test_citations_preserve_input_order():
+    grounding_map = {
+        "total": Grounding(page=2),
+        "line_items.0.amount": Grounding(page=3),
+        "parties.0": Grounding(page=1),
+    }
+    cites = citations_from_grounding(
+        grounding_map, ["line_items", "parties.0", "total"]
+    )
+    assert [c.field for c in cites] == ["line_items", "parties.0", "total"]
+    assert [c.source for c in cites] == ["page 3", "page 1", "page 2"]

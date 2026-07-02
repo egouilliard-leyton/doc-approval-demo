@@ -1,41 +1,24 @@
-"""Invoice extraction: prompt, few-shot examples, field model, and assembly."""
+"""Invoice extraction, expressed declaratively and interpreted into a DocTypeSpec.
+
+The prompt, few-shot examples, and field shape that used to be hand-written here now
+live in ``INVOICE_DEFINITION``; :func:`~app.extraction.definition.build_spec` turns it
+into the same :class:`DocTypeSpec` the rest of the pipeline consumes.
+"""
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+import typing
 
-from app.schemas import FieldValue
-
-from .base import (
-    DocTypeSpec,
-    FlatExtraction,
-    GroundingCtx,
-    attr_field,
-    ground_field,
-    group_by_class,
-    presence_field,
-    scalar_field,
-    to_number,
-    to_text,
+from .definition import (
+    DocTypeDefinition,
+    ExampleData,
+    ExampleExtraction,
+    FieldDef,
+    SubFieldDef,
+    build_spec,
 )
 
-# Extraction classes the model may emit. line_item rows carry their columns in
-# attributes; bank_details_present is derived from a bank_details span's presence.
-EXTRACTION_CLASSES = {
-    "vendor",
-    "invoice_no",
-    "po_number",
-    "invoice_date",
-    "due_date",
-    "subtotal",
-    "tax",
-    "total",
-    "currency",
-    "payment_terms",
-    "bank_details",
-    "line_item",
-}
-
+# Use the exact prompt the hand-written spec carried (copied verbatim).
 PROMPT = """\
 Extract approval-relevant fields from this invoice. Use these extraction classes:
 vendor, invoice_no, po_number, invoice_date, due_date, subtotal, tax, total,
@@ -45,74 +28,46 @@ desc, qty, unit_price, amount).
 Rules:
 - Use the exact verbatim text from the source for each extraction_text (do not
   paraphrase or reformat) so each field can be traced back to its location.
+- Fields often appear inside Markdown tables, not prose: a two-column label/value
+  table (e.g. "| Invoice Number | INV-3337 |" -> invoice_no "INV-3337"), a totals
+  table ("| Total | $93.50 |"), or a line-item table with a header row. Read values
+  out of table cells just as you would from running text.
 - Only extract a field if it actually appears in the text. Do NOT infer, guess, or
   fabricate. If a field is absent, simply emit no extraction for it.
 - Emit dates and amounts as they appear in the document.\
 """
 
 
-class LineItem(BaseModel):
-    """One invoice line; each column carries its own value/confidence/grounding."""
-
-    desc: FieldValue
-    qty: FieldValue
-    unit_price: FieldValue
-    amount: FieldValue
-
-
-class InvoiceFields(BaseModel):
-    """Approval-relevant invoice fields (TASK Phase 4)."""
-
-    vendor: FieldValue
-    invoice_no: FieldValue
-    po_number: FieldValue
-    invoice_date: FieldValue
-    due_date: FieldValue
-    line_items: list[LineItem]
-    subtotal: FieldValue
-    tax: FieldValue
-    total: FieldValue
-    currency: FieldValue
-    payment_terms: FieldValue
-    bank_details_present: FieldValue
-
-
-def _line_item(flat: FlatExtraction, ctx: GroundingCtx) -> LineItem:
-    """Build a LineItem from a row extraction's attributes, grounded to the row span."""
-    grounding, confidence = ground_field(flat, ctx)
-    return LineItem(
-        desc=attr_field(flat, "desc", ctx, grounding, confidence, to_text),
-        qty=attr_field(flat, "qty", ctx, grounding, confidence, to_number),
-        unit_price=attr_field(flat, "unit_price", ctx, grounding, confidence, to_number),
-        amount=attr_field(flat, "amount", ctx, grounding, confidence, to_number),
-    )
-
-
-def assemble_invoice(flats: list[FlatExtraction], ctx: GroundingCtx) -> InvoiceFields:
-    """Turn flat extractions into a validated InvoiceFields model."""
-    grouped = group_by_class(flats)
-    return InvoiceFields(
-        vendor=scalar_field(grouped, "vendor", ctx, to_text),
-        invoice_no=scalar_field(grouped, "invoice_no", ctx, to_text),
-        po_number=scalar_field(grouped, "po_number", ctx, to_text),
-        invoice_date=scalar_field(grouped, "invoice_date", ctx, to_text),
-        due_date=scalar_field(grouped, "due_date", ctx, to_text),
-        line_items=[_line_item(f, ctx) for f in grouped.get("line_item", [])],
-        subtotal=scalar_field(grouped, "subtotal", ctx, to_number),
-        tax=scalar_field(grouped, "tax", ctx, to_number),
-        total=scalar_field(grouped, "total", ctx, to_number),
-        currency=scalar_field(grouped, "currency", ctx, to_text),
-        payment_terms=scalar_field(grouped, "payment_terms", ctx, to_text),
-        bank_details_present=presence_field(grouped, "bank_details", ctx),
-    )
-
-
-def _examples() -> list:
-    """Few-shot examples (lazy: imports langextract only when the engine runs)."""
-    import langextract as lx
-
-    return [
-        lx.data.ExampleData(
+INVOICE_DEFINITION = DocTypeDefinition(
+    name="invoice",
+    prompt=PROMPT,
+    core_paths=["vendor", "invoice_no", "total", "line_items"],
+    fields=[
+        FieldDef(name="vendor", kind="scalar", cls="vendor", coerce="text"),
+        FieldDef(name="invoice_no", kind="scalar", cls="invoice_no", coerce="text"),
+        FieldDef(name="po_number", kind="scalar", cls="po_number", coerce="text"),
+        FieldDef(name="invoice_date", kind="scalar", cls="invoice_date", coerce="text"),
+        FieldDef(name="due_date", kind="scalar", cls="due_date", coerce="text"),
+        FieldDef(
+            name="line_items",
+            kind="list_composite",
+            cls="line_item",
+            sub_fields=[
+                SubFieldDef(name="desc", source="attribute", coerce="text"),
+                SubFieldDef(name="qty", source="attribute", coerce="number"),
+                SubFieldDef(name="unit_price", source="attribute", coerce="number"),
+                SubFieldDef(name="amount", source="attribute", coerce="number"),
+            ],
+        ),
+        FieldDef(name="subtotal", kind="scalar", cls="subtotal", coerce="number"),
+        FieldDef(name="tax", kind="scalar", cls="tax", coerce="number"),
+        FieldDef(name="total", kind="scalar", cls="total", coerce="number"),
+        FieldDef(name="currency", kind="scalar", cls="currency", coerce="text"),
+        FieldDef(name="payment_terms", kind="scalar", cls="payment_terms", coerce="text"),
+        FieldDef(name="bank_details_present", kind="presence", cls="bank_details"),
+    ],
+    examples=[
+        ExampleData(
             text=(
                 "Acme Supplies Inc.\n"
                 "Invoice #INV-2024-001   PO: PO-5567\n"
@@ -123,14 +78,14 @@ def _examples() -> list:
                 "Remit to IBAN GB29 NWBK 6016 1331 9268 19"
             ),
             extractions=[
-                lx.data.Extraction(extraction_class="vendor", extraction_text="Acme Supplies Inc."),
-                lx.data.Extraction(extraction_class="invoice_no", extraction_text="INV-2024-001"),
-                lx.data.Extraction(extraction_class="po_number", extraction_text="PO-5567"),
-                lx.data.Extraction(extraction_class="invoice_date", extraction_text="2024-03-01"),
-                lx.data.Extraction(extraction_class="due_date", extraction_text="2024-03-31"),
-                lx.data.Extraction(
-                    extraction_class="line_item",
-                    extraction_text="10 x Widget @ 12.50 = 125.00",
+                ExampleExtraction(cls="vendor", text="Acme Supplies Inc."),
+                ExampleExtraction(cls="invoice_no", text="INV-2024-001"),
+                ExampleExtraction(cls="po_number", text="PO-5567"),
+                ExampleExtraction(cls="invoice_date", text="2024-03-01"),
+                ExampleExtraction(cls="due_date", text="2024-03-31"),
+                ExampleExtraction(
+                    cls="line_item",
+                    text="10 x Widget @ 12.50 = 125.00",
                     attributes={
                         "desc": "Widget",
                         "qty": "10",
@@ -138,18 +93,18 @@ def _examples() -> list:
                         "amount": "125.00",
                     },
                 ),
-                lx.data.Extraction(extraction_class="subtotal", extraction_text="125.00"),
-                lx.data.Extraction(extraction_class="tax", extraction_text="10.00"),
-                lx.data.Extraction(extraction_class="total", extraction_text="$135.00"),
-                lx.data.Extraction(extraction_class="currency", extraction_text="USD"),
-                lx.data.Extraction(extraction_class="payment_terms", extraction_text="Net 30"),
-                lx.data.Extraction(
-                    extraction_class="bank_details",
-                    extraction_text="IBAN GB29 NWBK 6016 1331 9268 19",
+                ExampleExtraction(cls="subtotal", text="125.00"),
+                ExampleExtraction(cls="tax", text="10.00"),
+                ExampleExtraction(cls="total", text="$135.00"),
+                ExampleExtraction(cls="currency", text="USD"),
+                ExampleExtraction(cls="payment_terms", text="Net 30"),
+                ExampleExtraction(
+                    cls="bank_details",
+                    text="IBAN GB29 NWBK 6016 1331 9268 19",
                 ),
             ],
         ),
-        lx.data.ExampleData(
+        ExampleData(
             # Second example deliberately omits PO and bank details -> the model
             # learns to leave absent fields unextracted rather than invent them.
             text=(
@@ -159,26 +114,73 @@ def _examples() -> list:
                 "Total due: 2,000.00 EUR"
             ),
             extractions=[
-                lx.data.Extraction(extraction_class="vendor", extraction_text="Globex Ltd"),
-                lx.data.Extraction(extraction_class="invoice_no", extraction_text="7781"),
-                lx.data.Extraction(extraction_class="invoice_date", extraction_text="05/02/2024"),
-                lx.data.Extraction(
-                    extraction_class="line_item",
-                    extraction_text="Consulting services .......... 2,000.00",
+                ExampleExtraction(cls="vendor", text="Globex Ltd"),
+                ExampleExtraction(cls="invoice_no", text="7781"),
+                ExampleExtraction(cls="invoice_date", text="05/02/2024"),
+                ExampleExtraction(
+                    cls="line_item",
+                    text="Consulting services .......... 2,000.00",
                     attributes={"desc": "Consulting services", "amount": "2,000.00"},
                 ),
-                lx.data.Extraction(extraction_class="total", extraction_text="2,000.00"),
-                lx.data.Extraction(extraction_class="currency", extraction_text="EUR"),
+                ExampleExtraction(cls="total", text="2,000.00"),
+                ExampleExtraction(cls="currency", text="EUR"),
             ],
         ),
-    ]
-
-
-SPEC = DocTypeSpec(
-    prompt=PROMPT,
-    examples_factory=_examples,
-    extraction_classes=EXTRACTION_CLASSES,
-    field_model=InvoiceFields,
-    assemble=assemble_invoice,
-    core_paths=["vendor", "invoice_no", "total", "line_items"],
+        ExampleData(
+            # Third example is Markdown-table shaped — exactly what OCR engines
+            # (Docling, VLMs) emit — so the model learns to read fields out of
+            # two-column label/value tables and a line-item table, not just prose.
+            text=(
+                "Northwind Web Studio\n"
+                "Bill To: Test Business\n"
+                "| Hrs/Qty | Service | Rate/Price | Adjust |\n"
+                "| --- | --- | --- | --- |\n"
+                "| 1.00 | Web Design | $85.00 | 0.00% |\n"
+                "| Sub Total | $85.00 |\n"
+                "| Tax | $8.50 |\n"
+                "| Total | $93.50 |\n"
+                "| Invoice Number | INV-3337 |\n"
+                "| PO Number | PO-9911 |\n"
+                "| Invoice Date | January 25, 2016 |\n"
+                "| Due Date | January 31, 2016 |\n"
+                "| Total Due | $93.50 |\n"
+                "Payment is due within 30 days\n"
+                "ANZ Bank ACC #12341234 BSB #4321432"
+            ),
+            extractions=[
+                ExampleExtraction(cls="vendor", text="Northwind Web Studio"),
+                ExampleExtraction(cls="invoice_no", text="INV-3337"),
+                ExampleExtraction(cls="po_number", text="PO-9911"),
+                ExampleExtraction(cls="invoice_date", text="January 25, 2016"),
+                ExampleExtraction(cls="due_date", text="January 31, 2016"),
+                ExampleExtraction(
+                    cls="line_item",
+                    text="| 1.00 | Web Design | $85.00 | 0.00% |",
+                    attributes={
+                        "desc": "Web Design",
+                        "qty": "1.00",
+                        "unit_price": "$85.00",
+                        "amount": "$85.00",
+                    },
+                ),
+                ExampleExtraction(cls="subtotal", text="$85.00"),
+                ExampleExtraction(cls="tax", text="$8.50"),
+                ExampleExtraction(cls="total", text="$93.50"),
+                ExampleExtraction(
+                    cls="payment_terms", text="Payment is due within 30 days"
+                ),
+                ExampleExtraction(
+                    cls="bank_details", text="ANZ Bank ACC #12341234 BSB #4321432"
+                ),
+            ],
+        ),
+    ],
 )
+
+
+SPEC = build_spec(INVOICE_DEFINITION)
+
+# Re-export the synthesised line-item row model under its historical name so
+# ``app.pipeline.structuring._backfill_from_tables`` can keep doing
+# ``from app.extraction.invoice import LineItem`` and constructing it directly.
+LineItem = typing.get_args(SPEC.field_model.model_fields["line_items"].annotation)[0]

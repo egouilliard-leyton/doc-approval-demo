@@ -1,14 +1,14 @@
 """Deterministic per-doc-type business rules for the agent decision layer.
 
-Mirrors ``app/extraction``: each doc type contributes a rule set and the citation
-paths worth surfacing; this module is the registry the agent stage consults.
+The registry now lives in :mod:`app.doc_types` (which serves both built-in and custom
+types). :func:`get_ruleset` / :func:`get_citation_paths` delegate there lazily — the
+import is done inside the function body to avoid a circular import: ``app.doc_types``
+imports the per-type modules in this package, so this package's ``__init__`` must not
+import ``app.doc_types`` at module top.
 """
 
 from __future__ import annotations
 
-from app.models import DocType
-
-from . import contract, invoice
 from .base import (
     DecisionContext,
     Ruleset,
@@ -16,28 +16,19 @@ from .base import (
     cross_cutting_checks,
 )
 
-RULESETS: dict[DocType, Ruleset] = {
-    DocType.invoice: invoice.invoice_checks,
-    DocType.contract: contract.contract_checks,
-}
 
-CITATION_PATHS: dict[DocType, list[str]] = {
-    DocType.invoice: invoice.CITATION_PATHS,
-    DocType.contract: contract.CITATION_PATHS,
-}
+def get_ruleset(doc_type: str) -> Ruleset:
+    """Return the rule set for a document type (delegates to the registry)."""
+    from app import doc_types
+
+    return doc_types.get_ruleset(doc_type)
 
 
-def get_ruleset(doc_type: DocType) -> Ruleset:
-    """Return the rule set for a document type, or raise for an unknown type."""
-    ruleset = RULESETS.get(doc_type)
-    if ruleset is None:
-        raise ValueError(f"No rule set for doc_type {doc_type!r}.")
-    return ruleset
+def get_citation_paths(doc_type: str) -> list[str]:
+    """Field paths to cite for a document type (delegates to the registry)."""
+    from app import doc_types
 
-
-def get_citation_paths(doc_type: DocType) -> list[str]:
-    """Field paths to cite for a document type (empty for unknown types)."""
-    return CITATION_PATHS.get(doc_type, [])
+    return doc_types.get_citation_paths(doc_type)
 
 
 __all__ = [

@@ -1,8 +1,53 @@
 // TypeScript mirrors of the FastAPI backend schemas (backend/app/schemas.py).
 // Kept hand-maintained and minimal to match the JSON the API returns.
 
-export type DocType = "invoice" | "contract";
-export type OcrEngine = "qwen-vl" | "docling";
+export type DocType = string;
+// An engine key: "docling" or any connected VLM engine key (data-driven).
+export type OcrEngine = string;
+
+/** A selectable OCR engine for the upload picker. */
+export interface EngineInfo {
+  key: string;
+  label: string;
+  kind: "layout" | "vlm";
+}
+
+/** A connected VLM engine row (settings/catalog view). */
+export interface VlmEngineRow {
+  key: string;
+  label: string;
+  model: string;
+  enabled: boolean;
+}
+
+/** An image-capable model offered by OpenRouter (add-model dropdown). */
+export interface OpenRouterModel {
+  id: string;
+  name: string;
+}
+
+/** A logged field correction (reviewer edit), for the admin corrections log. */
+export interface FieldCorrection {
+  document_id: string;
+  doc_type: string;
+  field_path: string;
+  original_value: string | number | boolean | null;
+  new_value: string | number | boolean | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Consolidated system counts for the admin overview. */
+export interface OverviewStats {
+  documents_total: number;
+  documents_by_status: Record<string, number>;
+  decisions: Record<string, number>;
+  corrections_total: number;
+  corrected_documents: number;
+  doc_types: number;
+  engines_enabled: number;
+  avg_extraction_confidence: number | null;
+}
 export type DocumentStatus =
   | "uploaded"
   | "prescanned"
@@ -39,6 +84,14 @@ export interface PageInfo {
 
 export interface DocumentDetail extends DocumentSummary {
   pages: PageInfo[];
+}
+
+/** One parsed worksheet, written to /files/<id>/sheets.json at ingest. */
+export interface Sheet {
+  name: string;
+  rows: string[][];
+  truncated_rows?: boolean;
+  truncated_cols?: boolean;
 }
 
 // --- prescan / quality -------------------------------------------------------
@@ -127,12 +180,17 @@ export interface Grounding {
   char_end: number | null;
   snippet: string | null;
   alignment: Alignment | null;
+  // Spatial grounding (signature post-pass): a pixel bbox on the page + the crop URL.
+  bbox?: BBox | null;
+  image_url?: string | null; // relative /files/... — wrap with fileUrl()
 }
 
 export interface FieldValue {
   value: string | number | boolean | null;
   confidence: number;
   grounding: Grounding | null;
+  edited?: boolean;
+  original_value?: string | number | boolean | null;
 }
 
 export interface StructuredResult {

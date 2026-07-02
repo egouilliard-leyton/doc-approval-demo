@@ -1,4 +1,4 @@
-.PHONY: install warm dev dev-backend dev-frontend test reset
+.PHONY: install warm dev dev-backend dev-frontend test smoke reset
 
 # One-time setup: backend deps (PyPI, hardened) + frontend deps.
 install:
@@ -13,15 +13,22 @@ warm:
 		"from app.pipeline.ocr import prewarm, available_engines; prewarm([e for e in available_engines() if e != 'mock'])"
 
 # Run backend (:8000) and frontend (:5173) together. Ctrl+C stops both.
+# --no-sync: don't re-sync (would strip the ocr/langextract/agent extras) — matches
+#   warm/test/smoke.
+# --reload-dir app: watch ONLY the source dir. The pipeline writes under backend/data/
+#   (data/<doc-id>/pages/*.png, data/app.db, etc. — nested well below data/), a sibling
+#   of app/. A `--reload-exclude 'data/*'` glob only matches data/'s DIRECT children, so
+#   nested writes would still trigger reloads; whitelisting app/ means data/ is never
+#   watched at all, which reliably suppresses every write no matter how deep it nests.
 dev:
 	@trap 'kill 0' EXIT; \
-	(cd backend && PYTORCH_ENABLE_MPS_FALLBACK=1 uv run uvicorn app.main:app --reload --port 8000) & \
+	(cd backend && PYTORCH_ENABLE_MPS_FALLBACK=1 uv run --no-sync uvicorn app.main:app --reload --reload-dir app --port 8000) & \
 	pnpm dev; \
 	wait
 
-# Backend only — FastAPI on :8000 with autoreload.
+# Backend only — FastAPI on :8000 with autoreload (see `dev` for the flag rationale).
 dev-backend:
-	cd backend && PYTORCH_ENABLE_MPS_FALLBACK=1 uv run uvicorn app.main:app --reload --port 8000
+	cd backend && PYTORCH_ENABLE_MPS_FALLBACK=1 uv run --no-sync uvicorn app.main:app --reload --reload-dir app --port 8000
 
 # Frontend only — Vite dev server on :5173.
 dev-frontend:
@@ -30,6 +37,10 @@ dev-frontend:
 # Backend test suite (offline; uses the mock engine/provider — no models or API key).
 test:
 	cd backend && uv run --no-sync pytest -q
+
+# End-to-end offline smoke test (full pipeline + doc-type CRUD via TestClient).
+smoke:
+	cd backend && uv run --no-sync python scripts/smoke.py
 
 # Clear uploaded files + SQLite DB (fresh demo state).
 reset:

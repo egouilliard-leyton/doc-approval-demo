@@ -24,6 +24,63 @@ export function formatDate(iso: string): string {
   });
 }
 
+// Common currency codes -> symbol; anything else falls back to the code prefix.
+const CURRENCY_SYMBOL: Record<string, string> = {
+  USD: "$",
+  EUR: "€",
+  GBP: "£",
+  JPY: "¥",
+  CNY: "¥",
+  AUD: "A$",
+  CAD: "C$",
+  CHF: "CHF ",
+  INR: "₹",
+};
+
+// Field names that plausibly hold a monetary amount. Currency formatting is
+// applied ONLY to these (and only when a currency is known) so non-money numbers
+// — quantities, counts, rates in other doc types — are left untouched.
+const MONEY_KEYWORDS = [
+  "total",
+  "subtotal",
+  "sub_total",
+  "amount",
+  "price",
+  "unit_price",
+  "balance",
+  "paid",
+  "fee",
+  "cost",
+  "charge",
+  "tax",
+  "vat",
+  "gst",
+];
+
+/** Whether a field key/label looks like a monetary amount (heuristic, opt-in). */
+export function isMoneyField(key: string): boolean {
+  const k = key.toLowerCase();
+  return MONEY_KEYWORDS.some((w) => k.includes(w));
+}
+
+/**
+ * Format a numeric amount with a currency, e.g. (85, "USD") -> "$85.00".
+ * Best-effort and optional: no currency -> the raw number as-is.
+ */
+export function formatMoney(
+  value: number,
+  currency?: string | null,
+): string {
+  const n = value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  if (!currency) return String(value);
+  const code = currency.trim().toUpperCase();
+  const sym = CURRENCY_SYMBOL[code];
+  return sym ? `${sym}${n}` : `${code} ${n}`;
+}
+
 /** Tailwind text color for a 0-1 confidence value. */
 export function confidenceTone(v?: number | null): string {
   if (v == null) return "text-muted-foreground";

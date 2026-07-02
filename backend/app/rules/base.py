@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date, datetime
 
 from app.config import settings
 from app.schemas import Check, Citation, Grounding
@@ -58,15 +59,63 @@ def as_number(value: object | None) -> float | None:
     return None
 
 
+def as_date(value: object | None) -> date | None:
+    """Best-effort :class:`date` parse; returns ``None`` on any failure (never raises).
+
+    ISO ``YYYY-MM-DD`` is tried first, then a fixed list of common human formats. For
+    ambiguous slashed dates a US-style ``%m/%d/%Y`` is tried before ``%d/%m/%Y``, so
+    ``03/04/2026`` reads as March 4th, not April 3rd.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        pass
+    for fmt in ("%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _values_only(node: object) -> object:
+    """Strip FieldValue nodes down to their value for a compact LLM prompt."""
+    if isinstance(node, dict):
+        if "value" in node and "confidence" in node:
+            return node.get("value")
+        return {k: _values_only(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_values_only(x) for x in node]
+    return node
+
+
 def citations_from_grounding(
     grounding_map: dict[str, Grounding], paths: list[str]
 ) -> list[Citation]:
-    """Build citations for the decision-relevant fields that have a grounded page."""
+    """Build citations for the decision-relevant fields that have a grounded page.
+
+    Matching is field-aware: a ``path`` first tries an EXACT hit in
+    ``grounding_map`` (built-in parity — explicit leaf paths like ``parties.0`` or
+    ``total`` keep their behavior). When there's no exact hit, the grounding map is
+    scanned in insertion order for the first leaf equal to ``path`` or starting with
+    ``path + "."`` that carries a page — so a top-level field name like
+    ``line_items`` (grounded as ``line_items.0.amount``) is citeable, emitting ONE
+    citation per path. Input ``paths`` order is preserved.
+    """
     out: list[Citation] = []
     for path in paths:
         g = grounding_map.get(path)
         if g is not None and g.page is not None:
             out.append(Citation(field=path, source=f"page {g.page}"))
+            continue
+        prefix = path + "."
+        for key, grounding in grounding_map.items():
+            if (key == path or key.startswith(prefix)) and grounding.page is not None:
+                out.append(Citation(field=path, source=f"page {grounding.page}"))
+                break
     return out
 
 

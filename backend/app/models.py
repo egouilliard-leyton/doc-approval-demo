@@ -41,7 +41,7 @@ class Document(SQLModel, table=True):
 
     id: str = Field(default_factory=_new_id, primary_key=True)
     filename: str
-    doc_type: DocType | None = None
+    doc_type: str | None = None
     mime: str
     page_count: int = 0
     status: DocumentStatus = Field(default=DocumentStatus.uploaded)
@@ -61,3 +61,58 @@ class PipelineRun(SQLModel, table=True):
     stage_results: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class DocTypeDefinitionRow(SQLModel, table=True):
+    """Persisted definition of a document type (built-in or custom).
+
+    Built-in types (invoice, contract) are mirrored here for the future UI/CRUD layer but
+    always resolve from code at runtime; custom types are rebuilt from these stored JSON
+    definitions by :func:`app.doc_types.register_from_row`.
+    """
+
+    name: str = Field(primary_key=True)
+    label: str
+    icon: str = ""
+    extraction_definition: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    rule_definition: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    citation_paths: list = Field(default_factory=list, sa_column=Column(JSON))
+    builtin: bool = False
+    version: int = 1
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class FieldCorrectionRow(SQLModel, table=True):
+    """A reviewer's correction to an extracted field, kept for the audit trail.
+
+    One row per (document, field_path) — re-editing the same field updates ``new_value``
+    while ``original_value`` stays pinned to the model's first extraction. This log
+    powers the future "corrections" review (edited fields signal extraction errors).
+    """
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    document_id: str = Field(foreign_key="document.id", index=True)
+    doc_type: str = ""
+    field_path: str
+    original_value: object | None = Field(default=None, sa_column=Column(JSON))
+    new_value: object | None = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class VlmEngineRow(SQLModel, table=True):
+    """A vision-language OCR engine the user has connected (one OpenRouter model each).
+
+    Every VLM engine is just a different OpenRouter model slug behind the same
+    OpenAI-compatible API, so connecting a new model is a row here — no code change.
+    ``key`` is the url-safe id used in ``?engine=``, the ``stage_results["ocr"][key]``
+    store, and the frontend selector; ``model`` is the OpenRouter slug. Docling and
+    mock stay code-defined (they aren't VLMs); only these rows are data-driven.
+    """
+
+    key: str = Field(primary_key=True)
+    label: str
+    model: str
+    enabled: bool = True
+    created_at: datetime = Field(default_factory=_utcnow)

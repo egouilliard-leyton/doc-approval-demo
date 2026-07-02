@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     structuring_max_char_buffer: int = 8000  # chunk size fed to the model.
     structuring_extraction_passes: int = 2  # >1 improves recall at ~2x latency.
     extraction_confidence_warn: float = 0.60  # overall conf below this -> warn.
+    # Section-aware extraction (accuracy over cost). Partition a document into
+    # heading-delimited sections and extract each against its own grounded substrate,
+    # then merge — instead of flattening the whole document into one window.
+    structuring_sectioning: bool = True  # kill switch: False = always single-blob path.
+    structuring_section_min_chars: int = 500  # a raw section shorter than this coalesces into a neighbor.
+    structuring_max_sections: int = 40  # circuit breaker: more than this -> whole-doc fallback + warning.
 
     # Agent decision layer (Phase 5). A single OpenRouter call supplies qualitative
     # judgment; the deterministic rules below run in code and the LLM can never
@@ -78,6 +84,31 @@ class Settings(BaseSettings):
         "California",
     ]
 
+    # AI doc-type wizard (Phase 3 Wave 1). The assistant agent designs a new doc type
+    # conversationally over OpenRouter; the Plannotator subprocess collects review
+    # annotations. The "assist" call reuses OPENROUTER_API_KEY. All env-overridable.
+    assist_model: str = "deepseek/deepseek-v4-flash"
+    assist_base_url: str = "https://openrouter.ai/api/v1"
+    assist_timeout_s: float = 120.0  # wizard turn (network LLM, may include a repair pass).
+    annotate_ttl_s: float = 600.0  # idle annotation sessions older than this are reaped.
+
+    # Signature detection (Phase 1). A YOLOv8s ONNX model runs as a spatial post-pass
+    # over the page images inside structuring, gated by a doc type declaring a
+    # ``kind="signature"`` field. Everything is best-effort: the optional ``signatures``
+    # extra (onnxruntime + huggingface-hub) is lazily imported and the weights load from
+    # a local path (with an optional HF_TOKEN-gated download fallback), so the app boots
+    # and structuring runs without the deps or the model file present.
+    signature_detection_enabled: bool = True
+    signature_model_path: str = "app/models/yolov8s.onnx"  # local weights (relative to backend/).
+    signature_model_repo: str = "tech4humans/yolov8s-signature-detector"
+    signature_model_file: str = "yolov8s.onnx"
+    signature_conf_threshold: float = 0.45  # detections below this are dropped. Calibrated on a
+    # real-document eval: true signatures scored >=0.53, false positives (body cursive) <=0.36, so
+    # 0.45 sits in that gap — keeps genuine signatures, drops the noise. See docs/signature-extraction.md.
+    signature_iou_threshold: float = 0.45  # NMS IoU for overlapping boxes.
+    signature_input_size: int = 640  # model input square (letterboxed).
+    signature_crop_padding_px: int = 6  # padding added around a detected box before cropping.
+
     # Browser origins allowed to call the API (Vite dev server by default).
     cors_origins: list[str] = ["http://localhost:5173"]
 
@@ -91,6 +122,12 @@ class Settings(BaseSettings):
     def data_path(self) -> Path:
         """Absolute path to the data dir, resolved relative to backend/."""
         path = Path(self.data_dir)
+        return path if path.is_absolute() else BACKEND_ROOT / path
+
+    @property
+    def signature_model_full_path(self) -> Path:
+        """Absolute path to the signature model weights, resolved relative to backend/."""
+        path = Path(self.signature_model_path)
         return path if path.is_absolute() else BACKEND_ROOT / path
 
 

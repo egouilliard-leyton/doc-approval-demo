@@ -10,12 +10,14 @@ import {
   getOcr,
   getPrescan,
   getStructure,
+  listEngines,
   runDecide,
   runOcr,
   runPrescan,
   runStructure,
   uploadDocument,
 } from "@/lib/api";
+import { isSpreadsheet } from "@/lib/doc-status";
 import type {
   DecisionResult,
   DocType,
@@ -100,6 +102,7 @@ type Action =
       setActive: boolean;
     }
   | { type: "STRUCTURE_DONE"; result: StructuredResult; timing: number }
+  | { type: "STRUCTURE_SET"; result: StructuredResult }
   | { type: "DECIDE_DONE"; result: DecisionResult; timing: number }
   | {
       type: "HYDRATE";
@@ -186,6 +189,10 @@ function reducer(state: PipelineState, action: Action): PipelineState {
         perStageStatus: { ...state.perStageStatus, structure: "done" },
         perStageTiming: { ...state.perStageTiming, structure: action.timing },
       };
+    case "STRUCTURE_SET":
+      // Replace the structure in place (e.g. after a field edit) without touching
+      // stage statuses/timings.
+      return { ...state, structure: action.result };
     case "DECIDE_DONE":
       return {
         ...state,
@@ -245,6 +252,8 @@ export interface UsePipeline extends PipelineState {
   openDocument: (id: string) => Promise<void>;
   runStage: (stage: StageKey) => Promise<void>;
   runEngineComparison: () => Promise<void>;
+  runOcrEngine: (engine: OcrEngine) => Promise<void>;
+  updateStructure: (result: StructuredResult) => void;
   reset: () => void;
 }
 
@@ -327,7 +336,6 @@ export function usePipeline(): UsePipeline {
   const ingestFile = useCallback(
     async (file: File) => {
       dispatch({ type: "INGEST_START" });
-      const engine = state.activeEngine;
       const docType = state.docType;
       let doc: DocumentDetail;
       try {
@@ -338,9 +346,22 @@ export function usePipeline(): UsePipeline {
         return;
       }
       dispatch({ type: "INGEST_DONE", document: doc });
+      // Spreadsheets are parsed by the dedicated engine (backend forces it); pinning
+      // the key here keeps the OCR result and the structuring lookup aligned, and
+      // makes it the active/inspected result.
+      const engine = isSpreadsheet(doc.mime) ? "spreadsheet" : state.activeEngine;
       await runAll(doc.id, engine, docType);
+      // Auto-run docling too (local, free) so the layout-grounded side-by-side is
+      // ready when the selected engine is a VLM. Not meaningful for spreadsheets.
+      if (!isSpreadsheet(doc.mime) && engine !== "docling") {
+        await execStage(doc.id, "ocr", {
+          engine: "docling",
+          docType,
+          setActive: false,
+        });
+      }
     },
-    [state.activeEngine, state.docType, runAll],
+    [state.activeEngine, state.docType, runAll, execStage],
   );
 
   // Reopen an already-ingested document and rehydrate whatever stage results
@@ -356,22 +377,33 @@ export function usePipeline(): UsePipeline {
         return;
       }
 
-      // 404s (a stage that never ran) settle as rejections we intentionally drop.
-      const [prescanR, doclingR, qwenR, structureR, decisionR] =
+      // Rehydrate cached OCR. A spreadsheet only ever has the single "spreadsheet"
+      // engine result; otherwise every currently-selectable engine (docling + enabled
+      // VLMs). A now-deleted engine's stale result simply won't reload — it isn't
+      // selectable anyway. 404s settle as rejections we intentionally drop.
+      const engineKeys = isSpreadsheet(detail.mime)
+        ? ["spreadsheet"]
+        : Array.from(
+            new Set([
+              "docling",
+              ...(await listEngines().catch(() => [])).map((e) => e.key),
+            ]),
+          );
+      const [prescanR, structureR, decisionR, ...ocrResults] =
         await Promise.allSettled([
           getPrescan(id),
-          getOcr(id, "docling"),
-          getOcr(id, "qwen-vl"),
           getStructure(id),
           getDecision(id),
+          ...engineKeys.map((k) => getOcr(id, k)),
         ]);
 
       // A newer openDocument started while we were fetching — drop these results.
       if (openTokenRef.current !== token) return;
 
       const ocrByEngine: Record<string, OCRResult> = {};
-      if (doclingR.status === "fulfilled") ocrByEngine.docling = doclingR.value;
-      if (qwenR.status === "fulfilled") ocrByEngine["qwen-vl"] = qwenR.value;
+      ocrResults.forEach((r, i) => {
+        if (r.status === "fulfilled") ocrByEngine[engineKeys[i]] = r.value;
+      });
 
       // Keep the user's selected engine if it has a result; otherwise fall back
       // to whichever engine does (docling is inserted first, so it's preferred).
@@ -407,10 +439,14 @@ export function usePipeline(): UsePipeline {
     [state.document, state.activeEngine, state.docType, execStage],
   );
 
-  // Run OCR for both engines so the comparison view has qwen-vl + docling.
+  // On-demand: OCR every enabled engine (docling + VLMs) that lacks a result, so
+  // the comparison view fills out. Explicit user action — may fire several paid calls.
   const runEngineComparison = useCallback(async () => {
     if (!state.document) return;
-    const engines: OcrEngine[] = ["docling", "qwen-vl"];
+    const engineList = await listEngines().catch(() => []);
+    const engines = Array.from(
+      new Set(["docling", ...engineList.map((e) => e.key)]),
+    );
     for (const engine of engines) {
       if (state.ocrByEngine[engine]) continue;
       await execStage(state.document.id, "ocr", {
@@ -427,12 +463,29 @@ export function usePipeline(): UsePipeline {
     execStage,
   ]);
 
+  // On-demand: OCR one specific engine and make it the active result to inspect.
+  const runOcrEngine = useCallback(
+    async (engine: OcrEngine) => {
+      if (!state.document) return;
+      await execStage(state.document.id, "ocr", {
+        engine,
+        docType: state.docType,
+        setActive: true,
+      });
+    },
+    [state.document, state.docType, execStage],
+  );
+
   const setDocType = useCallback(
     (t: DocType) => dispatch({ type: "SET_DOC_TYPE", docType: t }),
     [],
   );
   const setActiveEngine = useCallback(
     (e: OcrEngine) => dispatch({ type: "SET_ACTIVE_ENGINE", engine: e }),
+    [],
+  );
+  const updateStructure = useCallback(
+    (result: StructuredResult) => dispatch({ type: "STRUCTURE_SET", result }),
     [],
   );
   const reset = useCallback(() => dispatch({ type: "RESET" }), []);
@@ -446,6 +499,8 @@ export function usePipeline(): UsePipeline {
       openDocument,
       runStage,
       runEngineComparison,
+      runOcrEngine,
+      updateStructure,
       reset,
     }),
     [
@@ -456,6 +511,8 @@ export function usePipeline(): UsePipeline {
       openDocument,
       runStage,
       runEngineComparison,
+      runOcrEngine,
+      updateStructure,
       reset,
     ],
   );
