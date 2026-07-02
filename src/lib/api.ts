@@ -91,7 +91,7 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
       headers,
     });
   } catch {
-    throw new ApiError(0, "Cannot reach the backend — is it running on :8000?");
+    throw new ApiError(0, `Cannot reach the backend at ${API_BASE_URL}. Is it running?`);
   }
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
