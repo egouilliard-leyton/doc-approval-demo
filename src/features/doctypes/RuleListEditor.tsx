@@ -33,6 +33,8 @@ const RULE_KINDS: { value: RuleKind; label: string }[] = [
   { value: "set_membership", label: "Set membership" },
   { value: "field_dependency", label: "Field dependency" },
   { value: "uniqueness", label: "Uniqueness" },
+  { value: "equality", label: "Equality" },
+  { value: "date_constraint", label: "Date constraint" },
   { value: "llm_advisory", label: "LLM advisory" },
 ];
 
@@ -47,6 +49,15 @@ const THRESHOLD_OPS: { value: ThresholdOp; label: string }[] = [
   { value: "gte", label: "≥ (gte)" },
   { value: "lt", label: "< (lt)" },
   { value: "gt", label: "> (gt)" },
+];
+
+const EQUALITY_MATCH_MODES: {
+  value: "exact" | "normalized" | "regex";
+  label: string;
+}[] = [
+  { value: "exact", label: "Exact" },
+  { value: "normalized", label: "Normalized" },
+  { value: "regex", label: "Regex" },
 ];
 
 // A blank rule of the given kind, carrying over only the previous `name`. Defaults
@@ -97,6 +108,33 @@ function blankRule(kind: RuleKind, name: string): RuleDef {
       };
     case "uniqueness":
       return { kind, name, field_path: "", severity: "review" };
+    case "equality":
+      return {
+        kind,
+        name,
+        field_path: "",
+        severity: "review",
+        match_mode: "exact",
+        expected: "",
+        expected_field_path: null,
+        case_insensitive: false,
+        trim: false,
+        collapse_whitespace: false,
+        normalize_accents: false,
+        negate: false,
+      };
+    case "date_constraint":
+      return {
+        kind,
+        name,
+        field_path: "",
+        severity: "review",
+        not_future: true,
+        min: null,
+        max: null,
+        before_field_path: null,
+        after_field_path: null,
+      };
     case "llm_advisory":
       return { kind, name, question: "" };
   }
@@ -562,6 +600,179 @@ function RuleParams({
             onChange={(v) => onPatch({ field_path: v })}
           />
         </Field>
+      );
+
+    case "equality": {
+      const useField = rule.expected_field_path != null;
+      const matchMode = rule.match_mode ?? "exact";
+      return (
+        <>
+          <Field label="Field path">
+            <PathInput
+              value={rule.field_path}
+              placeholder="field_name"
+              onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              <Label className="text-xs text-muted-foreground">
+                {useField ? "Expected field path" : "Expected value"}
+              </Label>
+              {useField ? (
+                <PathInput
+                  value={rule.expected_field_path ?? ""}
+                  placeholder="other_field"
+                  onChange={(v) => onPatch({ expected_field_path: v })}
+                />
+              ) : (
+                <Input
+                  value={rule.expected ?? ""}
+                  placeholder="expected value"
+                  onChange={(e) => onPatch({ expected: e.target.value })}
+                />
+              )}
+            </div>
+            <Toggle
+              variant="outline"
+              pressed={useField}
+              onPressedChange={(pressed) =>
+                onPatch(
+                  pressed
+                    ? { expected: null, expected_field_path: "" }
+                    : { expected: "", expected_field_path: null },
+                )
+              }
+            >
+              Compare to field
+            </Toggle>
+          </div>
+          <Field label="Match mode">
+            <Select
+              value={matchMode}
+              onValueChange={(v) =>
+                onPatch({
+                  match_mode: v as "exact" | "normalized" | "regex",
+                })
+              }
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {EQUALITY_MATCH_MODES.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          {matchMode === "normalized" && (
+            <div className="flex flex-wrap gap-2">
+              <Toggle
+                variant="outline"
+                pressed={rule.case_insensitive ?? false}
+                onPressedChange={(pressed) =>
+                  onPatch({ case_insensitive: pressed })
+                }
+              >
+                Case-insensitive
+              </Toggle>
+              <Toggle
+                variant="outline"
+                pressed={rule.trim ?? false}
+                onPressedChange={(pressed) => onPatch({ trim: pressed })}
+              >
+                Trim
+              </Toggle>
+              <Toggle
+                variant="outline"
+                pressed={rule.collapse_whitespace ?? false}
+                onPressedChange={(pressed) =>
+                  onPatch({ collapse_whitespace: pressed })
+                }
+              >
+                Collapse whitespace
+              </Toggle>
+              <Toggle
+                variant="outline"
+                pressed={rule.normalize_accents ?? false}
+                onPressedChange={(pressed) =>
+                  onPatch({ normalize_accents: pressed })
+                }
+              >
+                Normalize accents
+              </Toggle>
+            </div>
+          )}
+          <Toggle
+            variant="outline"
+            pressed={rule.negate ?? false}
+            onPressedChange={(pressed) => onPatch({ negate: pressed })}
+          >
+            Negate
+          </Toggle>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+    }
+
+    case "date_constraint":
+      return (
+        <>
+          <Field label="Field path">
+            <PathInput
+              value={rule.field_path}
+              placeholder="field_name"
+              onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
+          <Toggle
+            variant="outline"
+            pressed={rule.not_future ?? false}
+            onPressedChange={(pressed) => onPatch({ not_future: pressed })}
+          >
+            Not in the future
+          </Toggle>
+          <Field label="Min">
+            <Input
+              value={rule.min ?? ""}
+              placeholder="YYYY-MM-DD"
+              onChange={(e) => onPatch({ min: e.target.value })}
+            />
+          </Field>
+          <Field label="Max">
+            <Input
+              value={rule.max ?? ""}
+              placeholder="YYYY-MM-DD"
+              onChange={(e) => onPatch({ max: e.target.value })}
+            />
+          </Field>
+          <Field label="Before field path">
+            <PathInput
+              value={rule.before_field_path ?? ""}
+              placeholder="other_field"
+              onChange={(v) => onPatch({ before_field_path: v })}
+            />
+          </Field>
+          <Field label="After field path">
+            <PathInput
+              value={rule.after_field_path ?? ""}
+              placeholder="other_field"
+              onChange={(v) => onPatch({ after_field_path: v })}
+            />
+          </Field>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
       );
 
     case "llm_advisory":

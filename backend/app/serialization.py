@@ -15,6 +15,8 @@ the built-in types that use it always resolve from code, never from their stored
 from __future__ import annotations
 
 import dataclasses
+import re
+from datetime import date
 
 from app.extraction.definition import (
     DocTypeDefinition,
@@ -26,7 +28,9 @@ from app.extraction.definition import (
 from app.rules.definition import (
     ArithmeticIdentityRuleDef,
     CodedRuleDef,
+    DateConstraintRuleDef,
     DocTypeRuleDefinition,
+    EqualityRuleDef,
     FieldDependencyRuleDef,
     LlmAdvisoryRuleDef,
     PresenceRuleDef,
@@ -99,6 +103,8 @@ _KIND_MAP: dict[type, str] = {
     SetMembershipRuleDef: "set_membership",
     FieldDependencyRuleDef: "field_dependency",
     UniquenessVsHistoryRuleDef: "uniqueness",
+    EqualityRuleDef: "equality",
+    DateConstraintRuleDef: "date_constraint",
     LlmAdvisoryRuleDef: "llm_advisory",
 }
 
@@ -150,8 +156,11 @@ def dict_to_rule_defn(d: dict) -> DocTypeRuleDefinition:
 
 # --- validation (Wave 2) ------------------------------------------------------
 
-# The five field kinds the interpreter understands (mirrors FieldDef.kind).
-_VALID_FIELD_KINDS = {"scalar", "presence", "list_scalar", "list_composite", "composite"}
+# The field kinds the interpreter understands (mirrors FieldDef.kind). ``signature``
+# is a spatially-detected list[FieldValue] filled by the post-pass, not the LLM.
+_VALID_FIELD_KINDS = {
+    "scalar", "presence", "list_scalar", "list_composite", "composite", "signature"
+}
 # Kinds that REQUIRE a non-empty sub_fields list (and only those).
 _COMPOSITE_KINDS = {"composite", "list_composite"}
 # Both top-level fields and sub-fields coerce via this closed set.
@@ -335,6 +344,49 @@ def validate_custom_rule_dict(d: dict, declared_field_names: set[str]) -> list[s
             for key in ("result_path", "addend_a_path", "addend_b_path"):
                 if not rule.get(key):
                     errors.append(f"{where}: 'arithmetic' requires '{key}'")
+        elif kind == "equality":
+            has_literal = rule.get("expected") is not None
+            has_setting = rule.get("expected_field_path") is not None
+            if has_literal == has_setting:
+                errors.append(
+                    f"{where}: set exactly one of 'expected' / 'expected_field_path'"
+                )
+            if "match_mode" in rule and rule["match_mode"] not in {
+                "exact", "normalized", "regex"
+            }:
+                errors.append(
+                    f"{where}: 'match_mode' must be one of "
+                    f"['exact','normalized','regex'] (got {rule['match_mode']!r})"
+                )
+            if rule.get("match_mode") == "regex" and isinstance(rule.get("expected"), str):
+                try:
+                    re.compile(rule["expected"])
+                except re.error:
+                    errors.append(f"{where}: 'expected' is not a valid regex pattern")
+        elif kind == "date_constraint":
+            # Truthiness (not ``is not None``): the UI writes an empty string for a
+            # cleared input, and the interpreter treats "" as absent (``if rule.min:``).
+            # A date can never legitimately be "" — so mirror the interpreter and the
+            # ``arithmetic`` branch's convention rather than ``equality``'s (where the
+            # empty-string literal ``expected: ""`` is a valid comparison value).
+            has_constraint = (
+                bool(rule.get("not_future"))
+                or bool(rule.get("min"))
+                or bool(rule.get("max"))
+                or bool(rule.get("before_field_path"))
+                or bool(rule.get("after_field_path"))
+            )
+            if not has_constraint:
+                errors.append(f"{where}: date_constraint requires at least one constraint")
+            for key in ("min", "max"):
+                value = rule.get(key)
+                if value:
+                    try:
+                        date.fromisoformat(value)
+                    except (ValueError, TypeError):
+                        errors.append(
+                            f"{where}: '{key}' must be an ISO date string YYYY-MM-DD"
+                        )
 
         # Every referenced field path must resolve to a declared field (by base name).
         for key, value in rule.items():

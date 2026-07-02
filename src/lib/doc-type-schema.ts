@@ -48,6 +48,8 @@ export type RuleKind =
   | "set_membership"
   | "field_dependency"
   | "uniqueness"
+  | "equality"
+  | "date_constraint"
   | "llm_advisory";
 export type RuleSeverity = "advisory" | "review" | "hard";
 export type ThresholdOp = "lte" | "gte" | "lt" | "gt";
@@ -118,6 +120,37 @@ export interface UniquenessRule {
   detail_fail?: string;
 }
 
+export interface EqualityRule {
+  kind: "equality";
+  name: string;
+  field_path: string;
+  severity: RuleSeverity;
+  expected?: string | null;
+  expected_field_path?: string | null;
+  match_mode?: "exact" | "normalized" | "regex";
+  case_insensitive?: boolean;
+  trim?: boolean;
+  collapse_whitespace?: boolean;
+  normalize_accents?: boolean;
+  negate?: boolean;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
+export interface DateConstraintRule {
+  kind: "date_constraint";
+  name: string;
+  field_path: string;
+  severity: RuleSeverity;
+  not_future?: boolean;
+  min?: string | null;
+  max?: string | null;
+  before_field_path?: string | null;
+  after_field_path?: string | null;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
 export interface LlmAdvisoryRule {
   kind: "llm_advisory";
   name: string;
@@ -131,6 +164,8 @@ export type RuleDef =
   | SetMembershipRule
   | FieldDependencyRule
   | UniquenessRule
+  | EqualityRule
+  | DateConstraintRule
   | LlmAdvisoryRule;
 
 export interface RuleDefinition {

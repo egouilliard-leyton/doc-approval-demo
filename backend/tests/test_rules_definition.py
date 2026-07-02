@@ -6,11 +6,16 @@ two shipped types are checked for parity: ``build_ruleset(INVOICE_RULE_DEFINITIO
 original hand-written ``invoice_checks`` / ``contract_checks`` produced.
 """
 
+from datetime import date, timedelta
+
 from app.rules import DecisionContext
 from app.rules.contract import CONTRACT_RULE_DEFINITION
 from app.rules.definition import (
     ArithmeticIdentityRuleDef,
     CodedRuleDef,
+    DateConstraintRuleDef,
+    DocTypeRuleDefinition,
+    EqualityRuleDef,
     FieldDependencyRuleDef,
     LlmAdvisoryRuleDef,
     PresenceRuleDef,
@@ -250,6 +255,192 @@ def test_llm_advisory_raise_degrades_to_passing():
     rule = LlmAdvisoryRuleDef(name="adv", question="concern?", _test_fn=boom)
     out = _interpret(rule, {}, ctx())  # must not raise
     assert out.passed and out.severity == "review"
+
+
+# --- primitives: EqualityRuleDef ----------------------------------------------
+
+
+def test_equality_exact_pass_and_fail():
+    rule = EqualityRuleDef(name="eq", field_path="currency", severity="hard", expected="USD")
+    ok = _interpret(rule, {"currency": fv("USD")}, ctx())
+    assert ok.passed and ok.severity == "hard"
+    bad = _interpret(rule, {"currency": fv("EUR")}, ctx())
+    assert not bad.passed and bad.severity == "hard"
+
+
+def test_equality_exact_toggles_are_inert():
+    """Exact mode compares raw strings — case/trim toggles do not apply."""
+    rule = EqualityRuleDef(
+        name="eq", field_path="currency", severity="review", expected="usd",
+        match_mode="exact", case_insensitive=True, trim=True,
+    )
+    assert not _interpret(rule, {"currency": fv("USD")}, ctx()).passed
+
+
+def test_equality_normalized_case_insensitive_and_trim():
+    rule = EqualityRuleDef(
+        name="eq", field_path="name", severity="review", expected="acme corp",
+        match_mode="normalized", case_insensitive=True, trim=True, collapse_whitespace=True,
+    )
+    assert _interpret(rule, {"name": fv("  ACME   Corp ")}, ctx()).passed
+    assert not _interpret(rule, {"name": fv("Globex")}, ctx()).passed
+
+
+def test_equality_normalized_accents():
+    rule = EqualityRuleDef(
+        name="eq", field_path="city", severity="review", expected="Montreal",
+        match_mode="normalized", normalize_accents=True,
+    )
+    assert _interpret(rule, {"city": fv("Montréal")}, ctx()).passed
+
+
+def test_equality_regex_match_and_non_match():
+    rule = EqualityRuleDef(
+        name="eq", field_path="invoice_no", severity="review",
+        expected=r"INV-\d+", match_mode="regex",
+    )
+    assert _interpret(rule, {"invoice_no": fv("INV-123")}, ctx()).passed
+    assert not _interpret(rule, {"invoice_no": fv("PO-9")}, ctx()).passed
+
+
+def test_equality_regex_case_insensitive():
+    rule = EqualityRuleDef(
+        name="eq", field_path="code", severity="review", expected=r"abc",
+        match_mode="regex", case_insensitive=True,
+    )
+    assert _interpret(rule, {"code": fv("ABC")}, ctx()).passed
+
+
+def test_equality_invalid_regex_skips():
+    rule = EqualityRuleDef(
+        name="eq", field_path="x", severity="review", expected="(", match_mode="regex",
+    )
+    assert _interpret(rule, {"x": fv("anything")}, ctx()) is None
+
+
+def test_equality_negate_flips_result():
+    rule = EqualityRuleDef(
+        name="eq", field_path="currency", severity="review", expected="USD", negate=True,
+    )
+    # equal -> negate makes it fail
+    assert not _interpret(rule, {"currency": fv("USD")}, ctx()).passed
+    # not equal -> negate makes it pass
+    assert _interpret(rule, {"currency": fv("EUR")}, ctx()).passed
+
+
+def test_equality_skips_when_field_absent():
+    rule = EqualityRuleDef(name="eq", field_path="currency", severity="hard", expected="USD")
+    assert _interpret(rule, {}, ctx()) is None
+
+
+def test_equality_skips_when_expected_field_absent():
+    rule = EqualityRuleDef(
+        name="eq", field_path="bill_to", severity="hard", expected_field_path="ship_to",
+    )
+    assert _interpret(rule, {"bill_to": fv("Acme")}, ctx()) is None
+
+
+def test_equality_compare_against_another_field():
+    rule = EqualityRuleDef(
+        name="eq", field_path="bill_to", severity="hard", expected_field_path="ship_to",
+    )
+    same = _interpret(rule, {"bill_to": fv("Acme"), "ship_to": fv("Acme")}, ctx())
+    assert same.passed
+    diff = _interpret(rule, {"bill_to": fv("Acme"), "ship_to": fv("Globex")}, ctx())
+    assert not diff.passed
+
+
+# --- primitives: DateConstraintRuleDef ----------------------------------------
+
+
+def test_date_not_future_pass_and_fail():
+    rule = DateConstraintRuleDef(name="dc", field_path="issued", severity="hard", not_future=True)
+    past = (date.today() - timedelta(days=5)).isoformat()
+    assert _interpret(rule, {"issued": fv(past)}, ctx()).passed
+    future = (date.today() + timedelta(days=5)).isoformat()
+    out = _interpret(rule, {"issued": fv(future)}, ctx())
+    assert not out.passed and out.severity == "hard"
+
+
+def test_date_min_max_in_range_and_out_of_range():
+    rule = DateConstraintRuleDef(
+        name="dc", field_path="d", severity="review", min="2026-01-01", max="2026-12-31",
+    )
+    assert _interpret(rule, {"d": fv("2026-06-15")}, ctx()).passed
+    assert not _interpret(rule, {"d": fv("2025-12-31")}, ctx()).passed  # before min
+    assert not _interpret(rule, {"d": fv("2027-01-01")}, ctx()).passed  # after max
+
+
+def test_date_before_field_ordering():
+    rule = DateConstraintRuleDef(
+        name="dc", field_path="start", severity="hard", before_field_path="end",
+    )
+    ok = _interpret(rule, {"start": fv("2026-01-01"), "end": fv("2026-02-01")}, ctx())
+    assert ok.passed
+    bad = _interpret(rule, {"start": fv("2026-03-01"), "end": fv("2026-02-01")}, ctx())
+    assert not bad.passed
+
+
+def test_date_after_field_ordering():
+    rule = DateConstraintRuleDef(
+        name="dc", field_path="end", severity="hard", after_field_path="start",
+    )
+    ok = _interpret(rule, {"end": fv("2026-02-01"), "start": fv("2026-01-01")}, ctx())
+    assert ok.passed
+    bad = _interpret(rule, {"end": fv("2026-01-01"), "start": fv("2026-02-01")}, ctx())
+    assert not bad.passed
+
+
+def test_date_skips_when_unparseable():
+    rule = DateConstraintRuleDef(name="dc", field_path="d", severity="hard", not_future=True)
+    assert _interpret(rule, {"d": fv("not-a-date")}, ctx()) is None
+    assert _interpret(rule, {}, ctx()) is None
+
+
+def test_date_skips_when_min_literal_malformed():
+    rule = DateConstraintRuleDef(name="dc", field_path="d", severity="hard", min="garbage")
+    assert _interpret(rule, {"d": fv("2026-06-15")}, ctx()) is None
+
+
+def test_date_skips_when_referenced_field_unparseable():
+    rule = DateConstraintRuleDef(
+        name="dc", field_path="start", severity="hard", before_field_path="end",
+    )
+    assert _interpret(rule, {"start": fv("2026-01-01"), "end": fv("nope")}, ctx()) is None
+
+
+def test_date_compound_failures_joined():
+    rule = DateConstraintRuleDef(
+        name="dc", field_path="d", severity="review", not_future=True, min="2027-01-01",
+    )
+    future = (date.today() + timedelta(days=10)).isoformat()
+    out = _interpret(rule, {"d": fv(future)}, ctx())
+    assert not out.passed
+    assert "in the future" in out.detail and "before 2027-01-01" in out.detail
+
+
+# --- wired together: equality + date_constraint through build_ruleset ----------
+
+
+def test_equality_and_date_constraint_wired_through_build_ruleset():
+    defn = DocTypeRuleDefinition(
+        name="mixed",
+        rules=[
+            EqualityRuleDef(
+                name="currency_usd", field_path="currency", severity="hard", expected="USD",
+            ),
+            DateConstraintRuleDef(
+                name="issued_not_future", field_path="issued", severity="review",
+                not_future=True,
+            ),
+        ],
+    )
+    past = (date.today() - timedelta(days=1)).isoformat()
+    fields = {"currency": fv("USD"), "issued": fv(past)}
+    got = by_name(run(defn, fields))
+    assert set(got) == {"currency_usd", "issued_not_future"}
+    assert (got["currency_usd"].passed, got["currency_usd"].severity) == (True, "hard")
+    assert (got["issued_not_future"].passed, got["issued_not_future"].severity) == (True, "review")
 
 
 # --- parity: invoice ----------------------------------------------------------

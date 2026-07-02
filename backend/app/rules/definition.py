@@ -17,14 +17,17 @@ while preserving their exact ``(name, passed, severity)`` behaviour.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Literal, Union
 
 from app.config import settings
 from app.schemas import Check
 
-from .base import DecisionContext, Ruleset, as_number, fval, present, _values_only
+from .base import DecisionContext, Ruleset, as_date, as_number, fval, present, _values_only
 
 
 # --- declarative rule primitives ----------------------------------------------
@@ -123,6 +126,57 @@ class UniquenessVsHistoryRuleDef:
 
 
 @dataclass
+class EqualityRuleDef:
+    """Compare a field against a literal or another field, with optional normalization.
+
+    Exactly one of ``expected`` (a literal) / ``expected_field_path`` (another field)
+    supplies the expected side. Skipped (no check emitted) when the compared field is
+    absent, when ``expected_field_path`` is set but that field is absent, or when a
+    ``regex`` pattern fails to compile. ``match_mode`` picks the comparison: ``exact``
+    (raw string equality, toggles inert), ``normalized`` (apply the trim/whitespace/case/
+    accent toggles to both sides), or ``regex`` (``expected`` is a full-match pattern;
+    only ``case_insensitive`` applies). ``negate`` flips the result last.
+    """
+
+    name: str
+    field_path: str
+    severity: Literal["hard", "review", "advisory"]
+    expected: str | None = None
+    expected_field_path: str | None = None
+    match_mode: Literal["exact", "normalized", "regex"] = "exact"
+    case_insensitive: bool = False
+    trim: bool = False
+    collapse_whitespace: bool = False
+    normalize_accents: bool = False
+    negate: bool = False
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
+class DateConstraintRuleDef:
+    """Check a date field against calendar and/or cross-field ordering constraints.
+
+    Skipped (no check emitted) when the field is unparseable as a date, when a ``min`` /
+    ``max`` literal is itself malformed (an authoring bug), or when a referenced
+    ``before_field_path`` / ``after_field_path`` is unparseable. Every configured
+    constraint is evaluated and any failures are joined into one detail; the check passes
+    only when none fail.
+    """
+
+    name: str
+    field_path: str
+    severity: Literal["hard", "review", "advisory"]
+    not_future: bool = False
+    min: str | None = None
+    max: str | None = None
+    before_field_path: str | None = None
+    after_field_path: str | None = None
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
 class CodedRuleDef:
     """Tier-3 escape hatch: delegate entirely to a hand-written function.
 
@@ -154,6 +208,8 @@ RuleDef = Union[
     SetMembershipRuleDef,
     FieldDependencyRuleDef,
     UniquenessVsHistoryRuleDef,
+    EqualityRuleDef,
+    DateConstraintRuleDef,
     CodedRuleDef,
     LlmAdvisoryRuleDef,
 ]
@@ -183,6 +239,27 @@ def _detail(template: str, default: str, ctx_dict: dict) -> str:
     if template:
         return template.format_map(ctx_dict)
     return default
+
+
+def _normalize_equality_value(raw: str, rule: EqualityRuleDef) -> str:
+    """Apply the equality normalization toggles in a fixed, documented order.
+
+    ``trim`` (strip) -> ``collapse_whitespace`` (fold runs to single spaces) ->
+    ``case_insensitive`` (lowercase) -> ``normalize_accents`` (NFKD + drop combining
+    marks). Each step is gated on its own boolean, so a rule opts into exactly the
+    normalizations it needs.
+    """
+    s = raw
+    if rule.trim:
+        s = s.strip()
+    if rule.collapse_whitespace:
+        s = " ".join(s.split())
+    if rule.case_insensitive:
+        s = s.lower()
+    if rule.normalize_accents:
+        s = unicodedata.normalize("NFKD", s)
+        s = "".join(c for c in s if not unicodedata.combining(c))
+    return s
 
 
 def _interpret(rule: RuleDef, fields: dict, ctx: DecisionContext) -> Check | None:
@@ -313,6 +390,83 @@ def _interpret(rule: RuleDef, fields: dict, ctx: DecisionContext) -> Check | Non
             severity=rule.severity,
         )
 
+    if isinstance(rule, EqualityRuleDef):
+        law = fval(fields, rule.field_path)
+        if law is None:
+            return None
+        if rule.expected_field_path is not None:
+            exp = fval(fields, rule.expected_field_path)
+            if exp is None:
+                return None
+        else:
+            exp = rule.expected
+        if rule.match_mode == "normalized":
+            ok = _normalize_equality_value(str(law), rule) == _normalize_equality_value(
+                str(exp), rule
+            )
+        elif rule.match_mode == "regex":
+            flags = re.IGNORECASE if rule.case_insensitive else 0
+            try:
+                ok = re.fullmatch(str(exp), str(law), flags) is not None
+            except re.error:
+                return None
+        else:  # exact
+            ok = str(law) == str(exp)
+        ok = ok != rule.negate
+        default = f"{rule.field_path} {law!r} {'==' if ok else '!='} {exp!r}"
+        fmt = {"value": law, "expected": exp, "field_path": rule.field_path}
+        return Check(
+            name=rule.name,
+            passed=ok,
+            detail=_detail(rule.detail_pass if ok else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
+    if isinstance(rule, DateConstraintRuleDef):
+        d = as_date(fval(fields, rule.field_path))
+        if d is None:
+            return None
+        failures: list[str] = []
+        if rule.not_future and d > date.today():
+            failures.append("in the future")
+        if rule.min:
+            md = as_date(rule.min)
+            if md is None:
+                return None
+            if d < md:
+                failures.append(f"before {rule.min}")
+        if rule.max:
+            mx = as_date(rule.max)
+            if mx is None:
+                return None
+            if d > mx:
+                failures.append(f"after {rule.max}")
+        if rule.before_field_path:
+            bd = as_date(fval(fields, rule.before_field_path))
+            if bd is None:
+                return None
+            if not d < bd:
+                failures.append(f"not before {rule.before_field_path}")
+        if rule.after_field_path:
+            ad = as_date(fval(fields, rule.after_field_path))
+            if ad is None:
+                return None
+            if not d > ad:
+                failures.append(f"not after {rule.after_field_path}")
+        passed = not failures
+        default = (
+            f"{rule.field_path} {d.isoformat()} ok"
+            if passed
+            else f"{rule.field_path} {d.isoformat()}: " + "; ".join(failures)
+        )
+        fmt = {"value": d.isoformat(), "field_path": rule.field_path}
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
     if isinstance(rule, CodedRuleDef):
         return rule.fn(fields, ctx)
 
@@ -418,6 +572,8 @@ __all__ = [
     "SetMembershipRuleDef",
     "FieldDependencyRuleDef",
     "UniquenessVsHistoryRuleDef",
+    "EqualityRuleDef",
+    "DateConstraintRuleDef",
     "CodedRuleDef",
     "LlmAdvisoryRuleDef",
     "DocTypeRuleDefinition",
