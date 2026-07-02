@@ -149,6 +149,10 @@ class Grounding(BaseModel):
     char_end: int | None = None
     snippet: str | None = None  # the matched source substring (the verbatim span)
     alignment: Alignment | None = None
+    # Spatial grounding (signature post-pass): a pixel bbox on the page and the saved
+    # crop URL. Both optional/None so text-grounded fields are unaffected.
+    bbox: BBox | None = None
+    image_url: str | None = None  # /files URL for a saved crop of the grounded region
 
 
 class FieldValue(BaseModel):
@@ -161,6 +165,10 @@ class FieldValue(BaseModel):
     value: str | float | int | bool | None = None
     confidence: float = 0.0  # 0-1; alignment quality x propagated OCR confidence
     grounding: Grounding | None = None
+    # Human-in-the-loop correction: set when a reviewer edits the extracted value.
+    # ``original_value`` preserves the model's first extraction for the audit trail.
+    edited: bool = False
+    original_value: str | float | int | bool | None = None
 
 
 class StructuredResult(BaseModel):
@@ -344,3 +352,84 @@ class AnnotatePollResponse(BaseModel):
     decision: str | None = None
     feedback: str | None = None
     raw: dict | None = None
+
+
+# --- OCR engines -------------------------------------------------------------
+
+
+class EngineInfo(BaseModel):
+    """One selectable OCR engine for the upload picker (docling + enabled VLMs)."""
+
+    key: str
+    label: str
+    kind: Literal["layout", "vlm"]
+
+
+class VlmEngineResponse(BaseModel):
+    """A connected VLM engine row, for the settings/catalog view."""
+
+    key: str
+    label: str
+    model: str
+    enabled: bool
+
+
+class EngineCreate(BaseModel):
+    """Connect a new VLM engine. ``key`` is derived from the model slug if omitted."""
+
+    label: str
+    model: str
+    key: str | None = None
+    enabled: bool = True
+
+
+class EngineUpdate(BaseModel):
+    """Patch an existing VLM engine (enable/disable or relabel)."""
+
+    label: str | None = None
+    enabled: bool | None = None
+
+
+class OpenRouterModel(BaseModel):
+    """An image-capable model offered by OpenRouter, for the add-model dropdown."""
+
+    id: str
+    name: str
+
+
+# --- field edits / corrections -----------------------------------------------
+
+
+class FieldEditRequest(BaseModel):
+    """Reviewer edit to one structured field, addressed by its dotted path."""
+
+    path: str  # e.g. "invoice_no" or "line_items.0.amount"
+    value: str | float | int | bool | None
+
+
+class FieldCorrection(BaseModel):
+    """A logged correction: what the model extracted vs. what the reviewer set."""
+
+    document_id: str
+    doc_type: str
+    field_path: str
+    original_value: str | float | int | bool | None
+    new_value: str | float | int | bool | None
+    created_at: datetime
+    updated_at: datetime
+
+
+# --- admin overview ----------------------------------------------------------
+
+
+class OverviewStats(BaseModel):
+    """Consolidated counts for the admin overview dashboard."""
+
+    documents_total: int
+    documents_by_status: dict[str, int]
+    decisions: dict[str, int]  # approve / flag / needs_review counts
+    corrections_total: int
+    corrected_documents: int
+    doc_types: int
+    engines_enabled: int
+    avg_extraction_confidence: float | None

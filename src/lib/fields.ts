@@ -133,6 +133,17 @@ export function buildFieldTree(fields: Record<string, unknown>): FieldNode[] {
   return nodes;
 }
 
+/** Flatten a field tree to every leaf (scalars, object children, table cells). */
+export function flattenLeaves(tree: FieldNode[]): FieldLeaf[] {
+  const out: FieldLeaf[] = [];
+  for (const node of tree) {
+    if (node.kind === "leaf") out.push(node);
+    else if (node.kind === "object") out.push(...node.children);
+    else for (const row of node.rows) out.push(...row);
+  }
+  return out;
+}
+
 /** Display string for a FieldValue.value (null -> em dash). */
 export function displayValue(v: FieldValue["value"]): string {
   if (v === null || v === undefined || v === "") return "—";

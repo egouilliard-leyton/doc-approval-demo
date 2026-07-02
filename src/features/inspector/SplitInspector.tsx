@@ -1,11 +1,18 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { rectsForField } from "@/lib/grounding";
+import { ApiError, editStructureField, getSheets } from "@/lib/api";
+import { buildHighlights } from "@/lib/highlights";
+import { cellRefsForFields } from "@/lib/grounding";
+import { isSpreadsheet } from "@/lib/doc-status";
 import { usePipelineContext } from "@/features/pipeline/PipelineContext";
+import { useEngines } from "@/features/upload/useEngines";
 import { PageViewer } from "@/features/inspector/PageViewer";
+import { GridViewer } from "@/features/inspector/GridViewer";
 import { OcrTextPanel } from "@/features/inspector/OcrTextPanel";
 import { StructuredPanel } from "@/features/inspector/StructuredPanel";
+import { CorrectionsDialog } from "@/features/inspector/CorrectionsDialog";
 import { EngineComparison } from "@/features/inspector/EngineComparison";
 import { DecisionCard } from "@/features/decision/DecisionCard";
 
@@ -38,37 +45,117 @@ export function SplitInspector() {
     decision,
     perStageStatus,
     runEngineComparison,
+    runOcrEngine,
+    updateStructure,
   } = usePipelineContext();
+  const { engines } = useEngines();
 
   const [hoveredField, setHoveredField] = useState<string | null>(null);
+  const [selectedField, setSelectedField] = useState<string | null>(null);
   const [activePage, setActivePage] = useState(1);
+  const [flashTick, setFlashTick] = useState(0);
+  const [correctionsOpen, setCorrectionsOpen] = useState(false);
 
-  const highlight = useMemo(() => {
-    if (!hoveredField || !structure || !ocr) return null;
-    return rectsForField(hoveredField, structure.grounding_map, ocr);
-  }, [hoveredField, structure, ocr]);
+  // Resolve every grounded field to a color-coded page region once per result.
+  const highlights = useMemo(
+    () => buildHighlights(structure?.grounding_map ?? {}, ocr),
+    [structure, ocr],
+  );
+
+  // For spreadsheets: fetch sheet names so grounded fields can show an A1 source
+  // cell (e.g. "Invoice!B2"). Keyed by doc id so a stale fetch never mislabels.
+  const docId = document?.id ?? null;
+  const isSheet = document ? isSpreadsheet(document.mime) : false;
+  const [sheetNamesState, setSheetNamesState] = useState<{
+    docId: string;
+    names: string[];
+  } | null>(null);
+  useEffect(() => {
+    if (!docId || !isSheet) return;
+    let cancelled = false;
+    getSheets(docId)
+      .then((s) => {
+        if (!cancelled) setSheetNamesState({ docId, names: s.map((x) => x.name) });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [docId, isSheet]);
+  const cellRefByPath = useMemo(() => {
+    if (!isSheet) return {};
+    const names =
+      sheetNamesState?.docId === docId ? sheetNamesState.names : [];
+    return cellRefsForFields(structure?.grounding_map ?? {}, ocr, names);
+  }, [isSheet, docId, sheetNamesState, structure, ocr]);
+
+  // Clicking a field: jump to its page, then scroll to + flash its box.
+  const selectField = useCallback(
+    (path: string) => {
+      setSelectedField(path);
+      const page = highlights.pageByPath[path];
+      if (page) setActivePage(page);
+      setFlashTick((t) => t + 1);
+    },
+    [highlights],
+  );
+
+  const editField = useCallback(
+    async (path: string, value: string | null) => {
+      if (!document) return;
+      try {
+        const updated = await editStructureField(document.id, { path, value });
+        updateStructure(updated);
+        toast.success("Field updated");
+      } catch (e) {
+        toast.error("Could not update field", {
+          description: e instanceof ApiError ? e.message : String(e),
+        });
+      }
+    },
+    [document, updateStructure],
+  );
 
   if (!document) return null;
 
-  const displayPage = highlight?.page ?? activePage;
-  const rects =
-    highlight && highlight.page === displayPage ? highlight.rects : [];
+  const spreadsheet = isSpreadsheet(document.mime);
+  const displayPage = activePage;
+  const selectedKey = selectedField
+    ? (highlights.regionKeyByPath[selectedField] ?? null)
+    : null;
+  const hoveredKey = hoveredField
+    ? (highlights.regionKeyByPath[hoveredField] ?? null)
+    : null;
 
   return (
     <div className="grid flex-1 gap-4 lg:grid-cols-2">
       {/* Left: source document */}
-      <div className="min-h-0">
-        <PageViewer
-          pages={document.pages}
-          page={displayPage}
-          rects={rects}
-          alignment={highlight?.alignment ?? null}
-          onPageChange={setActivePage}
-        />
+      <div className="min-h-0 min-w-0">
+        {spreadsheet ? (
+          <GridViewer
+            docId={document.id}
+            page={displayPage}
+            regions={highlights.regions}
+            selectedKey={selectedKey}
+            hoveredKey={hoveredKey}
+            flashTick={flashTick}
+            onPageChange={setActivePage}
+          />
+        ) : (
+          <PageViewer
+            pages={document.pages}
+            page={displayPage}
+            regions={highlights.regions}
+            selectedKey={selectedKey}
+            hoveredKey={hoveredKey}
+            flashTick={flashTick}
+            onPageChange={setActivePage}
+          />
+        )}
       </div>
 
       {/* Right: inspector tabs */}
-      <div className="flex min-h-0 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-col">
         <Tabs
           defaultValue="structured"
           className="flex min-h-0 flex-1 flex-col"
@@ -77,7 +164,8 @@ export function SplitInspector() {
             <TabsTrigger value="ocr">OCR text</TabsTrigger>
             <TabsTrigger value="structured">Structured</TabsTrigger>
             <TabsTrigger value="decision">Decision</TabsTrigger>
-            <TabsTrigger value="compare">Compare</TabsTrigger>
+            {/* Spreadsheets always use the single native engine — nothing to compare. */}
+            {!spreadsheet && <TabsTrigger value="compare">Compare</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="ocr" className="min-h-0 flex-1">
@@ -94,7 +182,14 @@ export function SplitInspector() {
             {structure ? (
               <StructuredPanel
                 structure={structure}
+                colorByPath={highlights.colorByPath}
+                cellRefByPath={cellRefByPath}
+                spreadsheet={spreadsheet}
+                selectedPath={selectedField}
+                onSelectField={selectField}
                 onHoverField={setHoveredField}
+                onEditField={editField}
+                onReviewEdits={() => setCorrectionsOpen(true)}
               />
             ) : perStageStatus.structure === "running" ? (
               <Pending label="Structuring with LangExtract…" />
@@ -118,14 +213,25 @@ export function SplitInspector() {
 
           <TabsContent value="compare" className="min-h-0 flex-1">
             <EngineComparison
+              engines={engines}
               ocrByEngine={ocrByEngine}
               page={displayPage}
-              onRun={runEngineComparison}
+              onRunAll={runEngineComparison}
+              onRunEngine={runOcrEngine}
               running={perStageStatus.ocr === "running"}
             />
           </TabsContent>
         </Tabs>
       </div>
+
+      <CorrectionsDialog
+        open={correctionsOpen}
+        onClose={() => setCorrectionsOpen(false)}
+        pages={document.pages}
+        structure={structure}
+        highlights={highlights}
+        spreadsheet={spreadsheet}
+      />
     </div>
   );
 }

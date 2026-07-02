@@ -81,3 +81,38 @@ class DocTypeDefinitionRow(SQLModel, table=True):
     version: int = 1
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class FieldCorrectionRow(SQLModel, table=True):
+    """A reviewer's correction to an extracted field, kept for the audit trail.
+
+    One row per (document, field_path) — re-editing the same field updates ``new_value``
+    while ``original_value`` stays pinned to the model's first extraction. This log
+    powers the future "corrections" review (edited fields signal extraction errors).
+    """
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    document_id: str = Field(foreign_key="document.id", index=True)
+    doc_type: str = ""
+    field_path: str
+    original_value: object | None = Field(default=None, sa_column=Column(JSON))
+    new_value: object | None = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class VlmEngineRow(SQLModel, table=True):
+    """A vision-language OCR engine the user has connected (one OpenRouter model each).
+
+    Every VLM engine is just a different OpenRouter model slug behind the same
+    OpenAI-compatible API, so connecting a new model is a row here — no code change.
+    ``key`` is the url-safe id used in ``?engine=``, the ``stage_results["ocr"][key]``
+    store, and the frontend selector; ``model`` is the OpenRouter slug. Docling and
+    mock stay code-defined (they aren't VLMs); only these rows are data-driven.
+    """
+
+    key: str = Field(primary_key=True)
+    label: str
+    model: str
+    enabled: bool = True
+    created_at: datetime = Field(default_factory=_utcnow)

@@ -2,6 +2,9 @@
 
 from fastapi.testclient import TestClient
 
+from sqlmodel import Session
+
+from app.db import engine
 from app.main import app
 from app.models import Document
 from app.pipeline.ocr import run_ocr
@@ -46,7 +49,7 @@ def test_ocr_unknown_engine_returns_400():
         doc_id = _upload(client, "invoice-clean.pdf")
         resp = client.post(f"/documents/{doc_id}/ocr", params={"engine": "nope"})
         assert resp.status_code == 400, resp.text
-        assert "Unknown OCR engine" in resp.json()["detail"]
+        assert "Unknown or disabled OCR engine" in resp.json()["detail"]
 
 
 def test_ocr_missing_document_returns_404():
@@ -64,7 +67,8 @@ def test_get_ocr_before_run_returns_404():
 def test_base_aggregates_pages_offline():
     """MockEngine.run reads no files, so aggregation is testable in isolation."""
     doc = Document(id="agg-test", filename="x.pdf", mime="application/pdf", page_count=2)
-    result = run_ocr(doc, "mock")
+    with Session(engine) as session:
+        result = run_ocr(doc, "mock", session)
 
     assert result.engine_name == "mock"
     assert len(result.pages) == 2

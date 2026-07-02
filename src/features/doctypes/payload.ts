@@ -54,7 +54,8 @@ export function buildDocTypePayload(
 
   return {
     name: form.name,
-    label: form.label,
+    // A missing label falls back to the name so a type never renders blank.
+    label: form.label.trim() || form.name,
     icon: form.icon || undefined,
     extraction_definition:
       extraction_definition as unknown as Record<string, unknown>,

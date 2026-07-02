@@ -10,7 +10,15 @@ from sqlmodel import Session
 
 from app.config import settings
 from app.db import engine, init_db
-from app.routes import doc_types, doctype_assist, documents, pipeline
+from app.routes import (
+    corrections,
+    doc_types,
+    doctype_assist,
+    documents,
+    engines as engines_route,
+    overview,
+    pipeline,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +36,15 @@ async def lifespan(app: FastAPI):
             load_custom_types(session)
     except Exception as exc:  # noqa: BLE001 — never block startup on doc-type seeding
         logger.warning("Doc-type seeding/loading failed: %s", exc)
+    # Seed the default VLM engine row (qwen-vl) so the OCR selector is populated on a
+    # fresh DB. Keeps the same key as before so existing stored results still resolve.
+    try:
+        from app.routes.engines import seed_default_engine
+
+        with Session(engine) as session:
+            seed_default_engine(session)
+    except Exception as exc:  # noqa: BLE001 — never block startup on engine seeding
+        logger.warning("VLM engine seeding failed: %s", exc)
     if settings.pre_warm_models:
         # Warm OCR models off the startup path so the server is immediately live and
         # the first real request doesn't pay the cold model-load cost on camera.
@@ -35,10 +52,24 @@ async def lifespan(app: FastAPI):
 
         from app.pipeline.ocr import available_engines, prewarm
 
-        engines = [e for e in available_engines() if e != "mock"]
+        with Session(engine) as session:
+            engines = [e for e in available_engines(session) if e != "mock"]
         threading.Thread(
             target=prewarm, args=(engines,), kwargs={"log": print}, daemon=True
         ).start()
+
+        if settings.signature_detection_enabled:
+            # Warm the signature model too. Best-effort: a missing model / optional deps
+            # only logs a warning and never blocks startup.
+            def _warm_signatures() -> None:
+                try:
+                    from app.pipeline import signature_detector
+
+                    signature_detector.warm()
+                except Exception as exc:  # noqa: BLE001 — never block startup on warming
+                    logger.warning("Signature model warm failed: %s", exc)
+
+            threading.Thread(target=_warm_signatures, daemon=True).start()
     yield
 
 
@@ -61,6 +92,9 @@ app.include_router(documents.router)
 app.include_router(pipeline.router)
 app.include_router(doc_types.router)
 app.include_router(doctype_assist.router)
+app.include_router(engines_route.router)
+app.include_router(corrections.router)
+app.include_router(overview.router)
 
 
 @app.get("/health")

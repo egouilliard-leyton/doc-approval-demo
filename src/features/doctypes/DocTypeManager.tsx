@@ -127,7 +127,7 @@ export function DocTypeManager({ onChanged }: { onChanged: () => void }) {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium">
-                      {t.label}
+                      {t.label || t.name}
                     </span>
                     {t.builtin && (
                       <Badge variant="secondary">built-in</Badge>

@@ -5,10 +5,16 @@ import type {
   DocumentSummary,
   DecisionResult,
   DocType,
+  EngineInfo,
+  FieldCorrection,
   OcrEngine,
   OCRResult,
+  OpenRouterModel,
+  OverviewStats,
   QualityReport,
+  Sheet,
   StructuredResult,
+  VlmEngineRow,
 } from "@/lib/types";
 import type {
   AnnotatePollResponse,
@@ -122,6 +128,11 @@ export async function getDocument(id: string): Promise<DocumentDetail> {
   return request<DocumentDetail>(`/documents/${id}`);
 }
 
+/** Parsed spreadsheet grid (one entry per sheet), written at ingest for CSV/XLSX. */
+export async function getSheets(id: string): Promise<Sheet[]> {
+  return request<Sheet[]>(`/files/${id}/sheets.json`);
+}
+
 export async function listDocuments(): Promise<DocumentSummary[]> {
   return request<DocumentSummary[]>("/documents");
 }
@@ -191,6 +202,18 @@ export async function runDecide(id: string): Promise<DecisionResult> {
   return request<DecisionResult>(`/documents/${id}/decide`, { method: "POST" });
 }
 
+/** Apply a reviewer edit to one structured field; returns the updated result. */
+export async function editStructureField(
+  id: string,
+  body: { path: string; value: string | number | boolean | null },
+): Promise<StructuredResult> {
+  return request<StructuredResult>(`/documents/${id}/structure/field`, {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
 // --- configurable doc types (CRUD + preview) ---------------------------------
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -236,6 +259,65 @@ export async function previewDocType(
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify(body),
+  });
+}
+
+// --- OCR engines -------------------------------------------------------------
+
+/** Engines selectable at upload time (docling + enabled VLMs). */
+export async function listEngines(): Promise<EngineInfo[]> {
+  return request<EngineInfo[]>("/engines");
+}
+
+/** All connected VLM engines (enabled + disabled), for the settings dialog. */
+export async function listEngineCatalog(): Promise<VlmEngineRow[]> {
+  return request<VlmEngineRow[]>("/engines/catalog");
+}
+
+/** Image-capable models offered by OpenRouter, for the add-model dropdown. */
+export async function listOpenRouterModels(): Promise<OpenRouterModel[]> {
+  return request<OpenRouterModel[]>("/engines/openrouter-models");
+}
+
+export async function createEngine(body: {
+  label: string;
+  model: string;
+  key?: string;
+  enabled?: boolean;
+}): Promise<VlmEngineRow> {
+  return request<VlmEngineRow>("/engines", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateEngine(
+  key: string,
+  body: { label?: string; enabled?: boolean },
+): Promise<VlmEngineRow> {
+  return request<VlmEngineRow>(`/engines/${key}`, {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteEngine(key: string): Promise<void> {
+  await request<void>(`/engines/${key}`, { method: "DELETE" });
+}
+
+// --- admin ------------------------------------------------------------------
+
+export async function getOverview(): Promise<OverviewStats> {
+  return request<OverviewStats>("/overview");
+}
+
+export async function listCorrections(
+  documentId?: string,
+): Promise<FieldCorrection[]> {
+  return request<FieldCorrection[]>("/corrections", {
+    query: { document_id: documentId },
   });
 }
 

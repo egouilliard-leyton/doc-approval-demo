@@ -28,6 +28,10 @@ desc, qty, unit_price, amount).
 Rules:
 - Use the exact verbatim text from the source for each extraction_text (do not
   paraphrase or reformat) so each field can be traced back to its location.
+- Fields often appear inside Markdown tables, not prose: a two-column label/value
+  table (e.g. "| Invoice Number | INV-3337 |" -> invoice_no "INV-3337"), a totals
+  table ("| Total | $93.50 |"), or a line-item table with a header row. Read values
+  out of table cells just as you would from running text.
 - Only extract a field if it actually appears in the text. Do NOT infer, guess, or
   fabricate. If a field is absent, simply emit no extraction for it.
 - Emit dates and amounts as they appear in the document.\
@@ -120,6 +124,54 @@ INVOICE_DEFINITION = DocTypeDefinition(
                 ),
                 ExampleExtraction(cls="total", text="2,000.00"),
                 ExampleExtraction(cls="currency", text="EUR"),
+            ],
+        ),
+        ExampleData(
+            # Third example is Markdown-table shaped — exactly what OCR engines
+            # (Docling, VLMs) emit — so the model learns to read fields out of
+            # two-column label/value tables and a line-item table, not just prose.
+            text=(
+                "Northwind Web Studio\n"
+                "Bill To: Test Business\n"
+                "| Hrs/Qty | Service | Rate/Price | Adjust |\n"
+                "| --- | --- | --- | --- |\n"
+                "| 1.00 | Web Design | $85.00 | 0.00% |\n"
+                "| Sub Total | $85.00 |\n"
+                "| Tax | $8.50 |\n"
+                "| Total | $93.50 |\n"
+                "| Invoice Number | INV-3337 |\n"
+                "| PO Number | PO-9911 |\n"
+                "| Invoice Date | January 25, 2016 |\n"
+                "| Due Date | January 31, 2016 |\n"
+                "| Total Due | $93.50 |\n"
+                "Payment is due within 30 days\n"
+                "ANZ Bank ACC #12341234 BSB #4321432"
+            ),
+            extractions=[
+                ExampleExtraction(cls="vendor", text="Northwind Web Studio"),
+                ExampleExtraction(cls="invoice_no", text="INV-3337"),
+                ExampleExtraction(cls="po_number", text="PO-9911"),
+                ExampleExtraction(cls="invoice_date", text="January 25, 2016"),
+                ExampleExtraction(cls="due_date", text="January 31, 2016"),
+                ExampleExtraction(
+                    cls="line_item",
+                    text="| 1.00 | Web Design | $85.00 | 0.00% |",
+                    attributes={
+                        "desc": "Web Design",
+                        "qty": "1.00",
+                        "unit_price": "$85.00",
+                        "amount": "$85.00",
+                    },
+                ),
+                ExampleExtraction(cls="subtotal", text="$85.00"),
+                ExampleExtraction(cls="tax", text="$8.50"),
+                ExampleExtraction(cls="total", text="$93.50"),
+                ExampleExtraction(
+                    cls="payment_terms", text="Payment is due within 30 days"
+                ),
+                ExampleExtraction(
+                    cls="bank_details", text="ANZ Bank ACC #12341234 BSB #4321432"
+                ),
             ],
         ),
     ],

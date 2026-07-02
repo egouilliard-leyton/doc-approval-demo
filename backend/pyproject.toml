@@ -5,6 +5,7 @@ requires-python = ">=3.12,<3.13"  # pinned to 3.12 (the demo interpreter) for a 
 # torch/docling lock; the heavy ML stack is only validated here.
 dependencies = [
     "fastapi>=0.136.3",
+    "openpyxl>=3.1.5",
     "opencv-python>=4.13.0.92",
     "pillow>=12.2.0",
     "pydantic>=2.13.4",
@@ -18,7 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 # OCR engines (Phase 3). Heavy + optional: the app boots without them (adapters
 # import lazily) and the mock engine covers tests.
-#   uv sync --extra ocr --extra langextract --extra agent
+#   uv sync --extra ocr --extra langextract --extra agent --extra signatures
 # The "qwen-vl" engine is an OpenRouter VLM with no local models — it reuses the
 # `agent` extra's `openai` client, so there's nothing extra to install for it.
 docling = ["docling"]
@@ -30,6 +31,11 @@ langextract = ["langextract[openai]"]
 # Agent decision layer (Phase 5) + the "qwen-vl" OCR engine. The OpenAI-compatible
 # client for OpenRouter; lazily imported, "mock" provider covers tests. uv sync --extra agent
 agent = ["openai"]
+# Signature detection (Phase 1). Heavy + optional: onnxruntime runs the YOLOv8s ONNX
+# model and huggingface-hub is the (HF_TOKEN-gated) weights-download fallback. Both are
+# lazily imported — the app boots and structuring runs without them and without the model
+# file present. Install with: uv sync --extra signatures
+signatures = ["onnxruntime>=1.20", "huggingface-hub>=0.30"]
 
 [dependency-groups]
 dev = [

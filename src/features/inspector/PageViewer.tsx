@@ -1,23 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { fileUrl } from "@/lib/api";
-import { scaleRects, type HighlightRect } from "@/lib/grounding";
-import type { Alignment, PageInfo } from "@/lib/types";
+import { scaleRects } from "@/lib/grounding";
+import type { DocRegion } from "@/lib/highlights";
+import type { PageInfo } from "@/lib/types";
 
 export function PageViewer({
   pages,
   page,
-  rects,
-  alignment,
+  regions,
+  selectedKey,
+  hoveredKey,
+  flashTick,
   onPageChange,
 }: {
   pages: PageInfo[];
   page: number;
-  rects: HighlightRect[]; // natural pixel space, for the current page
-  alignment: Alignment | null;
+  regions: DocRegion[]; // all pages; filtered to `page` here
+  selectedKey: string | null;
+  hoveredKey: string | null;
+  flashTick: number; // bumped on each select so the flash replays even if re-clicked
   onPageChange: (page: number) => void;
 }) {
   const imgRef = useRef<HTMLImageElement>(null);
+  const selectedBoxRef = useRef<HTMLDivElement>(null);
   const [natural, setNatural] = useState({ width: 0, height: 0 });
   const [displayed, setDisplayed] = useState({ width: 0, height: 0 });
 
@@ -33,10 +39,17 @@ export function PageViewer({
     return () => ro.disconnect();
   }, [page]);
 
+  // Scroll the selected box into view when the selection (or its replay) changes.
+  useLayoutEffect(() => {
+    selectedBoxRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+      inline: "center",
+    });
+  }, [selectedKey, flashTick, displayed.width]);
+
   const current = pages.find((p) => p.page === page) ?? pages[0];
-  const scaled = scaleRects(rects, natural, displayed);
-  const stroke =
-    alignment === "partial" ? "border-dashed border-review" : "border-brand";
+  const pageRegions = regions.filter((r) => r.page === page);
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -53,16 +66,37 @@ export function PageViewer({
               setDisplayed({ width: t.clientWidth, height: t.clientHeight });
             }}
           />
-          {scaled.map((r, i) => (
-            <div
-              key={i}
-              className={cn(
-                "pointer-events-none absolute rounded-sm border-2 bg-brand/10 transition-all",
-                stroke,
-              )}
-              style={{ left: r.x, top: r.y, width: r.width, height: r.height }}
-            />
-          ))}
+          {pageRegions.map((region) => {
+            const scaled = scaleRects(region.rects, natural, displayed);
+            const isSelected = region.key === selectedKey;
+            const active = isSelected || region.key === hoveredKey;
+            return scaled.map((r, i) => (
+              <div
+                // Include flashTick on the selected box so it remounts and replays
+                // the flash animation even when the same field is clicked again.
+                key={`${region.key}:${i}:${isSelected ? flashTick : ""}`}
+                ref={isSelected && i === 0 ? selectedBoxRef : undefined}
+                className={cn(
+                  "pointer-events-none absolute rounded-sm transition-all",
+                  isSelected && "hl-flash",
+                )}
+                style={{
+                  left: r.x,
+                  top: r.y,
+                  width: r.width,
+                  height: r.height,
+                  borderStyle: "solid",
+                  borderColor: region.color,
+                  backgroundColor: `${region.color}${active ? "33" : "1f"}`,
+                  borderWidth: isSelected ? 3 : 2,
+                  opacity: active ? 1 : 0.7,
+                  boxShadow: isSelected
+                    ? `0 0 0 2px ${region.color}55`
+                    : undefined,
+                }}
+              />
+            ));
+          })}
         </div>
       </div>
 

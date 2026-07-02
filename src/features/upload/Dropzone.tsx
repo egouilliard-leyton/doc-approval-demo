@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const ACCEPT = ".pdf,.png,.jpg,.jpeg,.tif,.tiff";
+const ACCEPT = ".pdf,.png,.jpg,.jpeg,.tif,.tiff,.csv,.xlsx";
 
 export function Dropzone({
   onFile,
@@ -92,7 +92,7 @@ export function Dropzone({
           {hint ?? (
             <>
               or <span className="font-medium text-brand">browse</span> — PDF,
-              PNG, JPG or TIFF
+              PNG, JPG, TIFF, XLSX or CSV
             </>
           )}
         </p>

@@ -102,7 +102,9 @@ class Settings(BaseSettings):
     signature_model_path: str = "app/models/yolov8s.onnx"  # local weights (relative to backend/).
     signature_model_repo: str = "tech4humans/yolov8s-signature-detector"
     signature_model_file: str = "yolov8s.onnx"
-    signature_conf_threshold: float = 0.35  # detections below this are dropped.
+    signature_conf_threshold: float = 0.45  # detections below this are dropped. Calibrated on a
+    # real-document eval: true signatures scored >=0.53, false positives (body cursive) <=0.36, so
+    # 0.45 sits in that gap — keeps genuine signatures, drops the noise. See docs/signature-extraction.md.
     signature_iou_threshold: float = 0.45  # NMS IoU for overlapping boxes.
     signature_input_size: int = 640  # model input square (letterboxed).
     signature_crop_padding_px: int = 6  # padding added around a detected box before cropping.

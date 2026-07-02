@@ -82,7 +82,8 @@ def create_doc_type(
 
     row = DocTypeDefinitionRow(
         name=body.name,
-        label=body.label,
+        # A missing label falls back to the name so a type never renders blank.
+        label=body.label.strip() or body.name,
         icon=body.icon,
         extraction_definition=body.extraction_definition,
         rule_definition=body.rule_definition,
@@ -122,7 +123,7 @@ def update_doc_type(
     # Snapshot the prior definition so a failed rebuild can roll the row back.
     prior = row.model_dump()
 
-    row.label = body.label
+    row.label = body.label.strip() or name
     row.icon = body.icon
     row.extraction_definition = body.extraction_definition
     row.rule_definition = body.rule_definition

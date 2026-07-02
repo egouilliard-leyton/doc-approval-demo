@@ -171,3 +171,17 @@
     @apply cursor-pointer;
   }
 }
+
+/* Hover/click-to-locate: a short flash on a source box when its field is selected. */
+@keyframes hl-flash {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  35% {
+    filter: brightness(1.9);
+  }
+}
+.hl-flash {
+  animation: hl-flash 0.55s ease-in-out 2;
+}
