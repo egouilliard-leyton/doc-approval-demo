@@ -54,6 +54,7 @@ const RULE_KINDS: { value: RuleKind; label: string }[] = [
   { value: "length_bounds", label: "Length bounds" },
   { value: "field_confidence_floor", label: "Field confidence floor" },
   { value: "grounded_on_page", label: "Grounded on page" },
+  { value: "signature_presence", label: "Signature present" },
 ];
 
 const MUTEX_MODES: { value: MutualExclusivityMode; label: string }[] = [
@@ -280,6 +281,14 @@ function blankRule(kind: RuleKind, name: string): RuleDef {
       };
     case "grounded_on_page":
       return { kind, name, field_path: "", severity: "review" };
+    case "signature_presence":
+      return {
+        kind,
+        name,
+        field_path: "",
+        min_count: 1,
+        severity: "review",
+      };
   }
 }
 
@@ -1483,6 +1492,31 @@ function RuleParams({
               value={rule.field_path}
               placeholder="field_name"
               onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
+          <DetailInputs
+            pass={rule.detail_pass ?? ""}
+            fail={rule.detail_fail ?? ""}
+            onPatch={onPatch}
+          />
+        </>
+      );
+
+    case "signature_presence":
+      return (
+        <>
+          <Field label="Field path">
+            <PathInput
+              value={rule.field_path}
+              placeholder="signatures"
+              onChange={(v) => onPatch({ field_path: v })}
+            />
+          </Field>
+          <Field label="Minimum signatures">
+            <Input
+              type="number"
+              value={rule.min_count ?? 1}
+              onChange={(e) => onPatch({ min_count: Number(e.target.value) })}
             />
           </Field>
           <DetailInputs

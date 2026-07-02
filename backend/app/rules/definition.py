@@ -29,7 +29,7 @@ from app.config import settings
 from app.schemas import Check
 
 from .base import DecisionContext, Ruleset, as_date, as_number, fval, present, _node, _values_only
-from .expression import evaluate_expression, aggregate_list
+from .expression import evaluate_expression, aggregate_list, list_items
 from .formats import FORMAT_VALIDATORS
 
 
@@ -367,6 +367,22 @@ class GroundedOnPageRuleDef:
 
 
 @dataclass
+class SignaturePresenceRuleDef:
+    """Require at least `min_count` detected signatures in a signature-kind list field.
+
+    Reads the list[FieldValue] a signature field carries (via list_items). Skipped
+    (no check) when the field is absent / not a list (e.g. the doc type has no
+    signature field); an empty list is a real result (count 0), not a skip.
+    """
+    name: str
+    field_path: str
+    severity: Literal["hard", "review", "advisory"]
+    min_count: int = 1
+    detail_pass: str = ""
+    detail_fail: str = ""
+
+
+@dataclass
 class CodedRuleDef:
     """Tier-3 escape hatch: delegate entirely to a hand-written function.
 
@@ -413,6 +429,7 @@ RuleDef = Union[
     LengthBoundsRuleDef,
     FieldConfidenceFloorRuleDef,
     GroundedOnPageRuleDef,
+    SignaturePresenceRuleDef,
     CodedRuleDef,
     LlmAdvisoryRuleDef,
 ]
@@ -953,6 +970,21 @@ def _interpret(rule: RuleDef, fields: dict, ctx: DecisionContext) -> Check | Non
             severity=rule.severity,
         )
 
+    if isinstance(rule, SignaturePresenceRuleDef):
+        items = list_items(fields, rule.field_path)
+        if items is None:
+            return None  # field absent / not a list -> skip
+        count = sum(1 for e in items if isinstance(e, dict) and e.get("value"))
+        passed = count >= rule.min_count
+        default = f"{rule.field_path}: {count} signature(s) detected (need >= {rule.min_count})"
+        fmt = {"field_path": rule.field_path, "value": count}
+        return Check(
+            name=rule.name,
+            passed=passed,
+            detail=_detail(rule.detail_pass if passed else rule.detail_fail, default, fmt),
+            severity=rule.severity,
+        )
+
     if isinstance(rule, CodedRuleDef):
         return rule.fn(fields, ctx)
 
@@ -1073,6 +1105,7 @@ __all__ = [
     "LengthBoundsRuleDef",
     "FieldConfidenceFloorRuleDef",
     "GroundedOnPageRuleDef",
+    "SignaturePresenceRuleDef",
     "CodedRuleDef",
     "LlmAdvisoryRuleDef",
     "DocTypeRuleDefinition",

@@ -114,7 +114,7 @@ This is what multi-doc extraction unlocks and where your examples mostly live. A
 - **Sequence / no-gaps**: statement periods are contiguous (no missing month).
 
 ### 3.4 Signature & visual (depends on signature extraction — in progress)
-- **Signature present** on the docs that require one.
+- ✅ **SHIPPED** — **Signature present** on the docs that require one — `SignaturePresenceRuleDef` (at least `min_count` detected signatures in a `kind="signature"` list field; reads the YOLOv8 post-pass output). Same-signatory *matching* remains deferred (§9 — cross-doc + a similarity model).
 - **Same signatory**: signature on doc A visually matches doc B (similarity score + threshold; human-review band in the middle).
 - **Signature ↔ named party**: the signature block name matches the extracted party name.
 - **Stamp / seal present** (company stamp, notary seal).

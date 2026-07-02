@@ -63,7 +63,8 @@ export type RuleKind =
   | "contains"
   | "length_bounds"
   | "field_confidence_floor"
-  | "grounded_on_page";
+  | "grounded_on_page"
+  | "signature_presence";
 export type RuleSeverity = "advisory" | "review" | "hard";
 export type MutualExclusivityMode = "exactly_one" | "at_most_one";
 export type ContainsMode = "any" | "all";
@@ -323,6 +324,16 @@ export interface GroundedOnPageRule {
   detail_fail?: string;
 }
 
+export interface SignaturePresenceRule {
+  kind: "signature_presence";
+  name: string;
+  field_path: string;
+  severity: RuleSeverity;
+  min_count?: number;
+  detail_pass?: string;
+  detail_fail?: string;
+}
+
 export type RuleDef =
   | PresenceRule
   | ThresholdRule
@@ -345,7 +356,8 @@ export type RuleDef =
   | ContainsRule
   | LengthBoundsRule
   | FieldConfidenceFloorRule
-  | GroundedOnPageRule;
+  | GroundedOnPageRule
+  | SignaturePresenceRule;
 
 export interface RuleDefinition {
   name: string;

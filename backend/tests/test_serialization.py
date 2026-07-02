@@ -22,6 +22,7 @@ from app.rules.definition import (
     NumericRangeRuleDef,
     PercentageToleranceRuleDef,
     RequiredTogetherRuleDef,
+    SignaturePresenceRuleDef,
 )
 from app.serialization import (
     dict_to_rule_defn,
@@ -804,3 +805,62 @@ def test_field_confidence_floor_too_high_errors():
     }
     errors = validate_custom_rule_dict(_defn(rule), DECLARED)
     assert any("'floor'" in e for e in errors)
+
+
+# --- signature_presence: round-trip + validation ------------------------------
+
+
+def test_round_trip_signature_presence():
+    original = DocTypeRuleDefinition(
+        name="sig",
+        rules=[
+            SignaturePresenceRuleDef(
+                name="signed",
+                field_path="signatures",
+                severity="hard",
+                min_count=2,
+            ),
+        ],
+        citation_paths=[],
+    )
+    d = rule_defn_to_dict(original)
+    assert d["rules"][0]["kind"] == "signature_presence"
+    assert d["rules"][0]["min_count"] == 2
+    rebuilt = dict_to_rule_defn(d)
+    assert rebuilt == original
+    assert isinstance(rebuilt.rules[0], SignaturePresenceRuleDef)
+
+
+def test_signature_presence_min_count_zero_errors():
+    rule = {
+        "kind": "signature_presence",
+        "name": "sig",
+        "field_path": "currency",
+        "severity": "hard",
+        "min_count": 0,
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("'min_count'" in e for e in errors)
+
+
+def test_signature_presence_min_count_bool_errors():
+    rule = {
+        "kind": "signature_presence",
+        "name": "sig",
+        "field_path": "currency",
+        "severity": "hard",
+        "min_count": True,
+    }
+    errors = validate_custom_rule_dict(_defn(rule), DECLARED)
+    assert any("'min_count'" in e for e in errors)
+
+
+def test_signature_presence_min_count_two_accepted():
+    rule = {
+        "kind": "signature_presence",
+        "name": "sig",
+        "field_path": "currency",
+        "severity": "hard",
+        "min_count": 2,
+    }
+    assert validate_custom_rule_dict(_defn(rule), DECLARED) == []

@@ -48,6 +48,7 @@ from app.rules.definition import (
     PresenceRuleDef,
     RequiredTogetherRuleDef,
     SetMembershipRuleDef,
+    SignaturePresenceRuleDef,
     ThresholdCompareRuleDef,
     UniquenessVsHistoryRuleDef,
 )
@@ -134,6 +135,7 @@ _KIND_MAP: dict[type, str] = {
     LengthBoundsRuleDef: "length_bounds",
     FieldConfidenceFloorRuleDef: "field_confidence_floor",
     GroundedOnPageRuleDef: "grounded_on_page",
+    SignaturePresenceRuleDef: "signature_presence",
     LlmAdvisoryRuleDef: "llm_advisory",
 }
 
@@ -583,6 +585,11 @@ def validate_custom_rule_dict(d: dict, declared_field_names: set[str]) -> list[s
                 or not (0.0 <= value <= 1.0)
             ):
                 errors.append(f"{where}: 'floor' must be a number between 0 and 1")
+        elif kind == "signature_presence":
+            if "min_count" in rule:
+                value = rule["min_count"]
+                if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                    errors.append(f"{where}: 'min_count' must be an integer >= 1")
 
         # Every referenced field path must resolve to a declared field (by base name).
         for key, value in rule.items():

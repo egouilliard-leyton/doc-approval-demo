@@ -33,6 +33,7 @@ from app.rules.definition import (
     PresenceRuleDef,
     RequiredTogetherRuleDef,
     SetMembershipRuleDef,
+    SignaturePresenceRuleDef,
     ThresholdCompareRuleDef,
     UniquenessVsHistoryRuleDef,
     _interpret,
@@ -1029,4 +1030,45 @@ def test_grounded_on_page_fail_when_no_grounding():
 
 def test_grounded_on_page_skips_when_absent():
     rule = GroundedOnPageRuleDef(name="g", field_path="x", severity="review")
+    assert _interpret(rule, {}, ctx()) is None
+
+
+# --- primitives: SignaturePresenceRuleDef -------------------------------------
+
+# A detected-signature FieldValue node, as the spatial post-pass emits it.
+_SIG = {"value": True, "confidence": 0.9, "grounding": {"page": 1}}
+
+
+def test_signature_presence_pass_min_1():
+    rule = SignaturePresenceRuleDef(name="sig", field_path="signatures", severity="hard")
+    out = _interpret(rule, {"signatures": [_SIG, _SIG]}, ctx())
+    assert out.passed and out.severity == "hard"
+    assert "2 signature(s)" in out.detail
+
+
+def test_signature_presence_pass_min_2():
+    rule = SignaturePresenceRuleDef(
+        name="sig", field_path="signatures", severity="review", min_count=2,
+    )
+    out = _interpret(rule, {"signatures": [_SIG, _SIG]}, ctx())
+    assert out.passed and out.severity == "review"
+
+
+def test_signature_presence_fail_min_3():
+    rule = SignaturePresenceRuleDef(
+        name="sig", field_path="signatures", severity="hard", min_count=3,
+    )
+    out = _interpret(rule, {"signatures": [_SIG, _SIG]}, ctx())
+    assert not out.passed
+
+
+def test_signature_presence_empty_list_is_a_fail_not_skip():
+    rule = SignaturePresenceRuleDef(name="sig", field_path="signatures", severity="hard")
+    out = _interpret(rule, {"signatures": []}, ctx())
+    assert out is not None  # empty list is a real result (count 0), not a skip
+    assert not out.passed
+
+
+def test_signature_presence_skips_when_field_absent():
+    rule = SignaturePresenceRuleDef(name="sig", field_path="signatures", severity="hard")
     assert _interpret(rule, {}, ctx()) is None
