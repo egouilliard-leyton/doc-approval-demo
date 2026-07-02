@@ -4,8 +4,8 @@ The catalogue of **validation rule primitives** a document type can declare, how
 behave, the safe expression DSL, and how to add a new one.
 
 > **See also:** [ARCHITECTURE.md §5 (Rules & decision)](./ARCHITECTURE.md#5-rules--decision)
-> for where rules sit in the pipeline · [API.md (Doc types)](./API.md#doc-types--routesdoc_typespy)
-> for the CRUD/preview surface · [VALIDATION-BRAINSTORM.md](./VALIDATION-BRAINSTORM.md)
+> for where rules sit in the pipeline · [API.md](./API.md) for the doc-types CRUD/preview
+> surface · [VALIDATION-BRAINSTORM.md](./VALIDATION-BRAINSTORM.md)
 > for the design rationale, the shipped/deferred status, and the cross-document roadmap.
 
 ---
