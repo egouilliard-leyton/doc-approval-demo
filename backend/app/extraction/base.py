@@ -50,6 +50,9 @@ class DocTypeSpec:
     field_model: type
     assemble: Callable[[list[FlatExtraction], GroundingCtx], object]
     core_paths: list[str]  # dotted field paths used for the overall confidence mean
+    # Field names populated by the spatial signature post-pass (not the LLM). Empty
+    # for doc types with no ``kind="signature"`` field.
+    signature_fields: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -113,14 +116,45 @@ def _page_confidence(ocr_result: OCRResult, page: int | None) -> float:
     return 1.0
 
 
+def _find_nearest(text: str, full_text: str, hint: int | None) -> int:
+    """Offset of the occurrence of ``text`` in ``full_text`` closest to ``hint``.
+
+    Repeated tokens (a currency symbol, a recurring "Total") occur many times in a
+    long document, so a blind first-match anchors every span to page 1. Given a
+    ``hint`` offset we pick the occurrence minimizing ``(abs(start - hint), start)``
+    — nearest to the hint, ties broken toward the earlier offset — which is stable.
+    ``hint is None`` (mock provider, no offsets) returns the first match, preserving
+    today's behavior. Returns ``-1`` when ``text`` is not found (like ``str.find``)
+    and, deliberately, for empty ``text`` too — so an empty span stays ungrounded
+    rather than anchoring at offset 0 the way ``str.find("")`` would.
+    """
+    if not text:
+        return -1
+    starts: list[int] = []
+    start = full_text.find(text)
+    while start != -1:
+        starts.append(start)
+        start = full_text.find(text, start + 1)
+    if not starts:
+        return -1
+    if hint is None:
+        return starts[0]
+    return min(starts, key=lambda s: (abs(s - hint), s))
+
+
 def _ground(
     text: str, full_text: str, char_start: int | None, char_end: int | None
 ) -> tuple[int | None, int | None, Alignment]:
-    """Resolve a span's offsets in ``full_text``, re-anchoring with ``find`` if needed.
+    """Resolve a span's offsets in ``full_text``, re-anchoring by proximity if needed.
 
     Trusts provider offsets only when they actually quote ``text`` (guards against
-    chunk-local offsets); otherwise falls back to the first verbatim match. A match
-    found only by re-anchoring is reported as ``partial``.
+    chunk-local offsets); otherwise re-anchors to the verbatim occurrence nearest the
+    provider ``char_start`` so repeated tokens in long docs stop snapping to the first
+    match. ``char_start``/``char_end`` are treated as a hint *relative to whatever*
+    ``full_text`` *the caller supplies* — ``_ground`` never assumes ``full_text`` is
+    the whole document, keeping it compatible with a future per-section substrate. A
+    match found only by re-anchoring is reported as ``partial`` (``exact`` for the
+    no-hint mock path, which has no offset to distrust).
     """
     if (
         char_start is not None
@@ -129,7 +163,7 @@ def _ground(
         and full_text[char_start:char_end] == text
     ):
         return char_start, char_end, "exact"
-    idx = full_text.find(text) if text else -1
+    idx = _find_nearest(text, full_text, char_start)
     if idx >= 0:
         # No trustworthy provider offset, but the span is present verbatim.
         alignment: Alignment = "exact" if char_start is None else "partial"
