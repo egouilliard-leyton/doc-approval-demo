@@ -34,6 +34,7 @@ Where it lives:
 | `backend/app/serialization.py` | `_KIND_MAP` (kind ↔ dataclass) + `validate_custom_rule_dict` (save-time 422 gate). |
 | `src/lib/doc-type-schema.ts` | The TypeScript mirror of every rule kind. |
 | `src/features/doctypes/RuleListEditor.tsx` | The builder UI (one form per kind). |
+| `backend/app/pipeline/doctype_schema_reference.py` | Renders these primitives into the Create-with-AI wizard's system prompt, introspected from `_KIND_MAP` — so the AI can author every kind below without a hand-maintained list. |
 
 ---
 
@@ -181,6 +182,12 @@ A new rule kind touches five places (mirror the nearest existing primitive):
    `backend/tests/test_serialization.py` (round-trip + validation rejections), and the
    evaluator's `test_rules_expression.py` / `test_rules_formats.py` if you touch those.
 
+The **Create-with-AI wizard needs no change** — its prompt catalogue is generated from
+`_KIND_MAP` + the dataclasses (`pipeline/doctype_schema_reference.py`), so a new primitive
+appears automatically. `backend/tests/test_doctype_schema_reference.py` is the drift guard;
+it fails if a kind is missing from the generated reference. (Do **not** hand-edit the kind
+list into the wizard's system prompt.)
+
 **Conventions to keep:** custom types never carry code; skip (don't fail) on missing data
 unless the primitive is presence-shaped; reject non-numeric literals at validation time
 (remember `bool` is an `int` subclass — check it first); leave the built-in invoice/contract
@@ -190,12 +197,15 @@ rule definitions untouched (their parity tests assert exact check-name sets).
 
 ## 6. Cross-document validations (not yet built)
 
-Everything above is **single-document**. Cross-document checks — same value/date across a
-set of documents, bundle completeness, cross-references, same-signatory *matching* — are
-deferred because they need a **bundle** (multiple documents' extractions evaluated together),
-a subsystem that doesn't exist yet and that the multi-document extraction & configuration
-work builds first. See [VALIDATION-BRAINSTORM.md §0, §3, §9](./VALIDATION-BRAINSTORM.md) for
-the design and the planned `CrossDocConsistencyRuleDef` / `BundleCompletenessRuleDef`.
+Every primitive above is **single-document**. The **bundle** substrate they'd build on now
+exists: multi-document **Cases** ship, and the case decision engine already runs cross-document
+**conflict** (sources disagree → `needs_review`) and **completeness** checks in code
+(`backend/app/case_decision.py`; see [multi-document-cases.md](./multi-document-cases.md)).
+What's still not built is exposing cross-document checks — same value/date across a set,
+bundle completeness, cross-references, same-signatory *matching* — as **configurable rule
+primitives** authorable like the single-document kinds above (the planned
+`CrossDocConsistencyRuleDef` / `BundleCompletenessRuleDef`). See
+[VALIDATION-BRAINSTORM.md §0, §3, §9](./VALIDATION-BRAINSTORM.md) for the design.
 
 
 ---

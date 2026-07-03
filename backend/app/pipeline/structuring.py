@@ -15,18 +15,29 @@ assembly live in ``app/extraction``.
 from __future__ import annotations
 
 import bisect
+import dataclasses
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from time import perf_counter
 
 from pydantic import BaseModel
 
 from app.config import settings
-from app.extraction import get_spec
+from app.extraction import get_extraction_definition, get_spec
 from app.extraction.base import FlatExtraction, GroundingCtx, ground_field
+from app.extraction.definition import _augment_examples_factory, build_correction_examples
 from app.models import Document, DocumentStatus
-from app.schemas import FieldValue, Grounding, OCRPage, OCRResult, OCRTable, StructuredResult
+from app.schemas import (
+    FieldCorrection,
+    FieldValue,
+    Grounding,
+    OCRPage,
+    OCRResult,
+    OCRTable,
+    StructuredResult,
+)
 from app import storage
 
 PROVIDERS = {"langextract", "mock"}
@@ -37,6 +48,7 @@ def run_structuring(
     ocr_result: OCRResult,
     doc_type: str,
     provider: str = "",
+    corrections: list[FieldCorrection] | None = None,
 ) -> StructuredResult:
     """Structure a document's OCR text into a validated, grounded result."""
     provider = provider or settings.structuring_provider
@@ -46,6 +58,18 @@ def run_structuring(
         )
 
     spec = get_spec(doc_type)
+    # Active-learning loop: fold a doc type's past reviewer corrections into the
+    # few-shot examples so the extractor stops repeating the same mistakes. NO-OP for
+    # the mock provider, an empty correction list, or the disabled flag — in every one
+    # of those cases ``spec`` stays byte-identical to today's.
+    if provider != "mock" and settings.few_shot_corrections_enabled and corrections:
+        defn = get_extraction_definition(doc_type)
+        examples = build_correction_examples(corrections, defn, settings.few_shot_max_examples)
+        if examples:
+            spec = dataclasses.replace(
+                spec,
+                examples_factory=_augment_examples_factory(spec.examples_factory, examples),
+            )
     # Feed the extractor the page text PLUS each page's table markdown: OCR engines
     # (Docling especially) keep tables out of ``full_text``, so invoice numbers,
     # dates and totals live only in the tables. Grounding uses the same augmented
@@ -693,6 +717,12 @@ def _structure_mock(doc_type: str, full_text: str) -> list[FlatExtraction]:
     For invoices: grounds vendor/invoice_no/total/line_item against the real
     ``full_text`` (so page mapping runs for real), emits an intentionally ungrounded
     ``currency``, and OMITS ``po_number`` to prove the null + low-confidence path.
+
+    The ``po`` and ``delivery_note`` branches emit values that AGREE with the invoice /
+    contract happy path so a full four-document ap_match case reconciles cleanly offline:
+    the PO's ``total`` / ``vendor`` mirror the invoice's ("$1,234.56" / "MOCK INVOICE") and
+    it supplies the ``po_number`` the invoice omits; the delivery note carries plausible
+    grounded values (it is a completeness-only member, so it feeds no canonical field).
     """
     if doc_type == "invoice":
         return [
@@ -712,9 +742,42 @@ def _structure_mock(doc_type: str, full_text: str) -> list[FlatExtraction]:
             ),
             # po_number deliberately omitted.
         ]
+    if doc_type == "po":
+        return [
+            # A PO-shaped number the invoice branch omits, so the case's po_number canonical
+            # field has exactly one non-null source (the PO) and trivially agrees.
+            FlatExtraction(cls="po_number", text="PO-1001"),  # absent in OCR text -> ungrounded
+            FlatExtraction(cls="vendor", text="MOCK INVOICE"),  # matches the invoice vendor
+            FlatExtraction(cls="order_date", text="page 1"),
+            FlatExtraction(cls="total", text="$1,234.56"),  # matches invoice total + contract value
+            FlatExtraction(
+                cls="line_item",
+                text="$1,234.56",
+                attributes={
+                    "desc": "Mock Widget",
+                    "qty": "1",
+                    "unit_price": "1234.56",
+                    "amount": "1234.56",
+                },
+            ),
+        ]
+    if doc_type == "delivery_note":
+        return [
+            FlatExtraction(cls="delivery_note_no", text="DN-1001"),  # absent in OCR text -> ungrounded
+            FlatExtraction(cls="delivery_date", text="page 1"),
+            FlatExtraction(cls="vendor", text="MOCK INVOICE"),  # matches the invoice vendor
+            FlatExtraction(
+                cls="line_item",
+                text="$1,234.56",
+                attributes={"desc": "Mock Widget", "qty": "1"},  # received quantity
+            ),
+        ]
     return [
         FlatExtraction(cls="party", text="MOCK INVOICE"),
         FlatExtraction(cls="effective_date", text="page 1"),
+        # A deterministic monetary value grounded in the mock OCR text ("Total: $1,234.56"),
+        # so an invoice/contract case can exercise a real total_amount reconciliation.
+        FlatExtraction(cls="total_value", text="$1,234.56"),
     ]
 
 
@@ -751,22 +814,43 @@ def _overall_confidence(fields: dict, core_paths: list[str]) -> float:
     return round(sum(confs) / len(confs), 4) if confs else 0.0
 
 
-def _flatten_grounding(fields: dict, prefix: str = "", out: dict[str, Grounding] | None = None) -> dict[str, Grounding]:
-    """Flatten every grounded field into dotted-path -> Grounding for the hover UI."""
-    if out is None:
-        out = {}
+def _walk_leaves(fields: dict, prefix: str = "") -> Iterator[tuple[str, dict]]:
+    """Yield ``(dotted_path, raw FieldValue dict)`` for every leaf FieldValue.
+
+    Shared recursion behind both the grounding-only view (``_flatten_grounding``)
+    and the full flattening (``flatten_field_values``). The dotted-path grammar is
+    identical to the original grounding flattener: descending into a list appends
+    ``.{i}`` (the item index) and descending into a dict appends ``.{key}``.
+    """
     if _is_field_value(fields):
-        grounding = fields["grounding"]  # type: ignore[index]
-        if grounding is not None:
-            out[prefix] = Grounding(**grounding)
-        return out
+        yield prefix, fields
+        return
     if isinstance(fields, list):
         for i, item in enumerate(fields):
-            _flatten_grounding(item, f"{prefix}.{i}" if prefix else str(i), out)
+            yield from _walk_leaves(item, f"{prefix}.{i}" if prefix else str(i))
     elif isinstance(fields, dict):
         for key, value in fields.items():
-            _flatten_grounding(value, f"{prefix}.{key}" if prefix else key, out)
+            yield from _walk_leaves(value, f"{prefix}.{key}" if prefix else key)
+
+
+def _flatten_grounding(fields: dict, prefix: str = "") -> dict[str, Grounding]:
+    """Flatten every grounded field into dotted-path -> Grounding for the hover UI."""
+    out: dict[str, Grounding] = {}
+    for path, node in _walk_leaves(fields, prefix):
+        grounding = node["grounding"]
+        if grounding is not None:
+            out[path] = Grounding(**grounding)
     return out
+
+
+def flatten_field_values(fields: dict) -> dict[str, dict]:
+    """Flatten every leaf into dotted-path -> raw ``FieldValue`` dict.
+
+    Public counterpart to ``_flatten_grounding`` (which keeps only the grounding
+    view): the review-queue route consumes the full leaf nodes (value, confidence,
+    edited flag, grounding) keyed by the same dotted paths the PATCH endpoint uses.
+    """
+    return dict(_walk_leaves(fields))
 
 
 # --- Docling table fallback (minimal, best-effort) ---------------------------

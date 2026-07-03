@@ -18,6 +18,7 @@ import {
   uploadDocument,
 } from "@/lib/api";
 import { isSpreadsheet } from "@/lib/doc-status";
+import { AUTO_ENGINE } from "@/features/upload/EngineSelect";
 import type {
   DecisionResult,
   DocType,
@@ -249,7 +250,7 @@ export interface UsePipeline extends PipelineState {
   setDocType: (t: DocType) => void;
   setActiveEngine: (e: OcrEngine) => void;
   ingestFile: (file: File) => Promise<void>;
-  openDocument: (id: string) => Promise<void>;
+  openDocument: (id: string) => Promise<boolean>;
   runStage: (stage: StageKey) => Promise<void>;
   runEngineComparison: () => Promise<void>;
   runOcrEngine: (engine: OcrEngine) => Promise<void>;
@@ -270,7 +271,7 @@ export function usePipeline(): UsePipeline {
       docId: string,
       stage: StageKey,
       opts: { engine: OcrEngine; docType: DocType; setActive?: boolean },
-    ): Promise<boolean> => {
+    ): Promise<{ ok: boolean; engine: OcrEngine }> => {
       dispatch({ type: "STAGE_START", stage });
       try {
         if (stage === "prescan") {
@@ -282,13 +283,25 @@ export function usePipeline(): UsePipeline {
             timing: Math.round(performance.now() - t0),
           });
         } else if (stage === "ocr") {
-          const result = await runOcr(docId, opts.engine);
+          // In "auto" mode we omit the engine entirely so the backend routes by
+          // the document's doc-type preferred engine (+ fallback chain).
+          const requested =
+            opts.engine === AUTO_ENGINE ? undefined : opts.engine;
+          const result = await runOcr(docId, requested);
+          // Routing/fallback means the engine that produced the result can differ
+          // from the one requested (and in auto mode there is no requested engine
+          // at all). Key the stored result — and everything keyed off it (comparison
+          // map, downstream structure call) — by the ACTUAL engine so a fallback
+          // can't cause a stage-key mismatch. When a real engine is picked with no
+          // fallback, engine_name === opts.engine, so behavior is identical.
+          const actual = result.engine_name as OcrEngine;
           dispatch({
             type: "OCR_DONE",
             result,
-            engine: opts.engine,
+            engine: actual,
             setActive: opts.setActive ?? true,
           });
+          return { ok: true, engine: actual };
         } else if (stage === "structure") {
           const result = await runStructure(docId, {
             docType: opts.docType,
@@ -303,12 +316,12 @@ export function usePipeline(): UsePipeline {
           const result = await runDecide(docId);
           dispatch({ type: "DECIDE_DONE", result, timing: result.latency_ms });
         }
-        return true;
+        return { ok: true, engine: opts.engine };
       } catch (e) {
         const message = errMessage(e);
         dispatch({ type: "STAGE_ERROR", stage, message });
         toast.error(`${STAGE_LABEL[stage]} failed`, { description: message });
-        return false;
+        return { ok: false, engine: opts.engine };
       }
     },
     [],
@@ -317,14 +330,19 @@ export function usePipeline(): UsePipeline {
   // Sequential auto-run; downstream stages are marked blocked on first failure.
   const runAll = useCallback(
     async (docId: string, engine: OcrEngine, docType: DocType) => {
+      // The engine that actually produced the OCR (may differ from `engine` after
+      // a fallback); thread it into the structure call so it matches the stored
+      // OCR result rather than the originally-requested engine.
+      let ocrEngine = engine;
       for (let i = 0; i < STAGE_ORDER.length; i++) {
         const stage = STAGE_ORDER[i];
-        const ok = await execStage(docId, stage, {
-          engine,
+        const res = await execStage(docId, stage, {
+          engine: stage === "structure" ? ocrEngine : engine,
           docType,
           setActive: true,
         });
-        if (!ok) {
+        if (stage === "ocr") ocrEngine = res.engine;
+        if (!res.ok) {
           dispatch({ type: "STAGE_BLOCKED", stages: STAGE_ORDER.slice(i + 1) });
           return;
         }
@@ -374,7 +392,7 @@ export function usePipeline(): UsePipeline {
         detail = await getDocument(id);
       } catch (e) {
         toast.error("Could not open document", { description: errMessage(e) });
-        return;
+        return false;
       }
 
       // Rehydrate cached OCR. A spreadsheet only ever has the single "spreadsheet"
@@ -398,7 +416,7 @@ export function usePipeline(): UsePipeline {
         ]);
 
       // A newer openDocument started while we were fetching — drop these results.
-      if (openTokenRef.current !== token) return;
+      if (openTokenRef.current !== token) return false;
 
       const ocrByEngine: Record<string, OCRResult> = {};
       ocrResults.forEach((r, i) => {
@@ -423,6 +441,7 @@ export function usePipeline(): UsePipeline {
         activeEngine,
         docType: detail.doc_type ?? state.docType,
       });
+      return true;
     },
     [state.activeEngine, state.docType],
   );
@@ -430,13 +449,20 @@ export function usePipeline(): UsePipeline {
   const runStage = useCallback(
     async (stage: StageKey) => {
       if (!state.document) return;
+      // The structure stage needs a concrete engine to line up with the stored OCR.
+      // Re-running it alone under "auto" (where activeEngine is the sentinel) can't
+      // omit the param, so resolve to the engine that produced the active OCR result.
+      const engine =
+        stage === "structure" && state.activeEngine === AUTO_ENGINE
+          ? ((state.ocr?.engine_name as OcrEngine) ?? state.activeEngine)
+          : state.activeEngine;
       await execStage(state.document.id, stage, {
-        engine: state.activeEngine,
+        engine,
         docType: state.docType,
         setActive: true,
       });
     },
-    [state.document, state.activeEngine, state.docType, execStage],
+    [state.document, state.activeEngine, state.ocr, state.docType, execStage],
   );
 
   // On-demand: OCR every enabled engine (docling + VLMs) that lacks a result, so

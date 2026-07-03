@@ -1,0 +1,25 @@
+{
+  "id": "invoice-clean",
+  "sample_file": "invoice-clean.pdf",
+  "doc_type": "invoice",
+  "expected_fields": {
+    "vendor": "NORTHWIND LTD.",
+    "invoice_no": "INV-2026-0417",
+    "po_number": "PO-558201",
+    "invoice_date": "2026-04-02",
+    "due_date": "2026-05-02",
+    "subtotal": 610.00,
+    "tax": 48.80,
+    "total": 658.80,
+    "currency": "USD",
+    "payment_terms": "Net 30",
+    "bank_details_present": true
+  },
+  "expected_collections": {
+    "line_items": [
+      {"desc": "A4 paper", "qty": 20, "unit_price": 6.50, "amount": 130.00},
+      {"desc": "Toner cartridge", "qty": 4, "unit_price": 89.00, "amount": 356.00},
+      {"desc": "Desk organizer", "qty": 10, "unit_price": 12.40, "amount": 124.00}
+    ]
+  }
+}

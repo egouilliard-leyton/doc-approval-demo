@@ -27,7 +27,7 @@ Doc types became **data, not code**:
 ### Configurable validation model
 The rule layer grew from 6 primitives to a broad **single-document validation surface** — 23
 declarative kinds, each wired end-to-end (interpreter + serialization + save-time 422
-validation + builder UI + tests), all as *data, not code*:
+validation + builder UI + AI-wizard authoring + tests), all as *data, not code*:
 - **Equality & comparison** — `equality` (exact/normalized/regex/**fuzzy** with a threshold
   slider), `numeric_range`, `percentage_tolerance`.
 - **Arithmetic & aggregation** — `aggregate` (*total == Σ line_items*), and an
@@ -41,7 +41,9 @@ validation + builder UI + tests), all as *data, not code*:
   `grounded_on_page`, and `signature_presence` (over the signature post-pass).
 
 Cross-document validations (same value/date across a set, bundle completeness, signature
-*matching*) are deferred — they need the multi-document/bundle substrate (see the backlog and
+*matching*) still aren't **configurable rule primitives** — though the bundle substrate they'd
+build on now ships (see **Multi-document cases** below), so what's deferred is exposing them as
+authorable kinds (see the backlog and
 [validation-rules.md §6](./validation-rules.md#6-cross-document-validations-not-yet-built)).
 Full catalogue: **[validation-rules.md](./validation-rules.md)**.
 
@@ -115,12 +117,115 @@ Located + cropped handwritten-signature extraction, layered onto the text-ground
   one was extracted; other extractions are untouched.
 
 ### Admin panel
-A consolidated **Admin** area (header Workspace/Admin toggle + left sidebar):
+A consolidated **Admin** area (header Home/Admin toggle + left sidebar):
 - **Overview** — KPI cards + status/decision breakdowns (`GET /overview`).
 - **Documents** — status filter chips (with counts) + search + pagination; open → workspace.
 - **Corrections** — cross-document edit log grouped by document, with **accordion** and
   **master–detail** lenses.
 - **Configuration** — doc-type + OCR-model managers inline in one place.
+
+### Multi-document cases
+Uploading became **multi-document**: drop several files on Home and they form a **case**, the
+cross-checked counterpart to the single-document pipeline.
+- **Unified upload** — Home is one entry: one dropped document runs the single-document
+  workspace; several become a case. The header toggle is now **Home / Admin** (the old
+  separate Workspace and Cases tabs are gone).
+- **The `Case` entity** groups N documents; each is **auto-classified (confirm before commit)**,
+  extracted with the existing per-document pipeline, then **reconciled** into shared canonical
+  fields — agreements yield a cited value, disagreements route the case to `needs_review`.
+- **One case decision** lifts the deterministic-checks-hard-fail + advisory-LLM hybrid to the
+  case level, with completeness checks for defined **case types** (e.g. `ap_match`).
+- New backend surface (`/cases`, `/case-types`, case reconcile/decide, a `/classify` stage) +
+  a case-level frontend (`src/features/case/`). Full design:
+  **[multi-document-cases.md](./multi-document-cases.md)**.
+
+### Shareable deep links
+Every navigable place got a **real, shareable hash URL** that updates the address bar and
+restores on cold load (browser back/forward included).
+- A **hand-rolled hash router** — no `react-router`. The core is a pure, unit-tested mapping
+  between the location hash and a typed `Route` (`src/lib/route.ts` + `route.test.ts`); the
+  React seam and a **Copy link** button (on the document, case, and admin headers) live in
+  `src/features/routing/`.
+- Grammar covers home, a document (`?tab=…&field=…`), the cases list + one case (`?member=…`),
+  and the admin sections (incl. `config/doctype/<name>` and `eval?run=<id>`).
+
+### Accuracy / benchmark evaluation harness
+"Is the extraction actually right?" became measurable, not a vibe:
+- A **golden-set scorer** (`app.evaluation`) grades a structuring result against known-good
+  expected outputs (`backend/golden/*.json`) — **per scalar field** (exact *and* normalized match)
+  and, the headline metric for invoices, **line-item / table-row accuracy** (matched vs expected
+  vs extracted rows).
+- Any OCR **engine** can be run over the same goldens (`run_and_score`), or an existing document's
+  persisted structure re-scored in place (`score_existing`); every scored run is persisted as an
+  `EvalRunRow` so engines can be compared and regressions tracked.
+- New **Admin → Accuracy** section (deep-linkable, `#/admin/eval?run=<id>`) with per-engine
+  **Run** buttons and an **expected-vs-actual** drill-in that opens the source document.
+- API: `GET /eval/goldens`, `GET /eval/goldens/{id}`, `POST /eval/run`, `GET /eval/runs`,
+  `GET /eval/runs/{id}`.
+
+### Active-learning loop (corrections → labels → few-shot)
+The corrections log became training signal, two ways:
+- **JSONL label export** (`GET /corrections/export?shape=raw|examples[&doc_type=][&include_text=]`)
+  streams the log as ground-truth labels — `raw` = one line per correction, `examples` = one
+  reviewer-approved record per document (optionally with the OCR text it was read from). Export
+  controls live in the Corrections admin section.
+- **Few-shot self-improvement** — a doc type's past *scalar-field* corrections are turned into
+  `label: value` examples (`build_correction_examples`, deduped newest-first, capped at
+  `few_shot_max_examples`) and injected into that type's extraction prompt, so it stops repeating
+  the same mistakes. Bounded and per-doctype; a **no-op** for the `mock` provider, with no
+  corrections, or when `few_shot_corrections_enabled=false` (the spec stays byte-identical).
+
+### Per-field review queue
+Surfaces the individual **low-confidence fields** worth a human's attention, not just whole docs:
+- `GET /review-queue[?threshold=][&doc_type=]` scans each document's latest structuring result,
+  flattens it to leaf fields, and returns those with `confidence < threshold` (default
+  `field_review_confidence_threshold`) that a reviewer **hasn't already edited** and that aren't
+  **presence-kind** fields — grouped by document, worst-first.
+- New **Admin → Review queue** section; clicking a field deep-links straight to it in the
+  inspector (`#/documents/{id}?field=…`) to correct in place — which then feeds the few-shot loop.
+
+### Black-box extraction API
+One call in, structured data out — for automated pipelines with zero UI interaction:
+- `POST /extract` runs the **whole** single-document pipeline (upload → prescan → OCR →
+  [classify] → structure → decide) synchronously and returns the structured fields, the decision,
+  and a `document_id`. `POST /extract/batch` runs N files sequentially with **per-file failure
+  isolation** (always HTTP 200).
+- `doc_type` may be omitted to **auto-classify**; `ocr_engine` omitted to use doc-type routing.
+- It **reuses** the exact stage functions + persistence as the staged routes (no stage
+  re-implemented), so every `/extract` run lands a normal, **inspectable** document in the UI.
+  Exercisable from FastAPI's Swagger UI at `/docs`.
+
+### Per-doctype OCR routing + external adapter
+OCR-engine selection became a per-doc-type policy, and the engine set became genuinely pluggable:
+- **Routing + fallback chain** — a doc type can declare a `preferred_ocr_engine` +
+  ordered `ocr_fallback_engines`; `resolve_engine_chain` builds the chain and `run_ocr_chain`
+  advances on error / empty output / sub-threshold confidence, recording the engine that actually
+  ran. Set it (built-ins included) via `PATCH /doc-types/{name}/routing`.
+- The upload picker gains an **"Auto — use doc-type routing"** option that leaves the engine
+  unset so routing decides.
+- **External-service adapter** — a built-in **`digibot`** engine wraps any external document-AI
+  service (Rossum/proprietary) behind the same `OCREngine` interface (POST page image → map JSON
+  back), configured via `DIGIBOT_ENDPOINT`/`DIGIBOT_API_KEY` and a **graceful no-op** (hidden from
+  the picker, clean 400) when unset.
+
+### KPI dashboard
+The Admin → Overview dashboard grew from raw counts into **four program KPIs**, all reading from
+data the other features already produce (additive fields on `GET /overview`):
+- **Precision** — accuracy from the eval harness (overall + line-item).
+- **Coverage** — documents per doc type.
+- **Throughput** — documents/day, a 30-day sparkline.
+- **Maintenance** — corrections/day.
+- Plus a **per-doc-type table** (documents, avg confidence, decisions, corrections, latest
+  accuracy). All existing overview cards are untouched.
+
+### Robustness fixes
+- **Self-healing additive-column migration at startup** (`_sync_additive_columns`) — a generic,
+  idempotent pass that `ALTER TABLE ADD COLUMN`s any SQLModel column missing from the live SQLite
+  table, so an existing dev DB no longer breaks after a schema-adding release. Additive only
+  (never drops/renames), each ALTER isolated so one hiccup never crashes boot.
+- **OCR routing settable on built-in doc types** — `PATCH /doc-types/{name}/routing` touches only
+  the routing columns (orthogonal to the read-only definition), so `invoice`/`contract`/`po`/
+  `delivery_note` can be routed too without a code change.
 
 ---
 
@@ -133,15 +238,17 @@ Not built yet — candidate next steps, roughly ordered by value.
   table-level bbox). Cell-level grounding there would let each table field box its own cell.
 - **Corrections that survive re-runs** — today re-running Structure clears `edited` flags
   (the log persists). Optionally re-apply prior corrections, or diff old vs new extraction.
-- **Overview depth** — decision/confidence columns in the Documents table; date-range
-  filters; simple trend charts; correction-rate per doc type (an extraction-quality signal).
+- **Overview depth** — the KPI dashboard now ships the trend charts (30-day throughput /
+  maintenance sparklines) and per-doc-type correction counts; still open: decision/confidence
+  columns in the Documents table and date-range filters.
 - **Batch actions** — multi-select in the Documents table (re-run a stage, re-decide, delete).
 - **Auth & multi-user** — the app is single-user/local today (Plannotator is loopback-only).
   A deployed version needs auth, per-user data, and a native in-app annotation layer.
-- **Cross-document validations** — same value/date across a set of documents, bundle
-  completeness, cross-references, and same-signatory *matching*. Needs a **bundle** concept
-  (multiple documents' extractions evaluated together) that the multi-document extraction &
-  configuration work builds first. Design in
+- **Cross-document validation _primitives_** — the **bundle** substrate now exists (Cases ship,
+  and the case decision engine already runs cross-document conflict + completeness checks in
+  code). Still open: exposing cross-document checks — same value/date across a set, bundle
+  completeness, cross-references, same-signatory *matching* — as **configurable rule primitives**
+  authorable like the single-document kinds. Design in
   [validation-rules.md §6](./validation-rules.md#6-cross-document-validations-not-yet-built)
   and [VALIDATION-BRAINSTORM.md §3](./VALIDATION-BRAINSTORM.md).
 - **Export** — download a decision + citations as a PDF/JSON audit record.

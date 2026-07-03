@@ -33,13 +33,16 @@ class _RegistryEntry:
     citation_paths: list[str]
     builtin: bool
     version: int
+    definition: object = None
 
 
 _REGISTRY: dict[str, _RegistryEntry] = {}
 _BUILTINS_LOADED = False
 
-# The two built-in types, resolved from code (their CodedRuleDefs can't round-trip JSON).
-_BUILTIN_NAMES = ("invoice", "contract")
+# The built-in types, resolved from code (their CodedRuleDefs can't round-trip JSON). The
+# AP-match members po/delivery_note carry a minimal (empty) ruleset, but still resolve from
+# code here so they list/seed identically to invoice/contract.
+_BUILTIN_NAMES = ("invoice", "contract", "po", "delivery_note")
 
 
 def _ensure_builtins() -> None:
@@ -48,11 +51,19 @@ def _ensure_builtins() -> None:
     if _BUILTINS_LOADED:
         return
 
+    from app.extraction.contract import CONTRACT_DEFINITION
     from app.extraction.contract import SPEC as CON_SPEC
+    from app.extraction.delivery_note import DELIVERY_NOTE_DEFINITION
+    from app.extraction.delivery_note import SPEC as DN_SPEC
+    from app.extraction.invoice import INVOICE_DEFINITION
     from app.extraction.invoice import SPEC as INV_SPEC
+    from app.extraction.po import PO_DEFINITION
+    from app.extraction.po import SPEC as PO_SPEC
     from app.rules.contract import CONTRACT_RULE_DEFINITION
     from app.rules.definition import build_ruleset
+    from app.rules.delivery_note import DELIVERY_NOTE_RULE_DEFINITION
     from app.rules.invoice import INVOICE_RULE_DEFINITION
+    from app.rules.po import PO_RULE_DEFINITION
 
     _REGISTRY["invoice"] = _RegistryEntry(
         spec=INV_SPEC,
@@ -60,6 +71,7 @@ def _ensure_builtins() -> None:
         citation_paths=INVOICE_RULE_DEFINITION.citation_paths,
         builtin=True,
         version=0,
+        definition=INVOICE_DEFINITION,
     )
     _REGISTRY["contract"] = _RegistryEntry(
         spec=CON_SPEC,
@@ -67,6 +79,23 @@ def _ensure_builtins() -> None:
         citation_paths=CONTRACT_RULE_DEFINITION.citation_paths,
         builtin=True,
         version=0,
+        definition=CONTRACT_DEFINITION,
+    )
+    _REGISTRY["po"] = _RegistryEntry(
+        spec=PO_SPEC,
+        ruleset=build_ruleset(PO_RULE_DEFINITION),
+        citation_paths=PO_RULE_DEFINITION.citation_paths,
+        builtin=True,
+        version=0,
+        definition=PO_DEFINITION,
+    )
+    _REGISTRY["delivery_note"] = _RegistryEntry(
+        spec=DN_SPEC,
+        ruleset=build_ruleset(DELIVERY_NOTE_RULE_DEFINITION),
+        citation_paths=DELIVERY_NOTE_RULE_DEFINITION.citation_paths,
+        builtin=True,
+        version=0,
+        definition=DELIVERY_NOTE_DEFINITION,
     )
     _BUILTINS_LOADED = True
 
@@ -81,6 +110,18 @@ def get_spec(name: str):
         return _REGISTRY[name].spec
     except KeyError:
         raise ValueError(f"No extraction spec for doc_type {name!r}.") from None
+
+
+def get_extraction_definition(name: str):
+    """Return the declarative :class:`DocTypeDefinition` for ``name``.
+
+    Raises ``ValueError`` if ``name`` is unknown, mirroring :func:`get_spec`.
+    """
+    _ensure_builtins()
+    try:
+        return _REGISTRY[name].definition
+    except KeyError:
+        raise ValueError(f"No extraction definition for doc_type {name!r}.") from None
 
 
 def get_ruleset(name: str):
@@ -125,7 +166,8 @@ def register_from_row(row) -> None:
     from app.serialization import dict_to_extraction_defn, dict_to_rule_defn
 
     try:
-        spec = build_spec(dict_to_extraction_defn(row.extraction_definition))
+        definition = dict_to_extraction_defn(row.extraction_definition)
+        spec = build_spec(definition)
         ruleset = build_ruleset(dict_to_rule_defn(row.rule_definition))
     except Exception as exc:  # noqa: BLE001 — surface as a ValueError for the caller
         raise ValueError(f"Could not build doc type {row.name!r}: {exc}") from exc
@@ -136,6 +178,7 @@ def register_from_row(row) -> None:
         citation_paths=list(row.citation_paths),
         builtin=row.builtin,
         version=row.version,
+        definition=definition,
     )
 
 
@@ -157,21 +200,39 @@ def seed_builtins(session) -> None:
     _ensure_builtins()
 
     from app.extraction.contract import CONTRACT_DEFINITION
+    from app.extraction.delivery_note import DELIVERY_NOTE_DEFINITION
     from app.extraction.invoice import INVOICE_DEFINITION
+    from app.extraction.po import PO_DEFINITION
     from app.models import DocTypeDefinitionRow
     from app.rules.contract import CONTRACT_RULE_DEFINITION
+    from app.rules.delivery_note import DELIVERY_NOTE_RULE_DEFINITION
     from app.rules.invoice import INVOICE_RULE_DEFINITION
+    from app.rules.po import PO_RULE_DEFINITION
     from app.serialization import extraction_defn_to_dict, rule_defn_to_dict
 
-    extraction_defns = {"invoice": INVOICE_DEFINITION, "contract": CONTRACT_DEFINITION}
-    rule_defns = {"invoice": INVOICE_RULE_DEFINITION, "contract": CONTRACT_RULE_DEFINITION}
+    extraction_defns = {
+        "invoice": INVOICE_DEFINITION,
+        "contract": CONTRACT_DEFINITION,
+        "po": PO_DEFINITION,
+        "delivery_note": DELIVERY_NOTE_DEFINITION,
+    }
+    rule_defns = {
+        "invoice": INVOICE_RULE_DEFINITION,
+        "contract": CONTRACT_RULE_DEFINITION,
+        "po": PO_RULE_DEFINITION,
+        "delivery_note": DELIVERY_NOTE_RULE_DEFINITION,
+    }
+
+    # Display labels for multi-word built-ins; str.capitalize() would render
+    # "delivery_note" as "Delivery_note", so humanize explicitly.
+    labels = {"po": "Purchase Order", "delivery_note": "Delivery Note"}
 
     for name in _BUILTIN_NAMES:
         if session.get(DocTypeDefinitionRow, name) is not None:
             continue  # idempotent: never overwrite an existing row
         row = DocTypeDefinitionRow(
             name=name,
-            label=name.capitalize(),
+            label=labels.get(name, name.replace("_", " ").title()),
             extraction_definition=extraction_defn_to_dict(extraction_defns[name]),
             rule_definition=rule_defn_to_dict(rule_defns[name]),
             citation_paths=list(_REGISTRY[name].citation_paths),
@@ -200,6 +261,7 @@ def load_custom_types(session) -> None:
 
 __all__ = [
     "get_spec",
+    "get_extraction_definition",
     "get_ruleset",
     "get_citation_paths",
     "is_registered",

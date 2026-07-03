@@ -1,17 +1,30 @@
 // Fetch client for the FastAPI backend.
 // CORS on the backend already allows the Vite dev origin, so we call it directly.
 import type {
+  CaseCreate,
+  CaseDecisionResult,
+  CaseDetail,
+  CaseReconciliation,
+  CaseSummary,
+  CaseTypeCreate,
+  CaseTypeResponse,
+  ClassifyResult,
   DocumentDetail,
   DocumentSummary,
   DecisionResult,
   DocType,
   EngineInfo,
+  EvalGoldenDetail,
+  EvalGoldenSummary,
+  EvalRunResult,
+  EvalRunSummary,
   FieldCorrection,
   OcrEngine,
   OCRResult,
   OpenRouterModel,
   OverviewStats,
   QualityReport,
+  ReviewQueueResponse,
   Sheet,
   StructuredResult,
   VlmEngineRow,
@@ -30,7 +43,7 @@ import type {
 } from "@/lib/doc-type-schema";
 
 const API_BASE_URL: string =
-  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8001";
 
 export interface HealthResponse {
   status: string;
@@ -83,7 +96,7 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
       headers,
     });
   } catch {
-    throw new ApiError(0, "Cannot reach the backend — is it running on :8000?");
+    throw new ApiError(0, `Cannot reach the backend at ${API_BASE_URL}. Is it running?`);
   }
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
@@ -117,11 +130,24 @@ export async function getHealth(): Promise<HealthResponse> {
 export async function uploadDocument(
   file: File,
   docType?: DocType,
+  caseId?: string,
 ): Promise<DocumentDetail> {
   const form = new FormData();
   form.append("file", file);
   if (docType) form.append("doc_type", docType);
+  if (caseId) form.append("case_id", caseId);
   return request<DocumentDetail>("/documents", { method: "POST", body: form });
+}
+
+/** Classify a document into its most-likely doc type (heuristic or LLM). */
+export async function classifyDocument(
+  id: string,
+  opts: { ocrEngine?: string; provider?: string } = {},
+): Promise<ClassifyResult> {
+  return request<ClassifyResult>(`/documents/${id}/classify`, {
+    method: "POST",
+    query: { ocr_engine: opts.ocrEngine, provider: opts.provider },
+  });
 }
 
 export async function getDocument(id: string): Promise<DocumentDetail> {
@@ -180,8 +206,10 @@ export async function runPrescan(
 
 export async function runOcr(
   id: string,
-  engine: OcrEngine,
+  engine?: OcrEngine,
 ): Promise<OCRResult> {
+  // Omitting `engine` (undefined is filtered out of the query string) tells the
+  // backend to route by the document's doc-type preferred engine + fallback chain.
   return request<OCRResult>(`/documents/${id}/ocr`, {
     method: "POST",
     query: { engine },
@@ -190,8 +218,10 @@ export async function runOcr(
 
 export async function runStructure(
   id: string,
-  p: { docType: DocType; ocrEngine: OcrEngine },
+  p: { docType: DocType; ocrEngine?: OcrEngine },
 ): Promise<StructuredResult> {
+  // A missing `ocr_engine` (filtered from the query) lets the backend fall back to
+  // its own routing; callers normally pass the engine that produced the stored OCR.
   return request<StructuredResult>(`/documents/${id}/structure`, {
     method: "POST",
     query: { doc_type: p.docType, ocr_engine: p.ocrEngine },
@@ -321,6 +351,38 @@ export async function listCorrections(
   });
 }
 
+/**
+ * Build a download URL for the corrections export endpoint. Like `fileUrl`, this
+ * returns a plain absolute URL string rather than going through `request()`:
+ * the endpoint streams a file (application/x-ndjson attachment) meant to be
+ * fetched by the browser via an `<a download>`, not parsed as JSON by the app.
+ * Only the provided params are appended.
+ */
+export function correctionsExportUrl(opts: {
+  docType?: string;
+  shape?: "raw" | "examples";
+  includeText?: boolean;
+}): string {
+  const params = new URLSearchParams();
+  if (opts.docType) params.set("doc_type", opts.docType);
+  if (opts.shape) params.set("shape", opts.shape);
+  if (opts.includeText) params.set("include_text", "true");
+  const qs = params.toString();
+  return `${API_BASE_URL}/corrections/export${qs ? `?${qs}` : ""}`;
+}
+
+/**
+ * At-risk fields grouped by document (confidence below the threshold). Documents
+ * come worst-first and fields worst-confidence-first from the backend.
+ */
+export async function listReviewQueue(
+  opts: { threshold?: number; docType?: string } = {},
+): Promise<ReviewQueueResponse> {
+  return request<ReviewQueueResponse>("/review-queue", {
+    query: { threshold: opts.threshold, doc_type: opts.docType },
+  });
+}
+
 // --- AI doc-type wizard ------------------------------------------------------
 
 export async function assistTurn(req: AssistRequest): Promise<AssistResponse> {
@@ -371,6 +433,148 @@ export async function cancelAnnotation(sessionId: string): Promise<void> {
   await request<void>(`/doc-types/assist/annotate/${sessionId}`, {
     method: "DELETE",
   });
+}
+
+// --- multi-document cases ----------------------------------------------------
+
+export async function createCase(body: CaseCreate): Promise<CaseDetail> {
+  return request<CaseDetail>("/cases", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function listCases(): Promise<CaseSummary[]> {
+  return request<CaseSummary[]>("/cases");
+}
+
+export async function getCase(id: string): Promise<CaseDetail> {
+  return request<CaseDetail>(`/cases/${id}`);
+}
+
+export async function deleteCase(id: string): Promise<void> {
+  await request<void>(`/cases/${id}`, { method: "DELETE" });
+}
+
+/** Associate a document with a case; returns the updated case. */
+export async function addDocumentToCase(
+  caseId: string,
+  docId: string,
+): Promise<CaseDetail> {
+  return request<CaseDetail>(`/cases/${caseId}/documents/${docId}`, {
+    method: "POST",
+  });
+}
+
+export async function removeDocumentFromCase(
+  caseId: string,
+  docId: string,
+): Promise<void> {
+  await request<void>(`/cases/${caseId}/documents/${docId}`, {
+    method: "DELETE",
+  });
+}
+
+// --- case types (CRUD) -------------------------------------------------------
+
+export async function listCaseTypes(): Promise<CaseTypeResponse[]> {
+  return request<CaseTypeResponse[]>("/case-types");
+}
+
+export async function getCaseType(name: string): Promise<CaseTypeResponse> {
+  return request<CaseTypeResponse>(`/case-types/${name}`);
+}
+
+export async function createCaseType(
+  body: CaseTypeCreate,
+): Promise<CaseTypeResponse> {
+  return request<CaseTypeResponse>("/case-types", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteCaseType(name: string): Promise<void> {
+  await request<void>(`/case-types/${name}`, { method: "DELETE" });
+}
+
+// --- case pipeline (reconcile + decide) --------------------------------------
+
+export async function reconcileCase(id: string): Promise<CaseReconciliation> {
+  return request<CaseReconciliation>(`/cases/${id}/reconcile`, {
+    method: "POST",
+  });
+}
+
+export async function getCaseReconciliation(
+  id: string,
+): Promise<CaseReconciliation> {
+  return request<CaseReconciliation>(`/cases/${id}/reconcile`);
+}
+
+export async function decideCase(
+  id: string,
+  provider?: string,
+): Promise<CaseDecisionResult> {
+  return request<CaseDecisionResult>(`/cases/${id}/decide`, {
+    method: "POST",
+    query: { provider },
+  });
+}
+
+export async function getCaseDecision(id: string): Promise<CaseDecisionResult> {
+  return request<CaseDecisionResult>(`/cases/${id}/decide`);
+}
+
+// --- accuracy-evaluation harness ---------------------------------------------
+
+/** Golden samples in the catalogue. */
+export async function listEvalGoldens(): Promise<EvalGoldenSummary[]> {
+  return request<EvalGoldenSummary[]>("/eval/goldens");
+}
+
+/** One golden with its expected fields/collections (404 ApiError when unknown). */
+export async function getEvalGolden(id: string): Promise<EvalGoldenDetail> {
+  return request<EvalGoldenDetail>(`/eval/goldens/${id}`);
+}
+
+/** Score an engine against a golden; returns the persisted run result. */
+export async function runEval(body: {
+  golden_id: string;
+  engine?: string;
+  provider?: string;
+  document_id?: string | null;
+}): Promise<EvalRunResult> {
+  return request<EvalRunResult>("/eval/run", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      golden_id: body.golden_id,
+      engine: body.engine ?? "mock",
+      provider: body.provider ?? "mock",
+      document_id: body.document_id ?? null,
+    }),
+  });
+}
+
+/** List past runs (newest-first), optionally filtered by golden/doc-type/engine. */
+export async function listEvalRuns(
+  params: { golden_id?: string; doc_type?: string; engine?: string } = {},
+): Promise<EvalRunSummary[]> {
+  return request<EvalRunSummary[]>("/eval/runs", {
+    query: {
+      golden_id: params.golden_id,
+      doc_type: params.doc_type,
+      engine: params.engine,
+    },
+  });
+}
+
+/** Fetch a single run's full result (404 ApiError when unknown). */
+export async function getEvalRun(runId: string): Promise<EvalRunResult> {
+  return request<EvalRunResult>(`/eval/runs/${runId}`);
 }
 
 export { API_BASE_URL };

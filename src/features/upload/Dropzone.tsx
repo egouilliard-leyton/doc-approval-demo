@@ -6,12 +6,18 @@ const ACCEPT = ".pdf,.png,.jpg,.jpeg,.tif,.tiff,.csv,.xlsx";
 
 export function Dropzone({
   onFile,
+  onFiles,
+  multiple,
   disabled,
   accept,
   label,
   hint,
 }: {
-  onFile: (file: File) => void;
+  onFile?: (file: File) => void;
+  /** Called with every selected/dropped file when `multiple` is set. */
+  onFiles?: (files: File[]) => void;
+  /** Accept and emit multiple files (routes to `onFiles`); default single-file. */
+  multiple?: boolean;
   disabled?: boolean;
   /** Override the default accepted extensions (default unchanged). */
   accept?: string;
@@ -27,15 +33,29 @@ export function Dropzone({
     if (!disabled) inputRef.current?.click();
   }, [disabled]);
 
+  // Route a FileList to the right callback: `onFiles` (all files) when `multiple`,
+  // otherwise `onFile` (first file only) — preserving the single-file default.
+  const emit = useCallback(
+    (list: FileList | null) => {
+      if (!list || list.length === 0) return;
+      if (multiple) {
+        onFiles?.(Array.from(list));
+      } else {
+        const file = list[0];
+        if (file) onFile?.(file);
+      }
+    },
+    [multiple, onFile, onFiles],
+  );
+
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setDragging(false);
       if (disabled) return;
-      const file = e.dataTransfer.files?.[0];
-      if (file) onFile(file);
+      emit(e.dataTransfer.files);
     },
-    [onFile, disabled],
+    [emit, disabled],
   );
 
   return (
@@ -66,11 +86,11 @@ export function Dropzone({
         ref={inputRef}
         type="file"
         accept={accept ?? ACCEPT}
+        multiple={multiple}
         className="hidden"
         disabled={disabled}
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) onFile(file);
+          emit(e.target.files);
           e.target.value = "";
         }}
       />

@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { ShieldCheck, PanelsTopLeft, LayoutDashboard } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { ShieldCheck, Home as HomeIcon, LayoutDashboard } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -7,21 +7,26 @@ import {
   PipelineProvider,
   usePipelineContext,
 } from "@/features/pipeline/PipelineContext";
-import { UploadView } from "@/features/upload/UploadView";
+import { CaseProvider, useCaseContext } from "@/features/case/CaseContext";
+import { RouteProvider, useRouteContext } from "@/features/routing/RouteContext";
+import { Home } from "@/features/home/Home";
 import { Workspace } from "@/features/Workspace";
 import { AdminPanel } from "@/features/admin/AdminPanel";
+import { CaseShell } from "@/features/case/CaseShell";
 
-type View = "workspace" | "admin";
+// The two coarse areas the top toggle switches between. Finer navigation
+// (which document, which case, which tab) lives in the Route itself.
+type ToggleView = "home" | "admin";
 
 function ViewToggle({
-  view,
-  onChange,
+  current,
+  onSelect,
 }: {
-  view: View;
-  onChange: (v: View) => void;
+  current: ToggleView;
+  onSelect: (v: ToggleView) => void;
 }) {
-  const items: { id: View; label: string; icon: typeof PanelsTopLeft }[] = [
-    { id: "workspace", label: "Workspace", icon: PanelsTopLeft },
+  const items: { id: ToggleView; label: string; icon: typeof HomeIcon }[] = [
+    { id: "home", label: "Home", icon: HomeIcon },
     { id: "admin", label: "Admin", icon: LayoutDashboard },
   ];
   return (
@@ -30,10 +35,10 @@ function ViewToggle({
         <button
           key={id}
           type="button"
-          onClick={() => onChange(id)}
+          onClick={() => onSelect(id)}
           className={cn(
             "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
-            view === id
+            current === id
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
           )}
@@ -46,18 +51,71 @@ function ViewToggle({
   );
 }
 
-function Shell() {
-  const { document, openDocument } = usePipelineContext();
-  const [view, setView] = useState<View>("workspace");
-
-  // Opening a document from the admin panel drops you into its workspace.
-  const openInWorkspace = useCallback(
-    (id: string) => {
-      setView("workspace");
-      void openDocument(id);
-    },
-    [openDocument],
+function LoadingDocument() {
+  return (
+    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+      Loading document…
+    </div>
   );
+}
+
+function Shell() {
+  const { document, openDocument, reset: resetPipeline } = usePipelineContext();
+  const { caseId, reset: resetCase } = useCaseContext();
+  const { route, navigate } = useRouteContext();
+
+  // Cold-load a document the URL asks for but the pipeline hasn't opened yet. The
+  // ref mirrors the drill-down guard so openDocument's identity churn (it changes
+  // after HYDRATE) can't re-trigger the fetch. A bad id bounces back to home.
+  const requestedDocIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (route.view === "document" && route.id !== requestedDocIdRef.current) {
+      requestedDocIdRef.current = route.id;
+      void openDocument(route.id).then((ok) => {
+        if (!ok) navigate({ view: "home" }, { replace: true });
+      });
+    }
+  }, [route, openDocument, navigate]);
+
+  // State → URL: when the top-level pipeline holds a document the URL isn't naming
+  // yet — a fresh upload, or an open from the document library that only set state —
+  // reflect it in the route so the document pane shows and the link is shareable.
+  // We already hold the loaded doc, so mark the cold-load ref to skip a redundant
+  // re-fetch. Only fire from the home area; never hijack cases/admin.
+  useEffect(() => {
+    if (document && route.view === "home") {
+      requestedDocIdRef.current = document.id;
+      navigate(
+        { view: "document", id: document.id, tab: "structured" },
+        { replace: true },
+      );
+    }
+  }, [document, route.view, navigate]);
+
+  // State → URL, case twin of the document effect: when a multi-doc upload from Home
+  // creates a case, reflect it in the route so the case pane shows. Only fire from
+  // home so we never hijack an already-open case/document/admin view.
+  useEffect(() => {
+    if (caseId && route.view === "home") {
+      navigate({ view: "case", id: caseId }, { replace: true });
+    }
+  }, [caseId, route.view, navigate]);
+
+  // Highlight the toggle for whichever family the current route belongs to.
+  const currentToggle: ToggleView = route.view === "admin" ? "admin" : "home";
+
+  const selectToggle = (v: ToggleView) => {
+    if (v === "admin") {
+      navigate({ view: "admin", section: "overview" });
+    } else {
+      // Clear any active document/case first; otherwise the state→URL effects would
+      // immediately bounce us back to that view. Server state persists — reopen from
+      // the recent-work lists on Home. Mirrors Workspace "New document" / case "Back".
+      resetPipeline();
+      resetCase();
+      navigate({ view: "home" });
+    }
+  };
 
   return (
     <div className="flex min-h-svh flex-col bg-background">
@@ -72,17 +130,31 @@ function Shell() {
               Document Approval
             </span>
           </div>
-          <ViewToggle view={view} onChange={setView} />
+          <ViewToggle current={currentToggle} onSelect={selectToggle} />
         </div>
       </header>
 
       <main className="flex flex-1 flex-col">
-        {view === "admin" ? (
-          <AdminPanel onOpenDocument={openInWorkspace} />
-        ) : document ? (
-          <Workspace />
+        {route.view === "admin" ? (
+          <AdminPanel
+            section={route.view === "admin" ? route.section : "overview"}
+            doctype={route.view === "admin" ? route.doctype : undefined}
+            runId={route.view === "admin" ? route.runId : undefined}
+            navigate={navigate}
+            onOpenDocument={(id) =>
+              navigate({ view: "document", id, tab: "structured" })
+            }
+          />
+        ) : route.view === "cases" || route.view === "case" ? (
+          <CaseShell />
+        ) : route.view === "document" ? (
+          document ? (
+            <Workspace />
+          ) : (
+            <LoadingDocument />
+          )
         ) : (
-          <UploadView />
+          <Home />
         )}
       </main>
     </div>
@@ -92,10 +164,14 @@ function Shell() {
 function App() {
   return (
     <PipelineProvider>
-      <TooltipProvider delayDuration={200}>
-        <Shell />
-        <Toaster position="bottom-right" richColors />
-      </TooltipProvider>
+      <CaseProvider>
+        <RouteProvider>
+          <TooltipProvider delayDuration={200}>
+            <Shell />
+            <Toaster position="bottom-right" richColors />
+          </TooltipProvider>
+        </RouteProvider>
+      </CaseProvider>
     </PipelineProvider>
   );
 }

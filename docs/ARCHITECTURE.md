@@ -23,8 +23,9 @@ end-to-end pipeline, the swappable component layers, the data model, and the fro
                                      │  REST (JSON)  — VITE_API_BASE_URL
 ┌────────────────────────────────────▼──────────────────────────────────────────┐
 │  FastAPI (backend/app)                                                          │
-│  routes/ ── documents · pipeline · doc_types · doctype_assist · engines ·       │
-│             corrections · overview                                              │
+│  routes/ ── documents · pipeline · extract · doc_types · doctype_assist ·       │
+│             engines · cases · case_types · corrections · overview ·             │
+│             review_queue · evaluation                                           │
 │  pipeline/ ── prescan → ocr/ → structuring → agent (decide)                     │
 │  extraction/ (declarative → spec)   rules/ (primitives → ruleset)               │
 │  doc_types.py (registry)   models.py (SQLModel)   storage.py (files)            │
@@ -35,7 +36,8 @@ end-to-end pipeline, the swappable component layers, the data model, and the fro
 
 - **Backend** — FastAPI, Python 3.12, `uv`. Owns the pipeline and the REST API.
 - **Frontend** — Vite + React 19 + TypeScript at the repo root; Tailwind v4 + shadcn/ui.
-  **No router** — view switching is local state (see [§6](#6-frontend)).
+  A **hand-rolled hash router** (`src/lib/route.ts`, no `react-router`) makes every place a
+  shareable URL; the shell renders from the parsed route (see [§10](#10-frontend)).
 - **Storage** — SQLite for metadata + a per-document directory on disk for page images,
   OCR markdown, and artifacts. Zero cloud setup.
 - **External model calls** — everything model-shaped goes through **OpenRouter** with one
@@ -101,10 +103,47 @@ Resolution is DB-aware:
 **Multi-VLM.** Connecting a model is a row, not a code change — every VLM speaks the same
 API behind OpenRouter. The `/engines` routes manage the registry; the add-model dropdown is
 populated **live** from OpenRouter's model list (filtered to image-capable models), with a
-curated fallback when the key/network is absent. See the settings UI in [§6](#6-frontend).
+curated fallback when the key/network is absent. See the settings UI in [§10](#10-frontend).
 
 > Per-engine OCR results coexist under `stage_results["ocr"][<engine>]`, so the inspector's
 > **Compare** tab can diff engines on the same document.
+
+### 3a. Per-doc-type routing & fallback
+
+OCR runs a **chain**, not a single engine. Three staged helpers preserve the existing
+request-thread / worker-thread split so the DB session never crosses into a worker thread:
+
+- `resolve_engine_chain(doc_type, session)` — **request thread**, reads the DB: a doc type's
+  `preferred_ocr_engine` drives the chain (preferred first, then its `ocr_fallback_engines`,
+  deduped); with no preferred engine it uses the global `ocr_default_engine` +
+  `ocr_default_fallback_engines`. Names are **not** validated here.
+- `build_engine_objects(names, session)` — **request thread**, reads the DB: resolves each
+  name to a live engine, **logging and skipping** unknown/disabled/stale names so one bad
+  entry can't crash the chain.
+- `run_ocr_chain(doc, engine_objs)` — **session-free**, the only piece that enters the worker
+  thread. It advances to the next engine when the current one (a) raises, (b) returns empty
+  text, or (c) scores below `ocr_fallback_confidence_threshold` — **except the last** engine,
+  whose output is always accepted so the chain terminates. It stamps
+  `OCRResult.attempted_engines` (the trail tried) and appends a warning when a fallback fired;
+  it raises only if *every* engine raised.
+
+An explicit `?engine=` (or a spreadsheet doc) bypasses routing to a one-engine chain; both the
+staged `POST /ocr` route and the black-box `/extract` path use these same three helpers.
+`PATCH /doc-types/{name}/routing` edits the routing columns for built-in **and** custom types
+(routing is orthogonal to the read-only definition). This engine-level fallback is **distinct**
+from the structuring `fallback_used` flag ([§4](#4-structuring)'s Docling table backfill): one
+answers "which OCR engine produced the text", the other "were empty fields backfilled from
+tables".
+
+### 3b. External-service adapter
+
+`DigibotEngine` (`digibot.py`) is a fourth engine kind (`kind="external"`): it POSTs each page
+image to a third-party OCR HTTP service (Rossum / Digibot-style) and maps the JSON response
+into the normalized `OCRResult`. It is **env-configured** — `DIGIBOT_ENDPOINT` (+ optional
+`DIGIBOT_API_KEY`, `DIGIBOT_TIMEOUT_S`). Unset, `run()` raises the same `ValueError` a keyless
+VLM does (→ HTTP 400), it is only offered in the picker when the endpoint is set, and `warm()`
+is a no-op so startup never fires a networked/paid call (`httpx` is imported lazily). The
+request/response shape is a placeholder adapted per concrete service.
 
 ---
 
@@ -138,6 +177,14 @@ Key mechanics:
   `FieldCorrectionRow`. A plain JSON column doesn't track nested mutations, so the write
   uses SQLAlchemy `flag_modified`. Re-running Structure produces a fresh extraction and
   clears `edited` flags; the correction **log** rows persist for the audit trail.
+- **Few-shot corrections injection (active learning)** — when `run_structuring` is passed a
+  doc type's past `FieldCorrection`s, `build_correction_examples` (`extraction/definition.py`)
+  turns them into tiny `label: value` few-shot examples (scalar fields only, deduped by path
+  keeping the newest, capped at `few_shot_max_examples`) and folds them onto a **fresh** spec
+  via `dataclasses.replace` (`_augment_examples_factory`) so the extractor sees the
+  reviewer-approved value verbatim next time. It's a strict **no-op** for the `mock` provider,
+  an empty correction list, or `few_shot_corrections_enabled=False` — the spec stays
+  byte-identical. The `/extract` path loads this doc type's corrections and passes them in.
 
 ### 4a. Declarative doc types
 
@@ -153,7 +200,14 @@ and (2) the approval rules — interpreted at runtime:
 - `doc_types.py` is the registry (built-ins from code + custom rebuilt from DB rows).
 - The **Create-with-AI wizard** (`pipeline/doctype_assistant.py` + `routes/doctype_assist.py`)
   is a stateless agent that designs a type conversationally, then emits a validated
-  `DocTypeCreate` through the same validators as a hand-built type.
+  `DocTypeCreate` through the same validators as a hand-built type. Its system prompt does
+  **not** hand-list the schema — the field/rule/DSL catalogue is generated at import time
+  from the very dataclasses the validator uses (`pipeline/doctype_schema_reference.py`
+  reads `serialization._KIND_MAP`, `extraction.definition.FieldDef`, and the expression
+  helpers), so every extraction kind (incl. `signature`) and all 23 rule primitives are
+  authorable and the prompt can never drift from `validate_custom_*`. Opening the wizard
+  seeds a fixed markdown template + first questions locally (no LLM call); the agent runs
+  only from the first **Send** onward.
 
 ### 4b. Large documents: section-aware extraction
 
@@ -208,10 +262,135 @@ ceiling. Full design, weights delivery, and measured accuracy:
 
 ---
 
-## 6. Frontend
+## 6. Multi-document cases
 
-Vite + React 19, no router. `App.tsx`'s `Shell` holds a top-level **view** state and a
-header **Workspace / Admin** toggle.
+A **`Case`** is an entity **above `Document`** that groups N documents (possibly of mixed
+types) and owns the cross-document reasoning result. The per-document pipeline (§2) is reused
+**unchanged** — each member is ingested, OCR'd, structured and (optionally) decided on its own;
+the case layer only adds a **reconcile → decide** pass on top of the members' existing
+`StructuredResult`s. Design & phase plan: **[multi-document-cases.md](./multi-document-cases.md)**.
+
+```
+Case ──┬── Document (invoice)  → StructuredResult ─┐
+       ├── Document (po)        → StructuredResult ─┤ reconcile → canonical fields
+       ├── Document (contract)  → StructuredResult ─┤ (+ conflicts) → one case decision
+       └── Document (delivery)  → StructuredResult ─┘
+```
+
+- **Classify** (`pipeline/classify.py`, `POST /documents/{id}/classify`) — an advisory stage
+  that guesses a file's doc-type from its persisted OCR text. Two providers behind one entry
+  point (mirroring OCR/structuring/decision): **`heuristic`** (default, fully offline — scores
+  each registered type by how much of its extraction vocabulary appears in the text) and an
+  opt-in **`llm`**. The guess is deliberately **not persisted** and doesn't advance status —
+  the user confirms/corrects it ("auto-classify + confirm") before extraction commits.
+- **Reconciler** (`reconcile/`) — turns the members into **canonical fields**, each a *bag of
+  grounded candidates* drawn from N documents (`candidates.py`: a defined case type follows its
+  `canonical_fields` mapping; an open pile infers fields from top-level names overlapping ≥2
+  docs). Candidates are compared under a **per-kind tolerance** (`tolerance.py`: money / date /
+  legal-suffix-aware company names) via a **grouped-by-document exists-match** (`engine.py`), so
+  `$135.00` == `135.0` and `Acme Ltd` == `Acme Limited`. Agreement yields one cited value;
+  disagreement never picks a winner — it records a `conflict_detail` and routes the case to
+  `needs_review`. Each candidate cites *which* document + page it came from (the `document_id`
+  added to `Grounding`/`Citation`).
+- **Case decision** (`case_decision.py`, `POST /cases/{id}/decide`) — lifts the single-doc
+  hybrid to the case: deterministic cross-document checks run in code (a field conflict or a
+  missing required document → `needs_review`; defined case types add **completeness** checks),
+  and an opt-in LLM (`?provider=llm`) adds judgment it can never use to override a failed check.
+  It **reuses `agent._reconcile` verbatim**, so the precedence rules match §5 exactly. The
+  default path is fully offline.
+- **Case-type registry** (`case_types.py` + `case_type_definition.py`) — a data-driven registry
+  parallel to the doc-type one. A case type carries its expected member doc-types (with min/max
+  cardinality) + the canonical-field mapping. Built-in **`ap_match`** (invoice + po + contract +
+  delivery_note) seeds on boot; custom types are JSON rows (`CaseTypeDefinitionRow`) rebuilt
+  verbatim — unlike doc types they carry no code, so there's no code-vs-DB split. Two new
+  built-in doc-types (`po`, `delivery_note`) back the `ap_match` demo.
+- **Orchestration** keeps the no-background-worker design: the client creates a case, fans out
+  the existing per-document stage calls (they parallelize cleanly), then calls the server-side
+  `POST /cases/{id}/reconcile` + `POST /cases/{id}/decide`. Both stages persist onto a
+  **`CaseRun`** (`stage_results` keyed by `case_id`, mirroring `PipelineRun`).
+
+---
+
+## 7. Black-box extraction
+
+`routes/extract.py` is a **one-call** entry over the same pipeline: `POST /extract` runs
+upload → prescan → ocr → [classify] → structure → decide synchronously and returns the final
+`ExtractionResult`. It does **not** re-implement any stage, nor call one route handler from
+another — it imports the shared persistence helpers from `routes/pipeline.py`
+(`get_or_create_run`, `_save_stage`, `_run_stage`, `_prior_invoice_numbers`) and the staged
+pipeline functions, so every stage is persisted onto **one `PipelineRun`** and the
+`stage_results` dict is built up exactly as driving the `/documents/{id}/…` routes by hand
+would (the same seam the eval runner uses).
+
+- **Auto-classify.** An empty `doc_type` runs the classify stage; a resolved type that isn't
+  registered → 422.
+- **Routing.** An explicit `ocr_engine` (or a spreadsheet) pins a one-engine chain, else the
+  doc type's routing chain resolves ([§3a](#3a-per-doc-type-routing--fallback)).
+- **Few-shot.** The doc type's past corrections are loaded and passed into structuring
+  ([§4](#4-structuring)).
+- **Batch (`POST /extract/batch`) is sequential by design** — the `_prior_invoice_numbers`
+  duplicate-invoice scan reads other documents' committed decide results, so concurrent runs
+  would race. It always returns HTTP 200; one bad file is isolated into its `BatchExtractionItem`
+  (`error` + `error_status`) without sinking the batch.
+
+---
+
+## 8. Accuracy evaluation harness
+
+`backend/app/evaluation/` measures extraction accuracy against **golden fixtures** —
+`golden/<id>.json` files (`GoldenCase`: `sample_file`, `doc_type`, `expected_fields`,
+`expected_collections`), provider-agnostic plain data. The `mock-baseline` golden pins the
+deterministic offline mock output so the harness scores meaningfully with no network.
+
+- **Scorer** (`scorer.py`, pure — no DB/HTTP/pipeline imports) works on the plain
+  `StructuredResult.fields` JSON. Scalar/dotted fields are compared for `exact_match` (literal
+  equality after minimal coercion) and `normalized_match` (exact **or** agreement under the
+  field's kind) — **reusing the reconciler's** `infer_kind` / `values_agree` money/date/string
+  tolerance and `rules.base.as_number`, so a field "agrees" here exactly as the cross-document
+  reconciler would. Collection fields (`line_items`, `parties`, …) go through a **greedy
+  highest-first row alignment** into per-collection `row_precision`/`row_recall`/`row_f1`,
+  `cell_accuracy` over matched pairs, and `line_item_score = row_f1 × cell_accuracy`.
+  `overall_score` pools every scalar `normalized_match` with every matched/missed collection
+  cell.
+- **Runner** (`runner.py`) bridges a golden to the real pipeline: it uploads the sample once as
+  a persisted `[eval]`-prefixed Document (reused across runs), runs OCR + structuring via the
+  same `_save_stage` / `get_or_create_run` helpers the staged routes use (so stage results land
+  identically), scores the output, and persists an `EvalRunRow`. It scores **any** engine
+  (offline `mock` by default; the frontend passes real engines/providers), and `score_existing`
+  re-scores a document's already-persisted structure stage instead of re-running the pipeline.
+
+---
+
+## 9. Per-field review queue
+
+`routes/review_queue.py` (`GET /review-queue`) surfaces the individual low-confidence fields a
+reviewer should check, rather than whole documents.
+
+- **`flatten_field_values`** (`pipeline/structuring.py`) flattens a structure into
+  dotted-path → raw `FieldValue` dict. It's the public counterpart of the grounding-only
+  `_flatten_grounding`, sharing the same `_walk_leaves` recursion and **the exact dotted-path
+  grammar the `PATCH /structure/field` endpoint accepts** (`.{i}` into a list, `.{key}` into a
+  dict).
+- **At-risk rule.** A field is at risk iff `confidence < threshold` (default
+  `field_review_confidence_threshold`), it hasn't been `edited`, and it isn't a presence-kind
+  field (a boolean "is X present?" whose 0.0 confidence a reviewer can't fix).
+- **Latest-run scan.** It picks each document's latest `PipelineRun` (the same pattern the
+  overview aggregation uses), emits worst-first fields per document, and omits documents with no
+  at-risk fields. The UI deep-links straight to a flagged field (path + grounding drive the
+  jump-to-box).
+
+---
+
+## 10. Frontend
+
+Vite + React 19. A **hand-rolled hash router** owns navigation: `src/lib/route.ts` is a pure,
+unit-tested mapping between the location hash and a typed `Route` (parse / format / equality),
+and `src/features/routing/` is the React seam (`useHashRoute` mirrors `window.location.hash`,
+`RouteContext` shares it, `CopyLinkButton` copies the current deep link). `App.tsx`'s `Shell`
+renders the pane from `route.view` and shows a header **Home / Admin** toggle; finer navigation
+(which document, tab, field, case, or admin section) lives in the `Route` itself, so every place
+is a shareable URL that restores on cold load. **Home is one unified upload entry** — one dropped
+document runs the single-document workspace; several become a multi-document case.
 
 ### Pipeline state
 
@@ -223,7 +402,9 @@ selectable engines and refetches on window focus.
 ### Workspace
 
 - **Upload view** (`features/upload/`) — dropzone, doc-type + engine pickers (both collapse
-  from pills to a searchable **Combobox** past a threshold), and the document library.
+  from pills to a searchable **Combobox** past a threshold), and the document library. The
+  engine picker leads with an **"Auto"** option (`EngineSelect.tsx`) that omits the `engine`
+  param so the doc type's routing chain ([§3a](#3a-per-doc-type-routing--fallback)) resolves.
 - **`features/Workspace.tsx` → `inspector/SplitInspector.tsx`** — left: `PageViewer`, or
   `GridViewer` for spreadsheets; right: tabs `OCR text` · `Structured` · `Decision` ·
   `Compare` (Compare hidden for spreadsheets — single engine).
@@ -245,19 +426,40 @@ selectable engines and refetches on window focus.
 - **Compare** (`inspector/EngineComparison.tsx`) — a per-engine roster (run/metrics on-demand)
   plus a two-pane A/B transcription diff.
 
+### Cases
+
+`features/case/` mirrors the single-document workspace for a multi-document case (§6).
+`caseReducer.ts` is a pure state machine (shared via `CaseContext`) owning per-member
+pipeline progress, the reconciliation + decision results, and the drill-down focus. The
+views walk the flow: `ClassifyConfirmView` (auto-classify + confirm each file's type),
+`CaseOverview` (members + per-member status), `ReconciliationView` (canonical fields with
+multi-doc citations + conflict badges; clicking a field navigates across members),
+`CaseDecisionPanel`, and `CaseMemberDrilldown` (open one member's inspector in place).
+`CaseList` is the cases index; a shared `#/cases/<id>` link cold-loads a **read-only**
+overview of the saved reconciliation/decision.
+
 ### Admin
 
-`features/admin/AdminPanel.tsx` — a left sidebar over four sections:
+`features/admin/AdminPanel.tsx` — a left sidebar over six deep-linkable sections:
 
-- **Overview** — KPI cards + status/decision breakdown bars (from `GET /overview`).
+- **Overview** (`OverviewSection.tsx`) — the **KPI dashboard** over `GET /overview`: accuracy
+  (from eval runs), coverage (`doc_types_used` + status/decision breakdown bars), and 30-day
+  throughput / maintenance **sparklines** (hand-rolled inline **SVG** `<polyline>`, no chart
+  lib), plus the per-doc-type KPI table (`by_doc_type`).
 - **Documents** — status filter chips (with counts) + search + pagination; row → workspace.
 - **Corrections** — the cross-document edit log, grouped by document, with two lenses
   (a collapsible **accordion** and a **master–detail** split).
-- **Configuration** — the doc-type manager and OCR-model manager inline in one place.
+- **Review queue** (`ReviewQueueSection.tsx`) — the at-risk-field queue ([§9](#9-per-field-review-queue))
+  from `GET /review-queue`; a flagged field deep-links into its document's inspector.
+- **Configuration** — the doc-type manager (incl. the builder's **OCR-routing editor**:
+  preferred engine + ordered fallbacks, saved via `PATCH /doc-types/{name}/routing`) and the
+  OCR-model manager inline in one place.
+- **Evaluation** (`EvalSection.tsx`) — the golden catalogue + persisted eval runs
+  ([§8](#8-accuracy-evaluation-harness)) from the `/eval` routes.
 
 ---
 
-## 7. Data model
+## 11. Data model
 
 `backend/app/models.py` (SQLModel → SQLite):
 
@@ -265,17 +467,31 @@ selectable engines and refetches on window focus.
 | --- | --- |
 | `Document` | An uploaded document + ingestion metadata (filename, doc_type, status, pages). |
 | `PipelineRun` | One run per document; `stage_results` (JSON) accumulates prescan/ocr/structure/decide. |
-| `DocTypeDefinitionRow` | Persisted doc-type definition (built-ins mirrored; custom rebuilt from JSON). |
+| `Case` | A case grouping N documents for cross-document reasoning; open pile or bound to a case type. |
+| `CaseMembership` | Links a document to a case (`document_id` PK → a document belongs to at most one case). |
+| `CaseRun` | One run per case; `stage_results` (JSON) accumulates reconcile/decide (mirrors `PipelineRun`). |
+| `CaseTypeDefinitionRow` | Persisted case-type definition (built-in `ap_match` mirrored; custom rebuilt from JSON). |
+| `DocTypeDefinitionRow` | Persisted doc-type definition (built-ins mirrored; custom rebuilt from JSON). Also carries the **OCR-routing columns** `preferred_ocr_engine` + `ocr_fallback_engines` (permissive; edited via `PATCH /doc-types/{name}/routing`). |
 | `VlmEngineRow` | A connected VLM OCR engine (`key`, `label`, OpenRouter `model`, `enabled`). |
 | `FieldCorrectionRow` | One row per (document, field) reviewer edit: `original_value` → `new_value`, timestamps. |
+| `EvalRunRow` | One scored evaluation run: `golden_id`/`doc_type`/`engine`/`provider`/`document_id`, the three headline scores (`overall_score`, `field_accuracy_exact`/`_normalized`), and the full `field_scores` / `collection_scores` JSON breakdown. |
 
 On-disk per document: `backend/data/<doc_id>/` holds `original.<ext>`, `pages/`, `thumbs/`,
 `prescan/`, `ocr/` (per-engine Markdown), and `structure/` artifacts. For spreadsheets it
 instead holds `sheets.json` (the parsed grid, one entry per sheet) and no page images.
 
+**Startup additive-column migration.** `db.init_db()` runs `SQLModel.metadata.create_all`
+(which only creates *missing tables*) and then `_sync_additive_columns()`: for each table it
+`PRAGMA table_info`-diffs the live SQLite columns against the model and issues an isolated
+`ALTER TABLE … ADD COLUMN` for any that are missing (coarse affinity, JSON columns seeded with
+a valid empty-container `DEFAULT`). So a schema-*adding* release — e.g. the routing columns on
+`DocTypeDefinitionRow` — never breaks an existing `app.db`. It is additive-only: it never
+drops, renames, or alters existing columns, and each ALTER is isolated so one hiccup can't
+crash startup.
+
 ---
 
-## 8. Testing
+## 12. Testing
 
 - **Backend** — `pytest`, fully offline (mock OCR engine + mock structuring/decision
   providers, no API key). `make test`; `make smoke` runs an offline end-to-end pass.

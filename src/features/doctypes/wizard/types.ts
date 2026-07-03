@@ -43,6 +43,7 @@ export interface WizardCoreState {
 }
 
 export type WizardAction =
+  | { type: "SEED_INITIAL"; questions: string[]; specMarkdown: string }
   | { type: "TURN_START" }
   | { type: "TURN_SUCCESS"; response: AssistResponse; userMessage: AssistMessage }
   | { type: "TURN_ERROR"; error: string }

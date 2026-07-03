@@ -6,6 +6,7 @@ import { ApiError, editStructureField, getSheets } from "@/lib/api";
 import { buildHighlights } from "@/lib/highlights";
 import { cellRefsForFields } from "@/lib/grounding";
 import { isSpreadsheet } from "@/lib/doc-status";
+import type { InspectorTab } from "@/lib/route";
 import { usePipelineContext } from "@/features/pipeline/PipelineContext";
 import { useEngines } from "@/features/upload/useEngines";
 import { PageViewer } from "@/features/inspector/PageViewer";
@@ -36,7 +37,17 @@ function Empty({ label }: { label: string }) {
   );
 }
 
-export function SplitInspector() {
+export function SplitInspector({
+  focus,
+  tab: tabProp,
+  onTabChange,
+}: {
+  /** Case drill-down: jump to a field/page once the structure is ready (additive; no-op when omitted). */
+  focus?: { field?: string; page?: number } | null;
+  /** Controlled active tab (URL-driven in the workspace); omit to use local state. */
+  tab?: InspectorTab;
+  onTabChange?: (t: InspectorTab) => void;
+} = {}) {
   const {
     document,
     ocr,
@@ -55,6 +66,11 @@ export function SplitInspector() {
   const [activePage, setActivePage] = useState(1);
   const [flashTick, setFlashTick] = useState(0);
   const [correctionsOpen, setCorrectionsOpen] = useState(false);
+  // Controlled-or-local tab: the workspace drives it from the URL; drill-down
+  // callers omit the props and fall back to this local state (unchanged behavior).
+  const [localTab, setLocalTab] = useState<InspectorTab>("structured");
+  const tab = tabProp ?? localTab;
+  const setTab = onTabChange ?? setLocalTab;
 
   // Resolve every grounded field to a color-coded page region once per result.
   const highlights = useMemo(
@@ -100,6 +116,23 @@ export function SplitInspector() {
     [highlights],
   );
 
+  // Case drill-down focus: once the structure (and thus highlights) is ready, jump
+  // to the requested field (flashing its box) or page. Primitives in the deps keep
+  // this from re-firing on a fresh `focus` object identity every render.
+  const focusField = focus?.field ?? null;
+  const focusPage = focus?.page ?? null;
+  useEffect(() => {
+    if (!structure) return;
+    if (!focusField && !focusPage) return;
+    // Defer to the next frame so the jump/flash lands after the structure has
+    // rendered (and to keep setState out of the effect body).
+    const raf = requestAnimationFrame(() => {
+      if (focusField) selectField(focusField);
+      else if (focusPage) setActivePage(focusPage);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [focusField, focusPage, structure, selectField]);
+
   const editField = useCallback(
     async (path: string, value: string | null) => {
       if (!document) return;
@@ -119,6 +152,8 @@ export function SplitInspector() {
   if (!document) return null;
 
   const spreadsheet = isSpreadsheet(document.mime);
+  // Compare is hidden for spreadsheets — coerce a stale/URL "compare" to structured.
+  const clampTab = spreadsheet && tab === "compare" ? "structured" : tab;
   const displayPage = activePage;
   const selectedKey = selectedField
     ? (highlights.regionKeyByPath[selectedField] ?? null)
@@ -157,7 +192,8 @@ export function SplitInspector() {
       {/* Right: inspector tabs */}
       <div className="flex min-h-0 min-w-0 flex-col">
         <Tabs
-          defaultValue="structured"
+          value={clampTab}
+          onValueChange={(v) => setTab(v as InspectorTab)}
           className="flex min-h-0 flex-1 flex-col"
         >
           <TabsList>

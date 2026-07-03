@@ -7,7 +7,6 @@
 // the draft via createDocType and hands the new type back through onCreated so the
 // parent can open the builder/editor on it.
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -16,7 +15,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ApiError, createDocType } from "@/lib/api";
 import type { DocTypeResponse } from "@/lib/doc-type-schema";
@@ -26,6 +24,7 @@ import { useAnnotateSession } from "./useAnnotateSession";
 import { QAPanel } from "./QAPanel";
 import { SpecPanel } from "./SpecPanel";
 import { findDocIndex, nextAnnotationEntry } from "./wizard-helpers";
+import { INITIAL_QUESTIONS, INITIAL_SPEC_TEMPLATE } from "./wizard-template";
 
 interface CreateWithAIDialogProps {
   open: boolean;
@@ -44,17 +43,29 @@ export function CreateWithAIDialog({
   const startedRef = useRef(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [freeform, setFreeform] = useState("");
 
-  const runInitialTurn = () => {
-    void sendTurn([]);
+  // The assistant sometimes returns a full spec with no follow-up questions yet isn't
+  // done — that used to strand the turn (no answer boxes, Send disabled). In that state
+  // we offer a free-form "continue / finalize" box instead.
+  const awaitingContinue =
+    !state.loading && !state.done && state.currentQuestions.length === 0;
+
+  // Opening the wizard pre-loads the always-the-same spec template + first questions
+  // instead of calling the assistant. The AI only runs from the first Send onward.
+  const seedInitial = () => {
+    dispatch({
+      type: "SEED_INITIAL",
+      questions: INITIAL_QUESTIONS,
+      specMarkdown: INITIAL_SPEC_TEMPLATE,
+    });
   };
 
-  // Fire the opener exactly once per open. The ref guards against strict-mode's
-  // double mount firing two opening turns.
+  // Seed exactly once per open. The ref guards against strict-mode's double mount.
   useEffect(() => {
     if (open && !startedRef.current) {
       startedRef.current = true;
-      runInitialTurn();
+      seedInitial();
     }
     if (!open) {
       startedRef.current = false;
@@ -69,6 +80,11 @@ export function CreateWithAIDialog({
   }, [cancelAnnotate]);
 
   const handleSend = () => {
+    if (awaitingContinue) {
+      void sendTurn([], freeform);
+      setFreeform("");
+      return;
+    }
     void sendTurn(state.answers.map((a) => a.text));
   };
 
@@ -125,9 +141,6 @@ export function CreateWithAIDialog({
     }
   };
 
-  const initialError =
-    state.error !== null && state.messages.length === 0 && !state.loading;
-
   const rightPanelMode = annotateSession.session ? "iframe" : "markdown";
 
   return (
@@ -144,35 +157,23 @@ export function CreateWithAIDialog({
         <div className="flex min-h-0 flex-1 flex-row">
           <div className="flex w-[420px] shrink-0 flex-col border-r">
             <ScrollArea className="min-h-0 flex-1">
-              {initialError ? (
-                <div className="space-y-3 p-6 text-center text-sm text-muted-foreground">
-                  <div className="flex items-center justify-center gap-1.5 text-foreground">
-                    <AlertTriangle className="size-4 text-flag" />
-                    Couldn&apos;t start the wizard
-                  </div>
-                  <p>{state.error}</p>
-                  <Button variant="outline" size="sm" onClick={runInitialTurn}>
-                    Retry
-                  </Button>
-                </div>
-              ) : (
-                <QAPanel
-                  state={state}
-                  onAnswerChange={(index, text) =>
-                    dispatch({ type: "ANSWER_SET", index, text })
-                  }
-                  onAnswerSave={(index) =>
-                    dispatch({ type: "ANSWER_SAVE", index })
-                  }
-                  onSend={handleSend}
-                  ingestingFiles={ingestingFiles}
-                  onIngest={handleIngestFile}
-                  onRemoveDoc={handleRemoveDoc}
-                  onCreate={() => void handleCreate()}
-                  creating={creating}
-                  createError={createError}
-                />
-              )}
+              <QAPanel
+                state={state}
+                onAnswerChange={(index, text) =>
+                  dispatch({ type: "ANSWER_SET", index, text })
+                }
+                onAnswerSave={(index) => dispatch({ type: "ANSWER_SAVE", index })}
+                onSend={handleSend}
+                ingestingFiles={ingestingFiles}
+                onIngest={handleIngestFile}
+                onRemoveDoc={handleRemoveDoc}
+                onCreate={() => void handleCreate()}
+                creating={creating}
+                createError={createError}
+                awaitingContinue={awaitingContinue}
+                freeform={freeform}
+                onFreeformChange={setFreeform}
+              />
             </ScrollArea>
           </div>
 

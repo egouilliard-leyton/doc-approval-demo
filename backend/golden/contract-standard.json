@@ -1,0 +1,18 @@
+{
+  "id": "contract-standard",
+  "sample_file": "contract-standard.pdf",
+  "doc_type": "contract",
+  "expected_fields": {
+    "effective_date": "March 1, 2026",
+    "term": "twenty-four (24) months",
+    "governing_law": "the laws of the State of Delaware, USA",
+    "total_value": 96000.00,
+    "liability_cap": 96000.00,
+    "signatures_present": true,
+    "termination_clause.notice_period": "30 days"
+  },
+  "expected_collections": {
+    "parties": ["Acme Robotics Inc.", "Globex Industrial LLC"],
+    "key_dates": []
+  }
+}

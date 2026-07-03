@@ -16,7 +16,10 @@ Highlights:
   (a field list + approval rules), created from the UI, the `/doc-types` API, or a
   **"Create with AI"** wizard. See [Configurable document types](#configurable-document-types).
 - **Connect any OCR model** — VLM engines are data-driven rows managed from the UI; the
-  add-model list is populated live from OpenRouter. See [OCR models](#ocr-models-multi-vlm).
+  add-model list is populated live from OpenRouter. Each document type can **prefer an engine
+  with an automatic fallback chain** (or reach an external service via the `digibot` adapter),
+  and the picker gains an **"Auto"** option that routes by doc type. See
+  [OCR models](#ocr-models-multi-vlm).
 - **Spreadsheet inputs** — `.xlsx`/`.csv` are parsed cell-by-cell (no OCR/VLM), one page
   per sheet, and rendered as an interactive grid; each extracted field grounds to its
   **source cell** (e.g. `Invoice!B2`). See [Spreadsheet inputs](#spreadsheet-inputs).
@@ -27,9 +30,24 @@ Highlights:
   headings) and extracted section-by-section, with proximity-anchored grounding, cross-section
   dedup, and a whole-document grounding fallback. See
   [large-document-extraction.md](docs/large-document-extraction.md).
-- **Human-in-the-loop** — edit any extracted value inline; every correction is logged.
-- **Admin panel** — a consolidated overview, documents, corrections log, and configuration.
-  See [Admin panel](#admin-panel).
+- **Human-in-the-loop that learns** — edit any extracted value inline; every correction is
+  logged, **exportable as JSONL labels**, and auto-injected as **few-shot examples** so a doc
+  type stops repeating the same mistakes. See [Reviewing extractions](#reviewing-extractions).
+- **Accuracy & benchmarking** — a golden-set harness scores any engine on the same documents,
+  per field **and by line-item/table row**, and stores every scored run. See
+  [Accuracy & benchmarking](#accuracy--benchmarking).
+- **Programmatic extraction API** — `POST /extract` runs the whole pipeline on one file (or
+  `/extract/batch` on many) and returns structured fields + a decision, no UI needed. See
+  [Black-box extraction API](#black-box-extraction-api).
+- **Multi-document cases** — drop several documents at once and they become a **case**: each
+  is classified and extracted, then reconciled across documents into one cross-checked
+  approve / flag decision. See [Multi-document cases](docs/multi-document-cases.md).
+- **Shareable deep links** — every place in the app has a real hash URL that updates the
+  address bar and restores on cold load (back/forward included), so any document, tab, field,
+  case, or admin view can be copied and shared. See [Shareable links](#shareable-links).
+- **Admin panel** — a consolidated **KPI dashboard**, documents, corrections log, a
+  low-confidence **review queue**, **accuracy** runs, and configuration. See
+  [Admin panel](#admin-panel).
 
 Built as the demo for a video on _the best OCR tools for AI agents_. The pipeline is
 modular — each stage (**pre-scan → OCR → structure → decide**) is a swappable component,
@@ -38,7 +56,8 @@ so OCR engines can be compared side-by-side on camera.
 > **📚 Full documentation** lives in [`docs/`](docs/README.md):
 > [Architecture](docs/ARCHITECTURE.md) · [API reference](docs/API.md) ·
 > [Roadmap & work log](docs/ROADMAP.md) · [Validation rules](docs/validation-rules.md).
-> Deep dives: [Large-document extraction](docs/large-document-extraction.md) ·
+> Deep dives: [Multi-document cases](docs/multi-document-cases.md) ·
+> [Large-document extraction](docs/large-document-extraction.md) ·
 > [Signature detection](docs/signature-extraction.md).
 
 - **Backend:** FastAPI (`backend/`, Python 3.12, `uv`) — the pipeline + REST API.
@@ -81,7 +100,8 @@ make warm
 
 ```bash
 make dev        # backend on :8000 + frontend on :5173 (Ctrl+C stops both)
-# open http://localhost:5173 — drag a file from backend/samples/ to run the pipeline
+# open http://localhost:5173 — drop one document (from backend/samples/) to analyze it,
+# or several to cross-check them as a case
 ```
 
 Other targets: `make dev-backend`, `make dev-frontend`, `make test` (offline suite),
@@ -127,6 +147,25 @@ splits the document into sections along the OCR engine's headings, extracts each
 merges (with proximity-anchored grounding, cross-section dedup, and a whole-document grounding
 fallback). See [large-document-extraction.md](docs/large-document-extraction.md).
 
+## Black-box extraction API
+
+The staged endpoints are ideal for the UI, but automated pipelines want **one call in, structured
+data out**. `POST /extract` takes a single file, runs the **whole** pipeline
+(upload → prescan → OCR → [classify] → structure → decide) synchronously, and returns the
+structured fields, the decision, and a `document_id`:
+
+```
+POST /extract          # one file (multipart) -> { document_id, doc_type, structured, decision, … }
+POST /extract/batch    # N files -> per-file results with failure isolation (always HTTP 200)
+```
+
+`doc_type` may be **omitted to auto-classify**; `ocr_engine` may be omitted to use
+[doc-type routing](#per-doc-type-routing--the-auto-engine). It reuses the exact same stage
+functions and persistence as the staged routes — so nothing is a black box in the end: every
+`/extract` run lands a normal document you can open and inspect in the UI. Batch runs are
+sequential (the invoice-duplicate scan reads other documents' committed decisions) and isolate
+per-file failures. Try it live from FastAPI's Swagger UI at **`/docs`**.
+
 ## OCR models (multi-VLM)
 
 OCR engines are a **swappable registry**. **Docling** (local, bbox-grounded) and **mock**
@@ -146,6 +185,30 @@ POST   /engines                    # connect a model  { label, model, key?, enab
 PATCH  /engines/{key}              # enable/disable or relabel
 DELETE /engines/{key}              # disconnect
 ```
+
+### Per-doc-type routing + the "Auto" engine
+
+You don't have to pick an engine by hand. Each **document type** can declare a **preferred OCR
+engine plus an ordered fallback chain**; the chain advances to the next engine when the current
+one errors, returns empty text, or scores below `OCR_FALLBACK_CONFIDENCE_THRESHOLD`, and the
+engine that actually produced the result is recorded on the OCR result. The upload picker's
+**"Auto — use doc-type routing"** option (`resolve_engine_chain`) leaves the engine unset so this
+routing decides; picking a concrete engine still pins it. Routing is a pipeline concern separate
+from the read-only definition, so it's editable on **built-ins** (`invoice`/`contract`/`po`/
+`delivery_note`) as well as custom types:
+
+```
+PATCH  /doc-types/{name}/routing   # { preferred_ocr_engine, ocr_fallback_engines[] } (built-ins OK)
+```
+
+### External-service adapter (`digibot`)
+
+Beyond local Docling and OpenRouter VLMs, the built-in **`digibot`** engine is a clean template
+for wrapping **any external document-AI service** (Rossum/proprietary) behind the same
+`OCREngine` interface: it POSTs each page image to an HTTP endpoint and maps the JSON back into
+the normalized OCR shape. It's configured entirely via env (`DIGIBOT_ENDPOINT`,
+`DIGIBOT_API_KEY`) and **degrades cleanly when unset** — it's hidden from the picker and raises a
+clean 400 rather than booting a broken engine.
 
 ## Spreadsheet inputs
 
@@ -186,8 +249,39 @@ the structured result:
   marks each field as *as-extracted* vs *edited*.
 - **Corrections review** — a **Review edits** button opens a dialog showing each edit as
   *original → final* with the field's source box on the document.
+- **Corrections that teach** — the log is the app's ground truth, used two ways. **Export** it
+  as JSONL labels (`GET /corrections/export?shape=raw|examples[&doc_type=][&include_text=]` —
+  `raw` = one line per correction; `examples` = one reviewer-approved record per document,
+  optionally with the OCR text). And **few-shot self-improvement**: a doc type's past *scalar-field*
+  corrections are auto-injected as `label: value` examples into its extraction prompt (bounded by
+  `FEW_SHOT_MAX_EXAMPLES`, deduped newest-first), so it stops repeating the same mistakes. Both are
+  no-ops for the offline `mock` provider and when `FEW_SHOT_CORRECTIONS_ENABLED=false`.
 - **Optional currency** — money-like numeric fields render with the document's currency when
   one was extracted; other extractions are unaffected.
+
+## Shareable links
+
+Every navigable place in the app has a real, shareable **hash URL** that updates the address
+bar as you move and restores that exact place when the link is opened cold (browser back /
+forward work throughout). A **Copy link** button sits on the document, case, and admin
+headers.
+
+The router is hand-rolled — no `react-router`. Its core is a pure, unit-tested mapping between
+the location hash and a typed `Route` (`src/lib/route.ts` + `route.test.ts`); the React seam and
+the header button live in `src/features/routing/`. The URL grammar:
+
+| URL | Opens |
+| --- | --- |
+| `#/` | Home — the unified upload entry + recent work |
+| `#/documents/<id>?tab=<ocr\|structured\|decision\|compare>&field=<path>` | A document, focused on a tab (and optionally a field) |
+| `#/cases` · `#/cases/<id>?member=<docId>` | The cases list · one case (optionally drilled into a member document) |
+| `#/admin/<overview\|documents\|corrections\|review\|eval\|config>` | An admin section |
+| `#/admin/config/doctype/<name>` | The doc-type builder for one type |
+| `#/admin/eval?run=<id>` | One evaluation run's expected-vs-actual detail |
+
+A shared `#/cases/<id>` link cold-loads the case into a **read-only** overview (a fresh fetch
+of the saved case + its reconciliation/decision) — the saved result, not a resumed live
+classify/reconcile orchestration.
 
 ## Signature detection
 
@@ -208,17 +302,49 @@ Full design, config, weights delivery, and measured accuracy:
 
 Toggle **Admin** in the header for a consolidated view (left-sidebar navigation):
 
-- **Overview** — KPI cards (documents, avg extraction confidence, decisions, corrections,
-  models, doc types) + status/decision breakdown bars.
+- **Overview** — a **program KPI dashboard**: four headline cards — **precision** (accuracy from
+  the eval harness, incl. line-item), **coverage** (documents per doc type), **throughput**
+  (documents/day, 30-day sparkline), and **maintenance** (corrections/day) — over the original
+  count/confidence/decision cards, plus a per-doc-type table. All fields are additive on
+  `GET /overview`.
 - **Documents** — every document in a filterable (status chips + search), paginated table;
   click a row to open it in the workspace.
 - **Corrections** — the cross-document edit log grouped by document, with **accordion** and
-  **master–detail** lenses (edits are a strong signal of extraction errors).
+  **master–detail** lenses (edits are a strong signal of extraction errors), plus the JSONL
+  **export** controls.
+- **Review queue** — the individual **low-confidence fields** worth a human's attention
+  (confidence below a threshold, excluding already-edited and presence-kind fields), grouped by
+  document, worst-first; click a field to deep-link straight to it in the inspector and correct
+  in place (which then feeds the few-shot loop).
+- **Accuracy** — the [benchmark harness](#accuracy--benchmarking): per-engine **Run** buttons and
+  an expected-vs-actual drill-in that opens the source document.
 - **Configuration** — the doc-type and OCR-model managers inline in one place.
 
 ```
-GET /overview                      # consolidated counts for the dashboard
+GET /overview                      # KPI dashboard: counts + precision/coverage/throughput/maintenance
 GET /corrections?document_id=      # logged field corrections (optionally per document)
+GET /review-queue?threshold=&doc_type=   # low-confidence, unedited fields, grouped by document
+```
+
+## Accuracy & benchmarking
+
+"Is it actually right?" gets a real answer. A **golden-set scorer** measures extraction accuracy
+against known-good expected outputs (`backend/golden/*.json`) — **per field** (both exact and
+normalized match) **and, the headline metric for invoices, line-item / table-row accuracy**
+(matched vs expected vs extracted rows). Any OCR engine can be run over the same golden documents,
+and every scored run is persisted (`EvalRunRow`) so you can compare engines and track regressions.
+
+The **Admin → Accuracy** section (deep-linkable, `#/admin/eval?run=<id>`) gives each golden a
+per-engine **Run** button and an **expected-vs-actual** drill-in that opens the source document to
+see where a field went wrong. The overview KPI dashboard's **precision** card reads straight from
+these runs.
+
+```
+GET  /eval/goldens          # the golden catalogue (compact)
+GET  /eval/goldens/{id}     # one golden's full expected values
+POST /eval/run              # score a golden { golden_id, engine?, provider?, document_id? } and persist the run
+GET  /eval/runs             # persisted scored runs, newest first (filter by golden/doc-type/engine)
+GET  /eval/runs/{id}        # one run in full detail
 ```
 
 ## Configurable document types
@@ -253,19 +379,27 @@ POST   /doc-types/{name}/preview  # dry-run a definition against sample text
 ### Create with AI (wizard)
 
 The **"Create with AI"** button (in the Manage-types dialog) opens a wizard where an LLM
-agent asks questions, ingests uploaded **process** docs and **example** docs (OCR'd via
-`qwen-vl`, or read directly if text), and iteratively refines a **markdown spec** of the
-type. The user answers each question in its own box (Enter = newline, Ctrl+Enter = save &
-advance, **Send** submits all) and can **annotate** the spec via an embedded
-[Plannotator](https://github.com/backnotprop/plannotator) session. When the agent is
-done it emits a validated `DocTypeCreate`, which is committed in one shot and then opened
-in the manual builder for fine-tuning.
+agent asks questions, ingests uploaded **process** docs and **example** docs (OCR'd via the
+configured OCR engine, or read directly if text), and iteratively refines a **markdown
+spec** of the type. Opening the wizard shows a **fixed** starting template + first
+questions immediately (no LLM call); the agent runs only from the first **Send**. The user
+answers each question in its own box (Enter = newline, Ctrl+Enter = save & advance, **Send**
+submits all) and can **annotate** the spec via an embedded
+[Plannotator](https://github.com/backnotprop/plannotator) session. If a turn comes back with
+no follow-up questions but isn't finished, a free-form continue/finalize box keeps the
+conversation moving. When the agent is done it emits a validated `DocTypeCreate`, which is
+committed in one shot and then opened in the manual builder for fine-tuning.
 
-The agent is **stateless** (the frontend re-sends the transcript + ingested texts + spec +
-annotations each turn) and its output goes through the same `validate_custom_*` +
-`build_spec` checks as a hand-built type (with one auto-repair turn), so a bad LLM payload
-degrades gracefully — it can never create an invalid type or inject code. Requires
-`OPENROUTER_API_KEY` (real per-turn LLM calls). Endpoints:
+The agent can author the **full** schema — every extraction kind (including `signature`
+fields) and all **23** rule primitives (equality, aggregate, format/checksum,
+date-constraint, the expression DSL, `signature_presence`, …). It doesn't hand-list them:
+the prompt's field/rule/DSL catalogue is generated from the same dataclasses the validator
+uses (`pipeline/doctype_schema_reference.py`), so it stays in lockstep with what a
+hand-built type can express. The agent is **stateless** (the frontend re-sends the
+transcript + ingested texts + spec + annotations each turn) and its output goes through the
+same `validate_custom_*` + `build_spec` checks as a hand-built type (with one auto-repair
+turn), so a bad LLM payload degrades gracefully — it can never create an invalid type or
+inject code. Requires `OPENROUTER_API_KEY` (real per-turn LLM calls). Endpoints:
 
 ```
 POST   /doc-types/assist                       # one Q&A turn -> {questions, spec_markdown, done, draft_doctype}
@@ -289,17 +423,24 @@ DELETE /doc-types/assist/annotate/{session_id} # cancel a session
 | OCR engine registry (docling/mock/spreadsheet + generic `VLMEngine`) | `backend/app/pipeline/ocr/` · engines API `backend/app/routes/engines.py` |
 | Spreadsheet ingest + engine (CSV/XLSX → grid, cell-coord grounding) | `backend/app/storage.py` (`_normalize_spreadsheet`) · `backend/app/pipeline/ocr/spreadsheet.py` · UI `src/features/inspector/GridViewer.tsx` |
 | Field edits + correction log | `PATCH …/structure/field` in `backend/app/routes/pipeline.py` · `GET /corrections` in `backend/app/routes/corrections.py` · `FieldCorrectionRow` in `models.py` |
-| Admin overview aggregates | `backend/app/routes/overview.py` |
+| Admin overview aggregates + KPI dashboard (precision/coverage/throughput/maintenance) | `backend/app/routes/overview.py` |
+| Accuracy harness (scorer + runner + goldens) | `backend/app/evaluation/` · goldens `backend/golden/*.json` · API `backend/app/routes/evaluation.py` · UI `src/features/admin/EvalSection.tsx` |
+| Review queue (low-confidence, unedited fields) | `backend/app/routes/review_queue.py` · UI `src/features/admin/ReviewQueueSection.tsx` |
+| Active learning (corrections export + few-shot injection) | `GET /corrections/export` in `backend/app/routes/corrections.py` · `build_correction_examples` in `backend/app/extraction/definition.py` · injected in `pipeline/structuring.py` |
+| Black-box extraction API (whole pipeline in one call) | `backend/app/routes/extract.py` |
+| OCR routing + fallback chain + external adapter | `resolve_engine_chain`/`run_ocr_chain` in `backend/app/pipeline/ocr/__init__.py` · `backend/app/pipeline/ocr/digibot.py` · `PATCH /doc-types/{name}/routing` in `backend/app/routes/doc_types.py` |
 | Extraction engine (declarative → spec) | `backend/app/extraction/definition.py` (`build_spec`) |
 | Section-aware extraction + proximity/fallback grounding ([docs](docs/large-document-extraction.md)) | `backend/app/pipeline/structuring.py` · `backend/app/extraction/base.py` (`_ground`/`_find_nearest`) |
 | Signature detection (YOLOv8-ONNX post-pass → bbox + crop) ([docs](docs/signature-extraction.md)) | `backend/app/pipeline/signature_detector.py` · injected in `structuring.py` (`_detect_signatures`) · crop `storage.py` (`save_signature_crop`) |
 | Rule engine (primitives + escape hatches) | `backend/app/rules/definition.py` (`build_ruleset`) |
 | Doc-type registry (built-ins in code + custom from DB) | `backend/app/doc_types.py` |
 | Inspector: highlights + color model | `src/lib/grounding.ts` · `src/lib/highlights.ts` · `src/features/inspector/` |
-| Admin panel (overview/documents/corrections/config) | `src/features/admin/` |
+| Hash router / deep links | `src/lib/route.ts` · `src/features/routing/` |
+| Admin panel (overview/documents/corrections/review/eval/config) | `src/features/admin/` |
 | Definition (de)serialization + validation | `backend/app/serialization.py` |
 | CRUD + preview routes | `backend/app/routes/doc_types.py` |
 | AI wizard agent | `backend/app/pipeline/doctype_assistant.py` |
+| Wizard prompt schema catalogue (derived from the validator's dataclasses) | `backend/app/pipeline/doctype_schema_reference.py` |
 | Plannotator subprocess manager | `backend/app/annotate_proc.py` |
 | Wizard routes (assist/ingest/annotate) | `backend/app/routes/doctype_assist.py` |
 | DB models (incl. `DocTypeDefinitionRow`) | `backend/app/models.py` |

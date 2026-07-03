@@ -1,6 +1,6 @@
 // Grid of already-ingested documents shown under the dropzone. Lets you reopen
 // a past run (without re-ingesting) or delete it. Fetches on mount; because
-// UploadView only mounts when no document is open, returning here via "New
+// Home only mounts when no document is open, returning here via "New
 // document" re-runs this fetch and surfaces freshly ingested docs.
 import { createElement, useCallback, useEffect, useState } from 'react';
 import { Loader2, Trash2 } from 'lucide-react';

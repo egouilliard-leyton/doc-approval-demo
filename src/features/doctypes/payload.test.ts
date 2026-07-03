@@ -88,6 +88,8 @@ function makeForm(): DocTypeFormInput {
     icon: "",
     extraction_definition,
     rule_definition,
+    preferred_ocr_engine: "docling",
+    ocr_fallback_engines: ["qwen-vl", "rossum"],
   };
 }
 
@@ -168,5 +170,20 @@ describe("buildDocTypePayload", () => {
   it("does not mutate the input form", () => {
     expect(form.extraction_definition.name).toBe("stale_name");
     expect(form.extraction_definition.core_paths).toEqual(["stale"]);
+  });
+
+  it("(g) round-trips the OCR routing fields", () => {
+    expect(payload.preferred_ocr_engine).toBe("docling");
+    expect(payload.ocr_fallback_engines).toEqual(["qwen-vl", "rossum"]);
+  });
+
+  it("(g) passes through a null preferred engine + empty fallbacks", () => {
+    const built = buildDocTypePayload({
+      ...form,
+      preferred_ocr_engine: null,
+      ocr_fallback_engines: [],
+    });
+    expect(built.preferred_ocr_engine).toBeNull();
+    expect(built.ocr_fallback_engines).toEqual([]);
   });
 });

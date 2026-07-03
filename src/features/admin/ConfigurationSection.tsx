@@ -6,7 +6,7 @@ import { EngineManager } from "@/features/settings/EngineSettingsDialog";
 
 function noop() {}
 
-export function ConfigurationSection() {
+export function ConfigurationSection({ focusName }: { focusName?: string }) {
   return (
     <div className="space-y-6">
       <section className="space-y-3">
@@ -15,7 +15,7 @@ export function ConfigurationSection() {
           <h3 className="text-sm font-semibold">Document types</h3>
         </div>
         <div className="rounded-xl border p-3">
-          <DocTypeManager onChanged={noop} />
+          <DocTypeManager focusName={focusName} onChanged={noop} />
         </div>
       </section>
 

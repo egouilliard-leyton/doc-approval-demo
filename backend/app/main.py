@@ -11,13 +11,19 @@ from sqlmodel import Session
 from app.config import settings
 from app.db import engine, init_db
 from app.routes import (
+    case_pipeline,
+    case_types,
+    cases,
     corrections,
     doc_types,
     doctype_assist,
     documents,
     engines as engines_route,
+    evaluation,
+    extract,
     overview,
     pipeline,
+    review_queue,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,6 +42,16 @@ async def lifespan(app: FastAPI):
             load_custom_types(session)
     except Exception as exc:  # noqa: BLE001 — never block startup on doc-type seeding
         logger.warning("Doc-type seeding/loading failed: %s", exc)
+    # Seed the built-in case-type row(s) and register any custom (DB-backed) case types.
+    # A seeding failure must not crash boot — the built-in still resolves from code.
+    try:
+        from app.case_types import load_custom_types, seed_builtins
+
+        with Session(engine) as session:
+            seed_builtins(session)
+            load_custom_types(session)
+    except Exception as exc:  # noqa: BLE001 — never block startup on case-type seeding
+        logger.warning("Case-type seeding/loading failed: %s", exc)
     # Seed the default VLM engine row (qwen-vl) so the OCR selector is populated on a
     # fresh DB. Keeps the same key as before so existing stored results still resolve.
     try:
@@ -90,11 +106,17 @@ app.mount("/files", StaticFiles(directory=settings.data_path), name="files")
 
 app.include_router(documents.router)
 app.include_router(pipeline.router)
+app.include_router(cases.router)
+app.include_router(case_pipeline.router)
+app.include_router(case_types.router)
 app.include_router(doc_types.router)
 app.include_router(doctype_assist.router)
 app.include_router(engines_route.router)
 app.include_router(corrections.router)
 app.include_router(overview.router)
+app.include_router(review_queue.router)
+app.include_router(evaluation.router)
+app.include_router(extract.router)
 
 
 @app.get("/health")

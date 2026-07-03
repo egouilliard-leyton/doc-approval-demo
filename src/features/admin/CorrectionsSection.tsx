@@ -2,13 +2,32 @@
 // the list stays scannable. Two lenses on the same data: an accordion (drill in per
 // doc) and a master–detail split (browse docs left, edits right).
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, ChevronRight, ExternalLink, PencilLine } from "lucide-react";
-import { ApiError, listCorrections, listDocuments } from "@/lib/api";
+import {
+  ArrowRight,
+  ChevronRight,
+  Download,
+  ExternalLink,
+  PencilLine,
+} from "lucide-react";
+import {
+  ApiError,
+  correctionsExportUrl,
+  listCorrections,
+  listDocuments,
+} from "@/lib/api";
 import { humanize } from "@/lib/fields";
 import { cn } from "@/lib/utils";
 import { DOC_STATUS_LABEL, docStatusClass } from "@/lib/doc-status";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type {
   DocumentStatus,
   DocumentSummary,
@@ -195,6 +214,43 @@ function MasterDetailView({
   );
 }
 
+// --- export affordance -------------------------------------------------------
+
+// Downloads the corrections as JSONL. The doc-type filter is derived from the
+// already-loaded rows (no extra fetch); "all" omits the doc_type param.
+function ExportControls({ docTypes }: { docTypes: string[] }) {
+  const [docType, setDocType] = useState<string>("all");
+  const scope = docType === "all" ? {} : { docType };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <Select value={docType} onValueChange={setDocType}>
+        <SelectTrigger size="sm" aria-label="Filter export by document type">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All types</SelectItem>
+          {docTypes.map((t) => (
+            <SelectItem key={t} value={t}>
+              {humanize(t)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Button asChild variant="outline" size="sm">
+        <a href={correctionsExportUrl({ ...scope, shape: "raw" })} download>
+          <Download /> Raw JSONL
+        </a>
+      </Button>
+      <Button asChild variant="outline" size="sm">
+        <a href={correctionsExportUrl({ ...scope, shape: "examples" })} download>
+          <Download /> Labeled examples JSONL
+        </a>
+      </Button>
+    </div>
+  );
+}
+
 export function CorrectionsSection({
   onOpenDocument,
 }: {
@@ -241,6 +297,15 @@ export function CorrectionsSection({
       .sort((a, b) => b.items.length - a.items.length); // worst extractions first
   }, [rows, docs]);
 
+  // Unique doc types present in the loaded corrections, for the export filter.
+  const docTypes = useMemo(
+    () =>
+      Array.from(
+        new Set((rows ?? []).map((c) => c.doc_type).filter(Boolean)),
+      ).sort(),
+    [rows],
+  );
+
   if (error) return <p className="text-sm text-muted-foreground">{error}</p>;
   if (!rows) return <Skeleton className="h-64 w-full rounded-xl" />;
   if (groups.length === 0) {
@@ -260,11 +325,14 @@ export function CorrectionsSection({
           <TabsTrigger value="grouped">Grouped</TabsTrigger>
           <TabsTrigger value="split">Master–detail</TabsTrigger>
         </TabsList>
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <PencilLine className="size-3.5" />
-          {totalEdits} edit{totalEdits === 1 ? "" : "s"} across {groups.length}{" "}
-          document{groups.length === 1 ? "" : "s"}
-        </span>
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <PencilLine className="size-3.5" />
+            {totalEdits} edit{totalEdits === 1 ? "" : "s"} across {groups.length}{" "}
+            document{groups.length === 1 ? "" : "s"}
+          </span>
+          <ExportControls docTypes={docTypes} />
+        </div>
       </div>
 
       <TabsContent value="grouped">

@@ -6,24 +6,35 @@ from sqlmodel import Session, delete, select
 from app import storage
 from app.config import settings
 from app.db import get_session
-from app.models import Document, PipelineRun
+from app.models import Case, CaseMembership, Document, PipelineRun
 from app.schemas import DocumentDetail, DocumentSummary, PageInfo
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
-def _to_detail(doc: Document) -> DocumentDetail:
+def _case_id_for(session: Session, doc_id: str) -> str | None:
+    """The case this document belongs to, if any (single membership lookup)."""
+    membership = session.get(CaseMembership, doc_id)
+    return membership.case_id if membership is not None else None
+
+
+def _to_detail(doc: Document, case_id: str | None = None) -> DocumentDetail:
     pages = [PageInfo(**p) for p in storage.page_urls(doc.id, doc.page_count)]
-    return DocumentDetail(**doc.model_dump(), pages=pages)
+    return DocumentDetail(**doc.model_dump(), pages=pages, case_id=case_id)
 
 
 @router.post("", response_model=DocumentDetail, status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
     doc_type: str | None = Form(default=None),
+    case_id: str | None = Form(default=None),
     session: Session = Depends(get_session),
 ) -> DocumentDetail:
-    """Upload a PDF/PNG/JPG/TIFF, persist it, and rasterize pages to PNGs."""
+    """Upload a PDF/PNG/JPG/TIFF, persist it, and rasterize pages to PNGs.
+
+    When ``case_id`` is supplied the document joins that case (mirrors how ``doc_type``
+    is passed); the case must already exist.
+    """
     try:
         ext, mime = storage.detect_type(file.filename or "")
     except storage.UnsupportedFileType:
@@ -31,6 +42,9 @@ async def upload_document(
             status_code=415,
             detail=f"Unsupported file type. Accepted: {', '.join(sorted(storage.ALLOWED_TYPES))}",
         ) from None
+
+    if case_id is not None and session.get(Case, case_id) is None:
+        raise HTTPException(status_code=404, detail="Case not found.")
 
     content = await file.read()
     max_bytes = settings.max_upload_mb * 1024 * 1024
@@ -56,13 +70,29 @@ async def upload_document(
     session.add(doc)
     session.commit()
     session.refresh(doc)
-    return _to_detail(doc)
+
+    if case_id is not None:
+        session.add(CaseMembership(document_id=doc.id, case_id=case_id))
+        session.commit()
+
+    return _to_detail(doc, case_id)
 
 
 @router.get("", response_model=list[DocumentSummary])
-def list_documents(session: Session = Depends(get_session)) -> list[Document]:
+def list_documents(session: Session = Depends(get_session)) -> list[DocumentSummary]:
     """List documents, newest first."""
-    return session.exec(select(Document).order_by(Document.created_at.desc())).all()
+    docs = session.exec(select(Document).order_by(Document.created_at.desc())).all()
+    # Batch the membership lookup (single query over all doc ids) to avoid an N+1.
+    doc_ids = [doc.id for doc in docs]
+    case_by_doc = {
+        m.document_id: m.case_id
+        for m in session.exec(
+            select(CaseMembership).where(CaseMembership.document_id.in_(doc_ids))
+        ).all()
+    }
+    return [
+        DocumentSummary(**doc.model_dump(), case_id=case_by_doc.get(doc.id)) for doc in docs
+    ]
 
 
 @router.get("/{doc_id}", response_model=DocumentDetail)
@@ -71,7 +101,7 @@ def get_document(doc_id: str, session: Session = Depends(get_session)) -> Docume
     doc = session.get(Document, doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found.")
-    return _to_detail(doc)
+    return _to_detail(doc, _case_id_for(session, doc_id))
 
 
 @router.delete("", status_code=204)
@@ -82,6 +112,7 @@ def delete_all_documents(session: Session = Depends(get_session)) -> None:
     trees can be removed after the DB commit.
     """
     doc_ids = list(session.exec(select(Document.id)).all())
+    session.exec(delete(CaseMembership))
     session.exec(delete(PipelineRun))
     session.exec(delete(Document))
     session.commit()
@@ -94,13 +125,14 @@ def delete_all_documents(session: Session = Depends(get_session)) -> None:
 def delete_document(doc_id: str, session: Session = Depends(get_session)) -> None:
     """Permanently remove a document: its pipeline runs, DB row, and on-disk files.
 
-    The PipelineRun -> Document foreign key has no DB cascade configured, so the
-    runs are deleted explicitly before the document.
+    Neither the PipelineRun nor the CaseMembership foreign key has a DB cascade
+    configured, so those rows are deleted explicitly before the document.
     """
     doc = session.get(Document, doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found.")
 
+    session.exec(delete(CaseMembership).where(CaseMembership.document_id == doc_id))
     session.exec(delete(PipelineRun).where(PipelineRun.document_id == doc_id))
     session.delete(doc)
     session.commit()

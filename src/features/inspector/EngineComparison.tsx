@@ -55,6 +55,14 @@ function ComparePane({
                 p{current.page}/{ocr.pages.length}
               </Badge>
             )}
+            {ocr.attempted_engines && ocr.attempted_engines.length > 1 && (
+              <Badge
+                variant="outline"
+                className="border-amber-500/40 font-mono text-amber-600"
+              >
+                ⤳ fell back: {ocr.attempted_engines[0]} → {ocr.engine_name}
+              </Badge>
+            )}
           </div>
           <ScrollArea className="h-[46vh] rounded-lg border bg-muted/30">
             <pre className="p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">

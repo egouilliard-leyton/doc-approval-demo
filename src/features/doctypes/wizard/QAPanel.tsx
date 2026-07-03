@@ -7,6 +7,7 @@ import { createRef, useMemo } from "react";
 import { AlertTriangle, Loader2, Send, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { AnswerTextbox } from "./AnswerTextbox";
 import { IngestDropzone } from "./IngestDropzone";
 import type { WizardCoreState } from "./types";
@@ -22,6 +23,10 @@ interface QAPanelProps {
   onCreate: () => void;
   creating: boolean;
   createError: string | null;
+  /** True when the assistant returned no questions but isn't done — show a free-form box. */
+  awaitingContinue: boolean;
+  freeform: string;
+  onFreeformChange: (text: string) => void;
 }
 
 export function QAPanel({
@@ -35,6 +40,9 @@ export function QAPanel({
   onCreate,
   creating,
   createError,
+  awaitingContinue,
+  freeform,
+  onFreeformChange,
 }: QAPanelProps) {
   const { currentQuestions, answers, loading, warnings, done, draftDocType } =
     state;
@@ -46,8 +54,12 @@ export function QAPanel({
     [currentQuestions],
   );
 
+  // In the continue/finalize state Send is always allowed (an empty send nudges the
+  // assistant to finalize); otherwise it needs at least one non-empty answer.
   const sendDisabled =
-    loading || done || answers.every((a) => a.text.trim() === "");
+    loading ||
+    done ||
+    (!awaitingContinue && answers.every((a) => a.text.trim() === ""));
 
   const showSkeletons = loading && currentQuestions.length === 0;
   const showCreate = done && draftDocType !== null;
@@ -98,6 +110,23 @@ export function QAPanel({
               disabled={loading || done}
             />
           ))}
+
+        {awaitingContinue && (
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-foreground">
+              The assistant didn&apos;t ask anything more.
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Add any extra detail below, or just press Send to have it finalize
+              the spec.
+            </p>
+            <Textarea
+              value={freeform}
+              placeholder="Add detail, or leave blank and send to finalize…"
+              onChange={(e) => onFreeformChange(e.target.value)}
+            />
+          </div>
+        )}
 
         {warnings.length > 0 && (
           <div className="space-y-1 rounded-lg border border-review/40 bg-review-muted/40 p-3 text-xs text-foreground">

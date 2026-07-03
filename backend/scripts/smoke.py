@@ -381,6 +381,350 @@ def scenario_assist_wizard(client: TestClient) -> None:
         _settings.openrouter_api_key = saved_key
 
 
+def scenario_eval(client: TestClient) -> None:
+    """Accuracy-evaluation harness: list goldens, run mock/mock, list runs (offline)."""
+    section("6. Accuracy-evaluation harness (goldens / run / runs)")
+
+    goldens = client.get("/eval/goldens")
+    ok_list = check(
+        "GET /eval/goldens -> 200", goldens.status_code == 200, goldens.text[:200]
+    )
+    if ok_list:
+        ids = {g["id"] for g in goldens.json()}
+        check(
+            "goldens include mock-baseline",
+            "mock-baseline" in ids,
+            f"ids={sorted(ids)}",
+        )
+
+    run = client.post("/eval/run", json={"golden_id": "mock-baseline", "engine": "mock", "provider": "mock"})
+    ok_run = check("POST /eval/run (mock/mock) -> 200", run.status_code == 200, run.text[:200])
+    if ok_run:
+        body = run.json()
+        check(
+            "mock-baseline scores 1.0",
+            body.get("overall_score") == 1.0,
+            f"overall_score={body.get('overall_score')}",
+        )
+
+    runs = client.get("/eval/runs", params={"golden_id": "mock-baseline"})
+    check(
+        "GET /eval/runs reflects the run",
+        runs.status_code == 200 and len(runs.json()) >= 1,
+        f"status={runs.status_code} count={len(runs.json()) if runs.status_code == 200 else 'n/a'}",
+    )
+
+
+def scenario_extract(client: TestClient) -> None:
+    """Black-box /extract + /extract/batch: whole pipeline in one call, isolated failures."""
+    section("7. Black-box extraction endpoint (/extract + /extract/batch)")
+
+    with (SAMPLES / "invoice-clean.pdf").open("rb") as fh:
+        resp = client.post(
+            "/extract",
+            files={"file": ("invoice-clean.pdf", fh, "application/pdf")},
+            data={
+                "doc_type": "invoice",
+                "ocr_engine": "mock",
+                "structuring_provider": "mock",
+                "decision_provider": "mock",
+            },
+        )
+    if check("POST /extract (invoice, mock) -> 200", resp.status_code == 200, resp.text[:200]):
+        body = resp.json()
+        check(
+            "extract response has document_id + doc_type==invoice",
+            bool(body.get("document_id")) and body.get("doc_type") == "invoice",
+            f"document_id={body.get('document_id')} doc_type={body.get('doc_type')}",
+        )
+        structured = body.get("structured") or {}
+        fields = structured.get("fields")
+        check(
+            "extract structured.fields is a non-empty dict",
+            isinstance(fields, dict) and len(fields) > 0,
+            f"{len(fields) if isinstance(fields, dict) else 'n/a'} fields",
+        )
+        decision = (body.get("decision") or {}).get("decision")
+        check(
+            "extract decision is valid",
+            decision in {"approve", "flag", "needs_review"},
+            f"decision={decision}",
+        )
+
+    # Batch: a single empty/bad file must fail in isolation, still HTTP 200.
+    batch = client.post(
+        "/extract/batch",
+        files=[("files", ("empty.pdf", b"", "application/pdf"))],
+        data={
+            "doc_type": "invoice",
+            "ocr_engine": "mock",
+            "structuring_provider": "mock",
+            "decision_provider": "mock",
+        },
+    )
+    if check("POST /extract/batch (bad file) -> 200", batch.status_code == 200, batch.text[:200]):
+        bbody = batch.json()
+        check(
+            "batch reports >=1 failure",
+            bbody.get("failed", 0) >= 1,
+            f"succeeded={bbody.get('succeeded')} failed={bbody.get('failed')}",
+        )
+        items = bbody.get("items") or []
+        bad = items[0] if items else {}
+        check(
+            "batch bad item has error + error_status populated",
+            bool(bad.get("error")) and bad.get("error_status") is not None,
+            f"error={bad.get('error')!r} error_status={bad.get('error_status')}",
+        )
+
+
+def scenario_review_queue(client: TestClient) -> None:
+    """Per-field review queue: at-risk fields, worst-first, PATCH round-trip, edited-excluded."""
+    section("8. Review queue (per-field risk) + PATCH round-trip")
+
+    doc = _upload(client, "invoice-clean.pdf")
+    doc_id = doc["id"]
+    client.post(f"/documents/{doc_id}/prescan")
+    client.post(f"/documents/{doc_id}/ocr", params={"engine": "mock"})
+    structure = client.post(
+        f"/documents/{doc_id}/structure",
+        params={"doc_type": "invoice", "provider": "mock", "ocr_engine": "mock"},
+    )
+    if not check(
+        "review-queue setup: structure(mock) -> 200",
+        structure.status_code == 200,
+        structure.text[:200],
+    ):
+        return
+
+    rq = client.get("/review-queue")
+    if not check("GET /review-queue -> 200", rq.status_code == 200, rq.text[:200]):
+        return
+    entry = next(
+        (d for d in rq.json().get("documents", []) if d["document_id"] == doc_id), None
+    )
+    if not check("review-queue has an entry for the doc", entry is not None, f"doc_id={doc_id}"):
+        return
+
+    fields = entry.get("fields") or []
+    confidences = [f["confidence"] for f in fields]
+    check(
+        "entry has >=1 at-risk field, sorted by confidence ascending",
+        len(fields) >= 1 and confidences == sorted(confidences),
+        f"confidences={confidences}",
+    )
+
+    # Every returned field path must be a valid PATCH target.
+    all_patched = True
+    for f in fields:
+        patch = client.patch(
+            f"/documents/{doc_id}/structure/field",
+            json={"path": f["path"], "value": f.get("value")},
+        )
+        if patch.status_code != 200:
+            all_patched = False
+            check(f"PATCH field '{f['path']}' -> 200", False, patch.text[:200])
+    check(
+        "all review-queue field paths are valid PATCH targets",
+        all_patched,
+        f"{len(fields)} fields",
+    )
+
+    # The corrected field must drop out of the queue (edited excluded).
+    corrected_path = fields[0]["path"] if fields else None
+    rq2 = client.get("/review-queue")
+    entry2 = next(
+        (d for d in rq2.json().get("documents", []) if d["document_id"] == doc_id), None
+    )
+    still_at_risk = {f["path"] for f in (entry2.get("fields") if entry2 else [])}
+    check(
+        "corrected field no longer at-risk (edited excluded)",
+        corrected_path is not None and corrected_path not in still_at_risk,
+        f"corrected={corrected_path} still_at_risk={sorted(still_at_risk)}",
+    )
+
+
+def scenario_corrections_export(client: TestClient) -> None:
+    """JSONL label export of the correction log, in raw + grouped (examples) shapes."""
+    import json as _json
+
+    section("9. Corrections export (JSONL label export)")
+
+    # Self-contained: guarantee at least one logged correction.
+    doc = _upload(client, "invoice-clean.pdf")
+    doc_id = doc["id"]
+    client.post(f"/documents/{doc_id}/prescan")
+    client.post(f"/documents/{doc_id}/ocr", params={"engine": "mock"})
+    client.post(
+        f"/documents/{doc_id}/structure",
+        params={"doc_type": "invoice", "provider": "mock", "ocr_engine": "mock"},
+    )
+    made = client.patch(
+        f"/documents/{doc_id}/structure/field", json={"path": "total", "value": 4321.0}
+    )
+    check("seed a correction: PATCH total -> 200", made.status_code == 200, made.text[:200])
+
+    raw = client.get("/corrections/export", params={"shape": "raw"})
+    if check(
+        "GET /corrections/export?shape=raw -> 200", raw.status_code == 200, raw.text[:200]
+    ):
+        check(
+            "raw export content-type is ndjson",
+            "ndjson" in raw.headers.get("content-type", ""),
+            raw.headers.get("content-type", ""),
+        )
+        lines = [ln for ln in raw.text.splitlines() if ln.strip()]
+        if check("raw export has >=1 line", len(lines) >= 1, f"{len(lines)} lines"):
+            check(
+                "every raw line is JSON with a field_path key",
+                all("field_path" in _json.loads(ln) for ln in lines),
+                f"{len(lines)} lines",
+            )
+
+    ex = client.get("/corrections/export", params={"shape": "examples"})
+    if check(
+        "GET /corrections/export?shape=examples -> 200", ex.status_code == 200, ex.text[:200]
+    ):
+        lines = [ln for ln in ex.text.splitlines() if ln.strip()]
+        if check("examples export has >=1 line", len(lines) >= 1, f"{len(lines)} lines"):
+            check(
+                "every examples line is JSON with a fields object",
+                all(isinstance(_json.loads(ln).get("fields"), dict) for ln in lines),
+                f"{len(lines)} lines",
+            )
+
+
+def scenario_routing(client: TestClient) -> None:
+    """Engine routing (built-in patchable) + external adapter degrading cleanly."""
+    section("10. Engine routing + external adapter (Phase 5 + Phase 7)")
+
+    try:
+        patch = client.patch(
+            "/doc-types/invoice/routing",
+            json={"preferred_ocr_engine": "mock", "ocr_fallback_engines": []},
+        )
+        if check(
+            "PATCH /doc-types/invoice/routing (builtin) -> 200",
+            patch.status_code == 200,
+            patch.text[:200],
+        ):
+            check(
+                "routing patch echoes preferred_ocr_engine==mock",
+                patch.json().get("preferred_ocr_engine") == "mock",
+                f"preferred={patch.json().get('preferred_ocr_engine')}",
+            )
+
+        # No explicit ocr_engine -> routing resolves the doc type's preferred (mock).
+        with (SAMPLES / "invoice-clean.pdf").open("rb") as fh:
+            routed = client.post(
+                "/extract",
+                files={"file": ("invoice-clean.pdf", fh, "application/pdf")},
+                data={
+                    "doc_type": "invoice",
+                    "structuring_provider": "mock",
+                    "decision_provider": "mock",
+                },
+            )
+        if check(
+            "POST /extract (no ocr_engine, routed) -> 200",
+            routed.status_code == 200,
+            routed.text[:200],
+        ):
+            engine = (routed.json().get("structured") or {}).get("ocr_engine")
+            check(
+                "routing engaged: structured.ocr_engine==mock",
+                engine == "mock",
+                f"ocr_engine={engine}",
+            )
+
+        # Unconfigured external adapter degrades cleanly to a 400 (no crash).
+        with (SAMPLES / "invoice-clean.pdf").open("rb") as fh:
+            bad = client.post(
+                "/extract",
+                files={"file": ("invoice-clean.pdf", fh, "application/pdf")},
+                data={
+                    "doc_type": "invoice",
+                    "ocr_engine": "digibot",
+                    "structuring_provider": "mock",
+                    "decision_provider": "mock",
+                },
+            )
+        if check(
+            "POST /extract (ocr_engine=digibot, unconfigured) -> 400",
+            bad.status_code == 400,
+            bad.text[:200],
+        ):
+            check(
+                "digibot 400 detail mentions 'not configured'",
+                "not configured" in bad.text,
+                bad.text[:200],
+            )
+    finally:
+        # Restore invoice routing so later scenarios / repeat runs are unaffected.
+        client.patch(
+            "/doc-types/invoice/routing",
+            json={"preferred_ocr_engine": None, "ocr_fallback_engines": []},
+        )
+
+
+def scenario_kpi(client: TestClient) -> None:
+    """KPI dashboard rollups on /overview: accuracy, 30-day series, per-doc-type slices."""
+    section("11. KPI dashboard (/overview)")
+
+    ov = client.get("/overview")
+    if not check("GET /overview -> 200", ov.status_code == 200, ov.text[:200]):
+        return
+    body = ov.json()
+
+    check(
+        "overview has KPI fields",
+        all(
+            k in body
+            for k in ("accuracy", "throughput", "maintenance", "by_doc_type", "doc_types_used")
+        ),
+        f"keys={sorted(body)}",
+    )
+
+    tp = body.get("throughput") or {}
+    check(
+        "throughput is a zero-filled 30-day series",
+        tp.get("window_days") == 30 and len(tp.get("buckets") or []) == 30,
+        f"window_days={tp.get('window_days')} buckets={len(tp.get('buckets') or [])}",
+    )
+    mt = body.get("maintenance") or {}
+    check(
+        "maintenance is a zero-filled 30-day series",
+        mt.get("window_days") == 30 and len(mt.get("buckets") or []) == 30,
+        f"window_days={mt.get('window_days')} buckets={len(mt.get('buckets') or [])}",
+    )
+
+    by_doc_type = body.get("by_doc_type")
+    invoice_kpi = (
+        next((k for k in by_doc_type if k.get("doc_type") == "invoice"), None)
+        if isinstance(by_doc_type, list)
+        else None
+    )
+    check(
+        "by_doc_type is a list with an invoice entry (documents>=1)",
+        invoice_kpi is not None and invoice_kpi.get("documents", 0) >= 1,
+        f"invoice_documents={invoice_kpi.get('documents') if invoice_kpi else 'n/a'}",
+    )
+
+    accuracy = body.get("accuracy") or {}
+    check(
+        "overview accuracy has eval_runs_total",
+        "eval_runs_total" in accuracy,
+        f"accuracy keys={sorted(accuracy)}",
+    )
+    if accuracy.get("eval_runs_total", 0) > 0:
+        check(
+            "accuracy populated: latest_overall_score is not None",
+            accuracy.get("latest_overall_score") is not None,
+            f"eval_runs_total={accuracy.get('eval_runs_total')} "
+            f"latest_overall_score={accuracy.get('latest_overall_score')}",
+        )
+
+
 def main() -> int:
     print(f"doc-approval smoke test (DATA_DIR={_TMP_DATA})")
     with TestClient(app) as client:
@@ -389,6 +733,12 @@ def main() -> int:
         scenario_custom_crud(client)
         scenario_guards(client)
         scenario_assist_wizard(client)
+        scenario_eval(client)
+        scenario_extract(client)
+        scenario_review_queue(client)
+        scenario_corrections_export(client)
+        scenario_routing(client)
+        scenario_kpi(client)
 
     section("Summary")
     total = _PASSES + _FAILURES

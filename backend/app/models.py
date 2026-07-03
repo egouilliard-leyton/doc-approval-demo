@@ -63,6 +63,22 @@ class PipelineRun(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
+class CaseRun(SQLModel, table=True):
+    """A run of the cross-document reasoning against a case (Phase 2).
+
+    Mirrors :class:`PipelineRun` field-for-field but keyed by case rather than document:
+    the classify / reconcile / decide stage results accumulate as JSON under
+    ``stage_results``. Lands via ``create_all`` like every other table here.
+    """
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    case_id: str = Field(foreign_key="case.id", index=True)
+    status: str = "pending"
+    stage_results: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 class DocTypeDefinitionRow(SQLModel, table=True):
     """Persisted definition of a document type (built-in or custom).
 
@@ -77,6 +93,11 @@ class DocTypeDefinitionRow(SQLModel, table=True):
     extraction_definition: dict = Field(default_factory=dict, sa_column=Column(JSON))
     rule_definition: dict = Field(default_factory=dict, sa_column=Column(JSON))
     citation_paths: list = Field(default_factory=list, sa_column=Column(JSON))
+    # Multi-engine OCR routing: a preferred engine + ordered fallbacks for this doc
+    # type. Both permissive (not validated against available engines at save time;
+    # unknown/disabled names are skipped gracefully when the chain is resolved).
+    preferred_ocr_engine: str | None = None
+    ocr_fallback_engines: list = Field(default_factory=list, sa_column=Column(JSON))
     builtin: bool = False
     version: int = 1
     created_at: datetime = Field(default_factory=_utcnow)
@@ -97,6 +118,75 @@ class FieldCorrectionRow(SQLModel, table=True):
     field_path: str
     original_value: object | None = Field(default=None, sa_column=Column(JSON))
     new_value: object | None = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class EvalRunRow(SQLModel, table=True):
+    """One scored evaluation run: a golden case measured against a structuring result.
+
+    Persisted like :class:`FieldCorrectionRow` — a uuid PK, the golden/doc-type/engine/
+    provider context, the document the run scored, the three headline accuracy numbers,
+    and the full per-field / per-collection breakdown as JSON columns. Lands via
+    ``create_all`` like every other table (additive; no migration).
+    """
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    golden_id: str = Field(index=True)
+    doc_type: str = ""
+    engine: str = ""
+    provider: str = ""
+    document_id: str = ""
+    overall_score: float = 0.0
+    field_accuracy_exact: float = 0.0
+    field_accuracy_normalized: float = 0.0
+    field_scores: list = Field(default_factory=list, sa_column=Column(JSON))
+    collection_scores: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class Case(SQLModel, table=True):
+    """A case grouping N documents for cross-document reasoning (Phase 1).
+
+    A case is either an OPEN pile (``case_type is None``) or bound to a registered
+    case type (e.g. ``ap_match``). The cross-document reconciliation result lands here
+    in Phase 2; Phase 1 only groups its member documents' existing structured results.
+    """
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    case_type: str | None = None
+    label: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class CaseMembership(SQLModel, table=True):
+    """Links a document to a case (a document belongs to at most one case).
+
+    ``document_id`` is the primary key, so a document can appear in at most one case;
+    associating a document already in another case silently reassigns it (upsert by
+    document). Documents survive a case deletion — only the membership rows are removed.
+    """
+
+    document_id: str = Field(foreign_key="document.id", primary_key=True)
+    case_id: str = Field(foreign_key="case.id", index=True)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class CaseTypeDefinitionRow(SQLModel, table=True):
+    """Persisted definition of a case type (built-in or custom).
+
+    Mirrors :class:`DocTypeDefinitionRow`. Case-type definitions are fully
+    JSON-serializable (no callables), so custom types are rebuilt directly from these
+    stored rows by :func:`app.case_types.register_from_row` with no code-vs-DB split.
+    """
+
+    name: str = Field(primary_key=True)
+    label: str
+    icon: str = ""
+    members: list = Field(default_factory=list, sa_column=Column(JSON))
+    canonical_fields: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    builtin: bool = False
+    version: int = 1
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 

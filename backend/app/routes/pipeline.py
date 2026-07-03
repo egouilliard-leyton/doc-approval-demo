@@ -24,12 +24,20 @@ from app.models import (
     _utcnow,
 )
 from app.pipeline.agent import run_decision
-from app.pipeline.ocr import get_engine
+from app.pipeline.classify import run_classify
+from app.pipeline.ocr import (
+    build_engine_objects,
+    get_engine,
+    resolve_engine_chain,
+    run_ocr_chain,
+)
 from app.pipeline.prescan import run_prescan
 from app.pipeline.structuring import run_structuring
 from app.rules import DecisionContext
 from app.schemas import (
+    ClassifyResult,
     DecisionResult,
+    FieldCorrection,
     FieldEditRequest,
     OCRResult,
     QualityReport,
@@ -83,6 +91,39 @@ def get_or_create_run(session: Session, doc_id: str) -> PipelineRun:
         session.commit()
         session.refresh(run)
     return run
+
+
+def _resolve_ocr_key(
+    run: PipelineRun | None,
+    doc: Document,
+    explicit_engine: str,
+    session: Session,
+) -> str:
+    """Pick which persisted ``stage_results["ocr"]`` key a staged route should read.
+
+    An EXPLICIT ``?engine=`` is honored verbatim (unchanged behavior). When the caller
+    passes NO engine, ``settings.ocr_default_engine`` is a poor default: OCR may have
+    been *routed* to a non-default engine (``resolve_engine_chain`` on the doc type), and
+    the result is persisted under the ACTUAL engine — so a blind default lookup misses
+    and the route wrongly 409s "run OCR first". Resolve the key that actually exists:
+
+    1. If the default engine is present, use it (matches today's happy path).
+    2. Else if exactly one OCR key is present, use it.
+    3. Else if the routed chain's first present engine exists, use it.
+    4. Else fall back to the default engine (preserving the 409 when no OCR ran).
+    """
+    if explicit_engine:
+        return explicit_engine
+    ocr = (run.stage_results.get("ocr") or {}) if run else {}
+    default = settings.ocr_default_engine
+    if default in ocr:
+        return default
+    if len(ocr) == 1:
+        return next(iter(ocr))
+    for name in resolve_engine_chain(doc.doc_type, session):
+        if name in ocr:
+            return name
+    return default
 
 
 def _save_stage(
@@ -176,30 +217,44 @@ async def ocr_document(
     output coexists for the side-by-side comparison view; re-running an engine
     overwrites just that engine's entry.
     """
-    engine = engine or settings.ocr_default_engine
-
     doc = session.get(Document, doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found.")
     if doc.page_count == 0:
         raise HTTPException(status_code=409, detail="Document has no rasterized pages.")
 
-    # Spreadsheets are parsed cell-by-cell by the dedicated engine regardless of the
-    # requested engine (docling/VLM operate on page images that don't exist here).
+    # Resolve the engine chain on the request thread (needs the DB session); the heavy
+    # OCR then runs in the threadpool with only the built engine objects, not the
+    # session. resolve_engine_chain + build_engine_objects READ the session and MUST
+    # stay here; only the session-free run_ocr_chain enters _run_stage's worker thread.
     if storage.is_spreadsheet(doc.mime):
-        engine = "spreadsheet"
-
-    # Resolve the engine on the request thread (needs the DB session); the heavy OCR
-    # then runs in the threadpool with only the built engine, not the session.
-    try:
-        engine_obj = get_engine(engine, session)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    result = await _run_stage("OCR", settings.ocr_timeout_s, engine_obj.run, doc)
+        # Spreadsheets are parsed cell-by-cell by the dedicated engine regardless of the
+        # requested engine (docling/VLM operate on page images that don't exist here).
+        chain = ["spreadsheet"]
+    elif engine:
+        # An explicit ?engine= disables routing: run exactly that engine.
+        chain = [engine]
+    else:
+        # No explicit engine: route via the document's doc type (may be None -> default).
+        chain = resolve_engine_chain(doc.doc_type, session)
+    engine_objs = build_engine_objects(chain, session)
+    if not engine_objs:
+        # An explicit engine that won't resolve surfaces its precise error (preserves
+        # the "Unknown or disabled OCR engine" 400); a routed chain reports generically.
+        if engine:
+            try:
+                get_engine(engine, session)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400, detail=f"No usable OCR engine resolved from {chain}."
+        )
+    result = await _run_stage("OCR", settings.ocr_timeout_s, run_ocr_chain, doc, engine_objs)
 
     run = get_or_create_run(session, doc_id)
     existing_ocr = dict(run.stage_results.get("ocr") or {})
-    existing_ocr[engine] = result.model_dump(mode="json")
+    # Persist under the ACTUAL engine that produced the result (not the requested one).
+    existing_ocr[result.engine_name] = result.model_dump(mode="json")
     _save_stage(session, run, doc, "ocr", existing_ocr, "ocr_done", DocumentStatus.ocr_done)
     return result
 
@@ -211,13 +266,13 @@ def get_ocr(
     session: Session = Depends(get_session),
 ) -> OCRResult:
     """Return a persisted OCR result for the given engine without recomputing it."""
-    engine = engine or settings.ocr_default_engine
-
     doc = session.get(Document, doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found.")
 
     run = _latest_run(session, doc_id)
+    # No explicit engine -> resolve the OCR stage that actually exists (routing-aware).
+    engine = _resolve_ocr_key(run, doc, engine, session)
     ocr = (run.stage_results.get("ocr") or {}) if run else {}
     result = ocr.get(engine)
     if not result:
@@ -225,6 +280,47 @@ def get_ocr(
             status_code=404, detail=f"No OCR result for engine '{engine}' on this document."
         )
     return OCRResult(**result)
+
+
+@router.post("/classify", response_model=ClassifyResult)
+async def classify_document(
+    doc_id: str,
+    ocr_engine: str = Query(default=""),
+    provider: str = Query(default=""),
+    session: Session = Depends(get_session),
+) -> ClassifyResult:
+    """Guess a document's doc-type from its persisted OCR text (advisory + STATELESS).
+
+    Reads the OCR result for ``ocr_engine`` (default ``OCR_DEFAULT_ENGINE``) — run OCR first
+    (409 otherwise), mirroring how ``structure`` reads OCR. Deliberately deviates from the
+    stage convention: the guess is NOT persisted, does NOT advance ``DocumentStatus``, and
+    has no GET twin — classification is advisory ("auto-classify + confirm"), so a wrong or
+    empty guess is safe and never mutates pipeline state.
+    """
+    doc = session.get(Document, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    run = _latest_run(session, doc_id)
+    # Spreadsheets always OCR under the dedicated engine; classify off that result.
+    if storage.is_spreadsheet(doc.mime):
+        ocr_engine = "spreadsheet"
+    else:
+        # No explicit engine -> resolve the OCR stage that actually exists (routing-aware).
+        ocr_engine = _resolve_ocr_key(run, doc, ocr_engine, session)
+
+    ocr = (run.stage_results.get("ocr") or {}) if run else {}
+    ocr_data = ocr.get(ocr_engine)
+    if not ocr_data:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run OCR (engine '{ocr_engine}') before classifying this document.",
+        )
+    ocr_result = OCRResult(**ocr_data)
+
+    return await _run_stage(
+        "Classify", settings.llm_timeout_s, run_classify, doc, ocr_result, provider
+    )
 
 
 @router.post("/structure", response_model=StructuredResult)
@@ -240,14 +336,13 @@ async def structure_document(
     Reads the OCR result for ``ocr_engine`` (default ``OCR_DEFAULT_ENGINE``) — run OCR
     first. The result is stored under ``stage_results["structure"]`` (one object).
     """
-    ocr_engine = ocr_engine or settings.ocr_default_engine
-
     doc = session.get(Document, doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found.")
 
     # Spreadsheets always OCR under the dedicated engine; structure off that result.
-    if storage.is_spreadsheet(doc.mime):
+    is_spreadsheet = storage.is_spreadsheet(doc.mime)
+    if is_spreadsheet:
         ocr_engine = "spreadsheet"
 
     resolved_type = doc_type or doc.doc_type
@@ -260,6 +355,9 @@ async def structure_document(
         raise HTTPException(status_code=422, detail=f"Unknown doc_type '{resolved_type}'")
 
     run = _latest_run(session, doc_id)
+    if not is_spreadsheet:
+        # No explicit engine -> resolve the OCR stage that actually exists (routing-aware).
+        ocr_engine = _resolve_ocr_key(run, doc, ocr_engine, session)
     ocr = (run.stage_results.get("ocr") or {}) if run else {}
     ocr_data = ocr.get(ocr_engine)
     if not ocr_data:
@@ -269,8 +367,34 @@ async def structure_document(
         )
     ocr_result = OCRResult(**ocr_data)
 
+    # Active-learning loop: feed this doc type's past reviewer corrections into
+    # structuring so the extractor stops repeating the same mistakes (NO-OP for the
+    # mock provider / no corrections / disabled flag — see run_structuring).
+    rows = session.exec(
+        select(FieldCorrectionRow).where(FieldCorrectionRow.doc_type == resolved_type)
+    ).all()
+    corrections = [
+        FieldCorrection(
+            document_id=row.document_id,
+            doc_type=row.doc_type,
+            field_path=row.field_path,
+            original_value=row.original_value,
+            new_value=row.new_value,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+        for row in rows
+    ]
+
     result = await _run_stage(
-        "Structuring", settings.llm_timeout_s, run_structuring, doc, ocr_result, resolved_type, provider
+        "Structuring",
+        settings.llm_timeout_s,
+        run_structuring,
+        doc,
+        ocr_result,
+        resolved_type,
+        provider,
+        corrections=corrections,
     )
 
     # ``run`` is non-None here: an OCR result was found above, which requires a run.

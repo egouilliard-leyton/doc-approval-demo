@@ -18,6 +18,7 @@ class DocumentSummary(BaseModel):
     page_count: int
     status: DocumentStatus
     created_at: datetime
+    case_id: str | None = None  # the case this document belongs to, if any
 
 
 class PageInfo(BaseModel):
@@ -132,6 +133,9 @@ class OCRResult(BaseModel):
     table_count: int = 0
     latency_ms: int = 0
     warnings: list[str] = []  # seals noted, low confidence, no-table-support, etc.
+    # Multi-engine routing trail: the engines tried (in order) before one produced
+    # this result. Additive/default-empty so previously persisted OCR JSON still loads.
+    attempted_engines: list[str] = []
 
 
 # --- Phase 4: structuring / extraction ----------------------------------------
@@ -153,6 +157,9 @@ class Grounding(BaseModel):
     # crop URL. Both optional/None so text-grounded fields are unaffected.
     bbox: BBox | None = None
     image_url: str | None = None  # /files URL for a saved crop of the grounded region
+    # Case reconciliation (Phase 2): which member document this span came from, so a
+    # reconciled canonical value can cite its source document. None for single-doc use.
+    document_id: str | None = None
 
 
 class FieldValue(BaseModel):
@@ -213,6 +220,9 @@ class Citation(BaseModel):
 
     field: str  # dotted field path, e.g. "total"
     source: str  # e.g. "page 1"
+    # Case reconciliation (Phase 2): which member document this citation points at, so a
+    # reconciled canonical value can cite its source document. None for single-doc use.
+    document_id: str | None = None
 
 
 class DecisionResult(BaseModel):
@@ -245,6 +255,8 @@ class DocTypeResponse(BaseModel):
     extraction_definition: dict
     rule_definition: dict
     citation_paths: list[str]
+    preferred_ocr_engine: str | None = None
+    ocr_fallback_engines: list[str] = []
     builtin: bool
     version: int
     created_at: datetime
@@ -260,6 +272,8 @@ class DocTypeCreate(BaseModel):
     extraction_definition: dict
     rule_definition: dict
     citation_paths: list[str] = []
+    preferred_ocr_engine: str | None = None
+    ocr_fallback_engines: list[str] = []
 
 
 class DocTypeUpdate(BaseModel):
@@ -276,6 +290,21 @@ class DocTypeUpdate(BaseModel):
     extraction_definition: dict
     rule_definition: dict
     citation_paths: list[str] = []
+    preferred_ocr_engine: str | None = None
+    ocr_fallback_engines: list[str] = []
+
+
+class DocTypeRoutingUpdate(BaseModel):
+    """Narrow OCR-routing patch for a doc type (built-in OR custom).
+
+    Touches ONLY the multi-engine routing columns — never the extraction/rule
+    definition — so it stays allowed for built-in types whose *definition* is
+    read-only. Both names are permissive (not validated against the live engine
+    registry; unknown/disabled names are skipped gracefully at resolution time).
+    """
+
+    preferred_ocr_engine: str | None = None
+    ocr_fallback_engines: list[str] = []
 
 
 class DocTypePreviewRequest(BaseModel):
@@ -362,7 +391,7 @@ class EngineInfo(BaseModel):
 
     key: str
     label: str
-    kind: Literal["layout", "vlm"]
+    kind: Literal["layout", "vlm", "external"]
 
 
 class VlmEngineResponse(BaseModel):
@@ -419,7 +448,60 @@ class FieldCorrection(BaseModel):
     updated_at: datetime
 
 
+class CorrectionExample(BaseModel):
+    """One document's corrections rolled up as a training-style example row.
+
+    Emitted by the ``examples``-shaped corrections export: the reviewer-approved
+    ``fields`` for a document, optionally paired with the OCR text they were read from.
+    """
+
+    document_id: str
+    doc_type: str
+    fields: dict
+    corrected_at: datetime
+    ocr_text: str | None = None
+
+
 # --- admin overview ----------------------------------------------------------
+
+
+class DayBucket(BaseModel):
+    """One calendar day's count in a time series."""
+
+    date: str  # "YYYY-MM-DD"
+    count: int
+
+
+class TimeSeries(BaseModel):
+    """A zero-filled daily time series over a fixed window (oldest -> newest)."""
+
+    window_days: int
+    buckets: list[DayBucket]
+
+
+class AccuracySummary(BaseModel):
+    """Headline evaluation-accuracy numbers rolled up across all eval runs."""
+
+    latest_overall_score: float | None
+    latest_line_item_score: float | None
+    eval_runs_total: int
+    doc_types_evaluated: int
+
+
+class DocTypeKpi(BaseModel):
+    """Per-doc-type KPI slice for the overview dashboard breakdown."""
+
+    doc_type: str
+    documents: int
+    pct_of_total: float
+    avg_extraction_confidence: float | None
+    decisions: dict[str, int]
+    corrections_total: int
+    corrected_documents: int
+    latest_accuracy: float | None
+    latest_accuracy_engine: str | None
+    latest_line_item_score: float | None
+    eval_runs: int
 
 
 class OverviewStats(BaseModel):
@@ -433,3 +515,320 @@ class OverviewStats(BaseModel):
     doc_types: int
     engines_enabled: int
     avg_extraction_confidence: float | None
+    # --- KPI dashboard extension (additive) ---
+    doc_types_used: int
+    accuracy: AccuracySummary
+    throughput: TimeSeries
+    maintenance: TimeSeries
+    by_doc_type: list[DocTypeKpi]
+
+
+# --- review queue ------------------------------------------------------------
+
+
+class ReviewQueueField(BaseModel):
+    """One at-risk extracted field: below the confidence threshold, not yet edited."""
+
+    path: str  # dotted path matching the PATCH /structure/field grammar
+    value: str | float | int | bool | None
+    confidence: float
+    grounding: Grounding | None = None
+
+
+class ReviewQueueDocument(BaseModel):
+    """A document with one or more at-risk fields, plus its review context."""
+
+    document_id: str
+    filename: str
+    doc_type: str
+    status: DocumentStatus
+    last_decision: Decision | None = None  # annotation only; never filters the queue
+    at_risk_count: int
+    lowest_confidence: float
+    fields: list[ReviewQueueField]  # worst-first (confidence ascending)
+
+
+class ReviewQueueResponse(BaseModel):
+    """The review queue: documents with low-confidence fields needing attention."""
+
+    threshold: float
+    total_at_risk_fields: int
+    documents: list[ReviewQueueDocument]
+
+
+# --- Phase 1: multi-document cases -------------------------------------------
+
+
+class CaseTypeMember(BaseModel):
+    """One expected member doc-type of a case type, with its cardinality.
+
+    ``min_count`` / ``max_count`` are carried-but-not-enforced in Phase 1 (the
+    reconciler that consumes them lands in Phase 2).
+    """
+
+    doc_type: str
+    min_count: int = 1
+    max_count: int | None = 1
+    label: str = ""
+
+
+class CaseTypeResponse(BaseModel):
+    """A case type's full definition as returned by the CRUD endpoints."""
+
+    name: str
+    label: str
+    icon: str
+    members: list[CaseTypeMember]
+    canonical_fields: dict
+    builtin: bool
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CaseTypeCreate(BaseModel):
+    """Payload to create a custom case type (always non-built-in, version 1)."""
+
+    name: str
+    label: str
+    icon: str = ""
+    members: list[CaseTypeMember] = []
+    canonical_fields: dict = {}
+
+
+class CaseCreate(BaseModel):
+    """Payload to create a case: an open pile, or one bound to a case type."""
+
+    case_type: str | None = None
+    label: str = ""
+
+
+class CaseSummary(BaseModel):
+    """Compact shape for the case list view."""
+
+    id: str
+    case_type: str | None
+    label: str
+    created_at: datetime
+
+
+class CaseMemberAssembly(BaseModel):
+    """One member document of a case plus its persisted structured result (if any)."""
+
+    document_id: str
+    filename: str
+    doc_type: str | None
+    status: DocumentStatus
+    structured: StructuredResult | None = None
+
+
+class CaseDetail(BaseModel):
+    """A case with each member document's status + grouped structured result."""
+
+    id: str
+    case_type: str | None
+    label: str
+    created_at: datetime
+    members: list[CaseMemberAssembly]
+
+
+# --- Phase 2: classifier + reconciler ----------------------------------------
+
+
+class ClassifyCandidate(BaseModel):
+    """One doc-type guess for a document, with its normalized confidence score."""
+
+    doc_type: str
+    score: float
+
+
+class ClassifyResult(BaseModel):
+    """A document's classification: the winning doc-type + the full candidate ranking."""
+
+    document_id: str
+    provider: str  # "heuristic" | "llm"
+    doc_type: str | None  # None when nothing scored above zero
+    confidence: float  # 0-1; the normalized top score (0.0 when all scores were zero)
+    candidates: list[ClassifyCandidate]
+
+
+class CandidateInfo(BaseModel):
+    """One grounded value drawn from a member document for a canonical field."""
+
+    document_id: str
+    doc_type: str
+    field_path: str  # dotted path this value was read from, e.g. "total" or "parties.0"
+    value: str | float | int | bool | None
+    confidence: float
+    page: int | None = None  # from the candidate's grounding, if any
+
+
+class CanonicalFieldResult(BaseModel):
+    """One reconciled canonical field: its value, whether its sources agree, and why."""
+
+    name: str
+    value: str | float | int | bool | None
+    agreement: bool
+    kind: str  # "money" | "date" | "string" (the tolerance rule applied)
+    candidates: list[CandidateInfo]
+    conflict_detail: str | None = None  # set when agreement is False
+    citations: list[Citation] = []  # one per contributing document (document_id set)
+
+
+class CaseReconciliation(BaseModel):
+    """Cross-document reconciliation of a case into its canonical fields."""
+
+    case_id: str
+    case_type: str | None
+    status: str  # "reconciled" at this stage
+    canonical_fields: list[CanonicalFieldResult]
+    member_count: int
+    structured_count: int
+    warnings: list[str] = []
+
+
+class CaseDecisionResult(BaseModel):
+    """Case-level decision (parallel to :class:`DecisionResult`, but case-shaped)."""
+
+    case_id: str
+    case_type: str | None
+    status: str  # "decided" (approve/flag) | "needs_review"
+    decision: str  # approve | flag | needs_review
+    confidence: float  # 0-1
+    reasons: list[str]  # human-readable bullets (LLM judgment + any code-forced reason)
+    checks: list[Check]  # authoritative, code-computed rule-by-rule trace
+    citations: list[Citation] = []  # built from the reconciled canonical fields
+    llm_decision: str | None = None  # what the LLM proposed before reconciliation
+
+
+# --- accuracy-evaluation harness ---------------------------------------------
+
+
+class EvalFieldScore(BaseModel):
+    """One scored scalar/dotted field: expected vs. actual under its comparison kind."""
+
+    path: str
+    expected: str | float | int | bool | None
+    actual: str | float | int | bool | None
+    kind: str  # "money" | "date" | "string"
+    exact_match: bool
+    normalized_match: bool
+
+
+class EvalCollectionScore(BaseModel):
+    """Row + cell agreement for one aligned collection field (line_items, parties, …)."""
+
+    row_precision: float
+    row_recall: float
+    row_f1: float
+    cell_accuracy: float
+    line_item_score: float  # row_f1 * cell_accuracy
+    matched: int
+    n_expected: int
+    n_actual: int
+    detail: list[dict] = []  # per-matched-pair {expected, actual, cell_score}
+
+
+class EvalRunRequest(BaseModel):
+    """Run a golden case. Defaults to the offline mock engine + provider.
+
+    ``document_id`` re-scores an EXISTING document's persisted structure stage instead of
+    running the pipeline afresh (the engine/provider are then taken from that result).
+    """
+
+    golden_id: str
+    engine: str = "mock"
+    provider: str = "mock"
+    document_id: str | None = None
+
+
+class EvalRunResult(BaseModel):
+    """Full detail of one scored evaluation run."""
+
+    id: str
+    golden_id: str
+    doc_type: str
+    engine: str
+    provider: str
+    document_id: str
+    overall_score: float
+    field_accuracy_exact: float
+    field_accuracy_normalized: float
+    field_scores: list[EvalFieldScore]
+    collection_scores: dict[str, EvalCollectionScore]
+    created_at: datetime
+
+
+class EvalRunSummary(BaseModel):
+    """Compact shape for the runs list view."""
+
+    id: str
+    golden_id: str
+    doc_type: str
+    engine: str
+    provider: str
+    document_id: str
+    overall_score: float
+    field_accuracy_exact: float
+    field_accuracy_normalized: float
+    created_at: datetime
+
+
+class EvalGoldenSummary(BaseModel):
+    """Compact shape for the golden-catalogue list view."""
+
+    id: str
+    sample_file: str
+    doc_type: str
+    field_count: int
+    collection_count: int
+
+
+class EvalGoldenDetail(EvalGoldenSummary):
+    """A golden's full expected values."""
+
+    expected_fields: dict
+    expected_collections: dict
+
+
+# --- black-box extraction (Track 1) ------------------------------------------
+
+
+class ExtractionResult(BaseModel):
+    """Whole-pipeline result for one document run synchronously via /extract.
+
+    Bundles the stage outputs that make up a single black-box extraction call:
+    the (optional) pre-flight report, the (optional, only when auto-classified)
+    classification, the structured fields, and the final decision.
+    """
+
+    document_id: str
+    doc_type: str  # the resolved type structuring/decision ran against
+    classify: ClassifyResult | None = None  # set only when doc_type was auto-classified
+    prescan: QualityReport | None = None  # set only when run_prescan was requested
+    structured: StructuredResult
+    decision: DecisionResult
+    warnings: list[str] = []
+
+
+class BatchExtractionItem(BaseModel):
+    """One file's outcome within a /extract/batch call.
+
+    Exactly one of ``result`` (success) / ``error`` (failure) is populated. The
+    ``document_id`` is captured whenever the upload succeeded, so a mid-pipeline
+    failure still yields an inspectable document.
+    """
+
+    filename: str
+    document_id: str | None = None
+    result: ExtractionResult | None = None
+    error: str | None = None
+    error_status: int | None = None  # the HTTP status a staged route would have returned
+
+
+class BatchExtractionResult(BaseModel):
+    """Aggregate result of a /extract/batch call (always HTTP 200)."""
+
+    items: list[BatchExtractionItem]
+    succeeded: int
+    failed: int

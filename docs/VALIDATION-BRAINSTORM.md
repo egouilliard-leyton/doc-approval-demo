@@ -5,7 +5,7 @@
 > the expression DSL, and how to add a new one. This document is the *design rationale* and
 > the shipped/deferred status behind it.
 
-> Status: **brainstorm / not built yet.** Depends on the *multi-document extraction & configuration* work landing first (the interesting validations are cross-document).
+> Status: **brainstorm.** The single-document surface is shipped (see below), and the *multi-document extraction & configuration* substrate this depended on has since landed — multi-document **Cases** ship, and the case decision engine already runs cross-document conflict + completeness checks *in code* ([multi-document-cases.md](./multi-document-cases.md)). What remains a brainstorm is exposing those cross-document checks as **configurable rule primitives** (the interesting validations are cross-document).
 >
 > Goal: let a doc-type author (and, later, a bundle/package author) declare **validations** the way they already declare extraction fields and rule primitives. This doc is a big idea-dump to prune together — not a spec.
 
@@ -13,12 +13,12 @@
 
 ## Implementation status
 
-The **entire single-document validation surface is shipped** — 21 declarative rule primitives, each wired end-to-end (interpreter + serialization + save-time validation + builder UI + tests), all inside the existing "rules as data" engine. Built-in invoice/contract rule sets are untouched; the full suite passes (backend 429, frontend build + 41).
+The **entire single-document validation surface is shipped** — 23 declarative rule primitives, each wired end-to-end (interpreter + serialization + save-time validation + builder UI + tests), all inside the existing "rules as data" engine. Built-in invoice/contract rule sets are untouched; the full suite passes (backend 483, frontend build + 105).
 
 **Shipped primitives** (in `backend/app/rules/definition.py` unless noted):
 `PresenceRuleDef` · `ThresholdCompareRuleDef` · `ArithmeticIdentityRuleDef` · `SetMembershipRuleDef` · `FieldDependencyRuleDef` · `UniquenessVsHistoryRuleDef` (pre-existing) · **`EqualityRuleDef`** (exact/normalized/regex/fuzzy + threshold slider) · **`DateConstraintRuleDef`** · **`ExpressionRuleDef`** (sandboxed formula DSL — `rules/expression.py`) · **`AggregateRuleDef`** · **`NumericRangeRuleDef`** · **`PercentageToleranceRuleDef`** · **`FormatRuleDef`** (IBAN/checksum/email/UUID/ISO — `rules/formats.py`) · **`ConditionalPresenceRuleDef`** · **`MutualExclusivityRuleDef`** · **`AtLeastNOfRuleDef`** · **`RequiredTogetherRuleDef`** · **`ContainsRuleDef`** · **`LengthBoundsRuleDef`** · **`FieldConfidenceFloorRuleDef`** · **`GroundedOnPageRuleDef`** · **`SignaturePresenceRuleDef`** · plus the two Tier-3 hatches (`CodedRuleDef`, `LlmAdvisoryRuleDef`).
 
-**Deferred — cross-document (§3), and *only* because the substrate doesn't exist yet:** same-value/date across docs, bundle completeness, cross-references, roll-ups, and same-signatory *matching*. These need a **bundle** — a set of documents' extractions available together (§0) — which is the *multi-document extraction & configuration* work slated to be built first. Building them now would be dead scaffolding or a bundle model that collides with that effort. Once the bundle substrate lands, the natural next primitives are `CrossDocConsistencyRuleDef` and `BundleCompletenessRuleDef` (§6 sketch), and fuzzy matching (already shipped) pays off most there.
+**Deferred — cross-document (§3), now that the substrate exists but the *configurable primitives* don't:** same-value/date across docs, bundle completeness, cross-references, roll-ups, and same-signatory *matching*. These need a **bundle** — a set of documents' extractions available together (§0) — which has since shipped as multi-document **Cases** (the case decision engine already runs these checks in code). What's still deferred is exposing them as **authorable rule primitives** like the single-document kinds: the natural next primitives are `CrossDocConsistencyRuleDef` and `BundleCompletenessRuleDef` (§6 sketch), and fuzzy matching (already shipped) pays off most there.
 
 **Smaller deferred single-doc items:** fuzzy examples generated from the author's own documents (vs the static table); a stronger similarity metric than `difflib`; an `edited-field` provenance primitive; language/script detection.
 

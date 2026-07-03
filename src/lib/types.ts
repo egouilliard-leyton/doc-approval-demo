@@ -9,7 +9,7 @@ export type OcrEngine = string;
 export interface EngineInfo {
   key: string;
   label: string;
-  kind: "layout" | "vlm";
+  kind: "layout" | "vlm" | "external";
 }
 
 /** A connected VLM engine row (settings/catalog view). */
@@ -37,6 +37,41 @@ export interface FieldCorrection {
   updated_at: string;
 }
 
+/** One day's document count in a time series ("YYYY-MM-DD"). */
+export interface DayBucket {
+  date: string;
+  count: number;
+}
+
+/** A zero-filled, ascending daily time series over a fixed window. */
+export interface TimeSeries {
+  window_days: number;
+  buckets: DayBucket[];
+}
+
+/** Latest accuracy-eval headline numbers across the system. */
+export interface AccuracySummary {
+  latest_overall_score: number | null;
+  latest_line_item_score: number | null;
+  eval_runs_total: number;
+  doc_types_evaluated: number;
+}
+
+/** Per-doc-type KPI rollup for the overview table. */
+export interface DocTypeKpi {
+  doc_type: string;
+  documents: number;
+  pct_of_total: number;
+  avg_extraction_confidence: number | null;
+  decisions: Record<string, number>;
+  corrections_total: number;
+  corrected_documents: number;
+  latest_accuracy: number | null;
+  latest_accuracy_engine: string | null;
+  latest_line_item_score: number | null;
+  eval_runs: number;
+}
+
 /** Consolidated system counts for the admin overview. */
 export interface OverviewStats {
   documents_total: number;
@@ -47,6 +82,11 @@ export interface OverviewStats {
   doc_types: number;
   engines_enabled: number;
   avg_extraction_confidence: number | null;
+  doc_types_used: number;
+  accuracy: AccuracySummary;
+  throughput: TimeSeries;
+  maintenance: TimeSeries;
+  by_doc_type: DocTypeKpi[];
 }
 export type DocumentStatus =
   | "uploaded"
@@ -74,6 +114,7 @@ export interface DocumentSummary {
   page_count: number;
   status: DocumentStatus;
   created_at: string;
+  case_id?: string | null; // the case this document belongs to, if any
 }
 
 export interface PageInfo {
@@ -170,6 +211,10 @@ export interface OCRResult {
   table_count: number;
   latency_ms: number;
   warnings: string[];
+  // Ordered list of engines actually tried; length > 1 means a fallback fired,
+  // and the last entry is the engine that produced this result. Old results may
+  // omit it — treat undefined as [].
+  attempted_engines?: string[];
 }
 
 // --- structuring -------------------------------------------------------------
@@ -183,6 +228,9 @@ export interface Grounding {
   // Spatial grounding (signature post-pass): a pixel bbox on the page + the crop URL.
   bbox?: BBox | null;
   image_url?: string | null; // relative /files/... — wrap with fileUrl()
+  // Case reconciliation: which member document this span came from, so a reconciled
+  // canonical value can cite its source document. None for single-doc use.
+  document_id?: string | null;
 }
 
 export interface FieldValue {
@@ -221,6 +269,9 @@ export interface Check {
 export interface Citation {
   field: string;
   source: string;
+  // Case reconciliation: which member document this citation points at, so a
+  // reconciled canonical value can cite its source document. None for single-doc use.
+  document_id?: string | null;
 }
 
 export interface DecisionResult {
@@ -237,4 +288,231 @@ export interface DecisionResult {
   llm_decision: Decision | null;
   warnings: string[];
   latency_ms: number;
+}
+
+// --- multi-document cases ----------------------------------------------------
+
+/** One expected member doc-type of a case type, with its cardinality. */
+export interface CaseTypeMember {
+  doc_type: DocType;
+  min_count: number;
+  max_count: number | null;
+  label: string;
+}
+
+/** A case type's full definition as returned by the CRUD endpoints. */
+export interface CaseTypeResponse {
+  name: string;
+  label: string;
+  icon: string;
+  members: CaseTypeMember[];
+  canonical_fields: Record<string, unknown>;
+  builtin: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Payload to create a custom case type (always non-built-in, version 1). */
+export interface CaseTypeCreate {
+  name: string;
+  label: string;
+  icon?: string;
+  members?: CaseTypeMember[];
+  canonical_fields?: Record<string, unknown>;
+}
+
+/** Payload to create a case: an open pile, or one bound to a case type. */
+export interface CaseCreate {
+  case_type?: string | null;
+  label?: string;
+}
+
+/** Compact shape for the case list view. */
+export interface CaseSummary {
+  id: string;
+  case_type: string | null;
+  label: string;
+  created_at: string;
+}
+
+/** One member document of a case plus its persisted structured result (if any). */
+export interface CaseMemberAssembly {
+  document_id: string;
+  filename: string;
+  doc_type: DocType | null;
+  status: DocumentStatus;
+  structured: StructuredResult | null;
+}
+
+/** A case with each member document's status + grouped structured result. */
+export interface CaseDetail {
+  id: string;
+  case_type: string | null;
+  label: string;
+  created_at: string;
+  members: CaseMemberAssembly[];
+}
+
+// --- classifier --------------------------------------------------------------
+
+/** One doc-type guess for a document, with its normalized confidence score. */
+export interface ClassifyCandidate {
+  doc_type: DocType;
+  score: number;
+}
+
+/** A document's classification: the winning doc-type + the full candidate ranking. */
+export interface ClassifyResult {
+  document_id: string;
+  provider: string; // "heuristic" | "llm"
+  doc_type: DocType | null; // null when nothing scored above zero
+  confidence: number; // 0-1; the normalized top score
+  candidates: ClassifyCandidate[];
+}
+
+// --- reconciliation ----------------------------------------------------------
+
+/** One grounded value drawn from a member document for a canonical field. */
+export interface CandidateInfo {
+  document_id: string;
+  doc_type: DocType;
+  field_path: string;
+  value: string | number | boolean | null;
+  confidence: number;
+  page: number | null;
+}
+
+/** One reconciled canonical field: its value, whether its sources agree, and why. */
+export interface CanonicalFieldResult {
+  name: string;
+  value: string | number | boolean | null;
+  agreement: boolean;
+  kind: string; // "money" | "date" | "string" (the tolerance rule applied)
+  candidates: CandidateInfo[];
+  conflict_detail: string | null; // set when agreement is false
+  citations: Citation[]; // one per contributing document (document_id set)
+}
+
+/** Cross-document reconciliation of a case into its canonical fields. */
+export interface CaseReconciliation {
+  case_id: string;
+  case_type: string | null;
+  status: string; // "reconciled" at this stage
+  canonical_fields: CanonicalFieldResult[];
+  member_count: number;
+  structured_count: number;
+  warnings: string[];
+}
+
+/** Case-level decision (parallel to DecisionResult, but case-shaped). */
+export interface CaseDecisionResult {
+  case_id: string;
+  case_type: string | null;
+  status: string; // "decided" (approve/flag) | "needs_review"
+  decision: Decision;
+  confidence: number;
+  reasons: string[];
+  checks: Check[];
+  citations: Citation[];
+  llm_decision: Decision | null;
+}
+
+// --- review queue (per-field risk) -------------------------------------------
+
+/** One at-risk field surfaced in the review queue, with its confidence + grounding. */
+export interface ReviewQueueField {
+  path: string;
+  value: string | number | boolean | null;
+  confidence: number;
+  grounding: Grounding | null;
+}
+
+/** A document with at-risk fields, sorted worst-first by the backend. */
+export interface ReviewQueueDocument {
+  document_id: string;
+  filename: string;
+  doc_type: string;
+  status: DocumentStatus;
+  last_decision: Decision | null;
+  at_risk_count: number;
+  lowest_confidence: number;
+  fields: ReviewQueueField[];
+}
+
+/** The full review queue: documents worst-first, fields worst-confidence-first. */
+export interface ReviewQueueResponse {
+  threshold: number;
+  total_at_risk_fields: number;
+  documents: ReviewQueueDocument[];
+}
+
+// --- accuracy-evaluation harness ---------------------------------------------
+
+/** One scored field: expected vs actual, with exact/normalized match verdicts. */
+export interface EvalFieldScore {
+  path: string;
+  expected: string | number | boolean | null;
+  actual: string | number | boolean | null;
+  kind: string;
+  exact_match: boolean;
+  normalized_match: boolean;
+}
+
+/** Scoring for one collection (line-item table): row P/R/F1 + cell accuracy. */
+export interface EvalCollectionScore {
+  row_precision: number;
+  row_recall: number;
+  row_f1: number;
+  cell_accuracy: number;
+  line_item_score: number;
+  matched: number;
+  n_expected: number;
+  n_actual: number;
+  detail: Array<{ expected: unknown; actual: unknown; cell_score: number }>;
+}
+
+/** Full result of scoring one run against a golden. */
+export interface EvalRunResult {
+  id: string;
+  golden_id: string;
+  doc_type: string;
+  engine: string;
+  provider: string;
+  document_id: string;
+  overall_score: number;
+  field_accuracy_exact: number;
+  field_accuracy_normalized: number;
+  field_scores: EvalFieldScore[];
+  collection_scores: Record<string, EvalCollectionScore>;
+  created_at: string;
+}
+
+/** Lightweight run row for the results list (newest-first). */
+export interface EvalRunSummary {
+  id: string;
+  golden_id: string;
+  doc_type: string;
+  engine: string;
+  provider: string;
+  document_id: string;
+  overall_score: number;
+  field_accuracy_exact: number;
+  field_accuracy_normalized: number;
+  created_at: string;
+}
+
+/** A golden sample in the catalogue. */
+export interface EvalGoldenSummary {
+  id: string;
+  sample_file: string;
+  doc_type: string;
+  field_count: number;
+  collection_count: number;
+}
+
+/** A golden with its expected values expanded. */
+export interface EvalGoldenDetail extends EvalGoldenSummary {
+  expected_fields: Record<string, unknown>;
+  expected_collections: Record<string, unknown>;
 }

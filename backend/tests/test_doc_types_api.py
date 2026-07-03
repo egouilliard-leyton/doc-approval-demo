@@ -61,6 +61,9 @@ def test_list_includes_builtins():
         assert "invoice" in by_name and "contract" in by_name
         assert by_name["invoice"]["builtin"] is True
         assert by_name["contract"]["builtin"] is True
+        # Multi-word built-ins get humanized labels (not "Delivery_note").
+        assert by_name["po"]["label"] == "Purchase Order"
+        assert by_name["delivery_note"]["label"] == "Delivery Note"
 
 
 def test_get_single_and_404():
@@ -221,3 +224,97 @@ def test_preview_unknown_type_404():
             json={"sample_text": "anything", "provider": "mock"},
         )
         assert resp.status_code == 404, resp.text
+
+
+# --- Phase: active-learning Wave 1 — extraction-definition accessor ----------
+
+
+def test_get_extraction_definition_invoice_fields():
+    """The built-in invoice definition resolves with its expected scalar fields."""
+    defn = doc_types.get_extraction_definition("invoice")
+    field_names = {f.name for f in defn.fields}
+    assert {"invoice_no", "vendor", "total"} <= field_names
+
+
+def test_get_extraction_definition_unknown_raises():
+    import pytest
+
+    with pytest.raises(ValueError):
+        doc_types.get_extraction_definition("nope")
+
+
+# --- OCR routing patch (narrow, allowed on built-ins) ------------------------
+
+
+def _restore_invoice_routing() -> None:
+    """Reset the shared built-in invoice row's routing so other tests are unaffected."""
+    from sqlmodel import Session
+
+    from app.db import engine
+    from app.models import DocTypeDefinitionRow
+
+    with Session(engine) as session:
+        row = session.get(DocTypeDefinitionRow, "invoice")
+        row.preferred_ocr_engine = None
+        row.ocr_fallback_engines = []
+        session.add(row)
+        session.commit()
+
+
+def test_patch_routing_allowed_on_builtin():
+    """PATCH /doc-types/invoice/routing is NOT rejected (unlike PUT), and persists."""
+    with TestClient(app) as client:
+        before = client.get("/doc-types/invoice").json()
+        try:
+            resp = client.patch(
+                "/doc-types/invoice/routing",
+                json={"preferred_ocr_engine": "mock", "ocr_fallback_engines": ["docling"]},
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["preferred_ocr_engine"] == "mock"
+            assert body["ocr_fallback_engines"] == ["docling"]
+            assert body["builtin"] is True
+            assert body["version"] == before["version"] + 1
+
+            # The listing reflects the new routing.
+            by_name = {r["name"]: r for r in client.get("/doc-types").json()}
+            assert by_name["invoice"]["preferred_ocr_engine"] == "mock"
+        finally:
+            _restore_invoice_routing()
+
+
+def test_patch_routing_unknown_type_404():
+    with TestClient(app) as client:
+        resp = client.patch(
+            "/doc-types/nope/routing",
+            json={"preferred_ocr_engine": "mock"},
+        )
+        assert resp.status_code == 404, resp.text
+
+
+def test_patch_routing_engages_in_pipeline():
+    """Routing set via PATCH actually steers OCR: an invoice with no ?engine= runs mock."""
+    with TestClient(app) as client:
+        with (SAMPLES / "invoice-clean.pdf").open("rb") as fh:
+            up = client.post(
+                "/documents",
+                files={"file": ("invoice-clean.pdf", fh)},
+                data={"doc_type": "invoice"},
+            )
+        assert up.status_code == 201, up.text
+        doc_id = up.json()["id"]
+
+        try:
+            patch = client.patch(
+                "/doc-types/invoice/routing",
+                json={"preferred_ocr_engine": "mock"},
+            )
+            assert patch.status_code == 200, patch.text
+
+            # No explicit ?engine= -> routes via the doc type's preferred engine (mock).
+            ocr = client.post(f"/documents/{doc_id}/ocr")
+            assert ocr.status_code == 200, ocr.text
+            assert ocr.json()["engine_name"] == "mock"
+        finally:
+            _restore_invoice_routing()
