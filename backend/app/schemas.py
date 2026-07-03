@@ -722,3 +722,46 @@ class EvalGoldenDetail(EvalGoldenSummary):
 
     expected_fields: dict
     expected_collections: dict
+
+
+# --- black-box extraction (Track 1) ------------------------------------------
+
+
+class ExtractionResult(BaseModel):
+    """Whole-pipeline result for one document run synchronously via /extract.
+
+    Bundles the stage outputs that make up a single black-box extraction call:
+    the (optional) pre-flight report, the (optional, only when auto-classified)
+    classification, the structured fields, and the final decision.
+    """
+
+    document_id: str
+    doc_type: str  # the resolved type structuring/decision ran against
+    classify: ClassifyResult | None = None  # set only when doc_type was auto-classified
+    prescan: QualityReport | None = None  # set only when run_prescan was requested
+    structured: StructuredResult
+    decision: DecisionResult
+    warnings: list[str] = []
+
+
+class BatchExtractionItem(BaseModel):
+    """One file's outcome within a /extract/batch call.
+
+    Exactly one of ``result`` (success) / ``error`` (failure) is populated. The
+    ``document_id`` is captured whenever the upload succeeded, so a mid-pipeline
+    failure still yields an inspectable document.
+    """
+
+    filename: str
+    document_id: str | None = None
+    result: ExtractionResult | None = None
+    error: str | None = None
+    error_status: int | None = None  # the HTTP status a staged route would have returned
+
+
+class BatchExtractionResult(BaseModel):
+    """Aggregate result of a /extract/batch call (always HTTP 200)."""
+
+    items: list[BatchExtractionItem]
+    succeeded: int
+    failed: int

@@ -20,6 +20,7 @@ from app.routes import (
     documents,
     engines as engines_route,
     evaluation,
+    extract,
     overview,
     pipeline,
     review_queue,
@@ -115,6 +116,7 @@ app.include_router(corrections.router)
 app.include_router(overview.router)
 app.include_router(review_queue.router)
 app.include_router(evaluation.router)
+app.include_router(extract.router)
 
 
 @app.get("/health")
