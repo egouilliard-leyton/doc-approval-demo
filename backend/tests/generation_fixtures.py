@@ -56,3 +56,39 @@ def make_plain_pdf() -> bytes:
     c.drawString(50, 700, "Just some prose, no form fields here.")
     c.save()
     return buf.getvalue()
+
+
+# A distinctive heading string the docx conversion test asserts survives the round-trip.
+DOCX_HEADING = "Purchase Agreement"
+
+
+def make_docx_bytes() -> bytes:
+    """A tiny in-memory .docx: a heading, a paragraph, and a 2-cell table.
+
+    Built with python-docx (a docgen transitive dep via html-for-docx) so the rich-HTML
+    conversion path can be exercised without any sample asset.
+    """
+    import docx  # python-docx
+
+    document = docx.Document()
+    document.add_heading(DOCX_HEADING, level=1)
+    document.add_paragraph("This agreement is made between the parties named below.")
+    table = document.add_table(rows=1, cols=2)
+    table.rows[0].cells[0].text = "Vendor"
+    table.rows[0].cells[1].text = "Acme Supplies Inc."
+
+    buf = io.BytesIO()
+    document.save(buf)
+    return buf.getvalue()
+
+
+# A rich-HTML template body carrying the two placeholder marker kinds the binder fills:
+# ``span[data-field]`` text placeholders (a scalar path + an indexed list path) and an
+# ``img[data-signature]`` signature stamp target.
+RICH_HTML_FIXTURE = (
+    "<h1>Invoice</h1>"
+    '<p>Vendor: <span data-field="vendor">Vendor</span></p>'
+    '<p>Line amount: <span data-field="line_items.0.amount">Amt</span></p>'
+    '<p>Missing: <span data-field="po_number">PO</span></p>'
+    '<p>Signed: <img data-signature src="" alt="signature"></p>'
+)

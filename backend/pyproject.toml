@@ -32,6 +32,12 @@ langextract = ["langextract[openai]"]
 # Agent decision layer (Phase 5) + the "qwen-vl" OCR engine. The OpenAI-compatible
 # client for OpenRouter; lazily imported, "mock" provider covers tests. uv sync --extra agent
 agent = ["openai"]
+docgen = [
+    "beautifulsoup4>=4.13,<5",
+    "html-for-docx>=1.1.5,<2",
+    "mammoth>=1.11.0,<2",
+    "weasyprint>=68.0,<69",
+]
 
 [dependency-groups]
 dev = [

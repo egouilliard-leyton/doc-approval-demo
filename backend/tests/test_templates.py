@@ -1,8 +1,15 @@
-"""Phase 0 template registry tests: the CRUD route end-to-end."""
+"""Phase 0 template registry tests: the CRUD route end-to-end.
+
+Also covers the Phase 2 source-upload branches that produce ``rich_html`` templates:
+a DOCX and a non-fillable PDF both convert to a non-empty HTML body.
+"""
 
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.storage import DOCX_MIME
+
+from .generation_fixtures import make_docx_bytes, make_plain_pdf
 
 
 def _create(client: TestClient, name: str, doc_type: str = "invoice") -> dict:
@@ -82,3 +89,31 @@ def test_delete_then_get_and_delete_missing():
         assert client.delete(f"/templates/{tmpl['id']}").status_code == 204
         assert client.get(f"/templates/{tmpl['id']}").status_code == 404
         assert client.delete("/templates/does-not-exist").status_code == 404
+
+
+def test_upload_docx_source_converts_to_rich_html():
+    with TestClient(app) as client:
+        tmpl = _create(client, "Agreement A", "contract")
+        resp = client.post(
+            f"/templates/{tmpl['id']}/source",
+            files={"file": ("agreement.docx", make_docx_bytes(), DOCX_MIME)},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["mode"] == "rich_html"
+        assert body["html_body"]  # non-empty HTML body from the conversion
+        assert body["form_fields"] == []
+
+
+def test_upload_non_fillable_pdf_source_converts_to_rich_html():
+    with TestClient(app) as client:
+        tmpl = _create(client, "Prose A", "contract")
+        resp = client.post(
+            f"/templates/{tmpl['id']}/source",
+            files={"file": ("prose.pdf", make_plain_pdf(), "application/pdf")},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["mode"] == "rich_html"
+        assert body["html_body"]  # non-empty HTML body from the conversion
+        assert body["form_fields"] == []

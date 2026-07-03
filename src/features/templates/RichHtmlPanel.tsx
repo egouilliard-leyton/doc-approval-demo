@@ -1,0 +1,158 @@
+// Orchestrates the rich-HTML authoring flow: an optional source upload (DOCX/PDF
+// → editable HTML), the WYSIWYG editor + insert palette, a Save action, and the
+// shared Generate panel below. The editor's HTML is what gets persisted and later
+// bound by the backend.
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2, Save } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { ApiError, updateTemplate } from "@/lib/api";
+import type { FieldCatalogueEntry, TemplateDetail } from "@/lib/types";
+import { GeneratePanel } from "@/features/templates/GeneratePanel";
+import { SourceUploadPanel } from "@/features/templates/SourceUploadPanel";
+import type { TemplateEditorApi } from "@/features/templates/editor/TemplateEditor";
+import { TemplateEditor } from "@/features/templates/editor/TemplateEditor";
+import { PlaceholderPalette } from "@/features/templates/editor/PlaceholderPalette";
+
+const BLANK = "<p></p>";
+
+export function RichHtmlPanel({
+  template,
+  onChange,
+}: {
+  template: TemplateDetail;
+  onChange: (t: TemplateDetail) => void;
+}) {
+  const [html, setHtml] = useState(template.html_body ?? BLANK);
+  const [css, setCss] = useState(template.css ?? "");
+  const [saving, setSaving] = useState(false);
+  // Force the editor to remount only when a *new* persisted body arrives
+  // (e.g. right after a source upload converts a DOCX into HTML).
+  const [editorKey, setEditorKey] = useState(0);
+  const seededRef = useRef(template.html_body);
+  const seededCssRef = useRef(template.css);
+  const apiRef = useRef<TemplateEditorApi | null>(null);
+
+  useEffect(() => {
+    if (template.html_body !== seededRef.current) {
+      seededRef.current = template.html_body;
+      setHtml(template.html_body ?? BLANK);
+      setEditorKey((k) => k + 1);
+    }
+    // Re-seed the stylesheet too — e.g. a source upload converts a DOCX and
+    // persists a baseline CSS. Without this, the next Save would send the stale
+    // empty css and wipe the backend-generated stylesheet.
+    if (template.css !== seededCssRef.current) {
+      seededCssRef.current = template.css;
+      setCss(template.css ?? "");
+    }
+  }, [template.html_body, template.css]);
+
+  const handleEditorReady = useCallback((api: TemplateEditorApi) => {
+    apiRef.current = api;
+  }, []);
+
+  const handleInsertField = useCallback((entry: FieldCatalogueEntry) => {
+    apiRef.current?.insertFieldToken({
+      path: entry.path,
+      label: entry.label,
+      kind: entry.kind,
+    });
+  }, []);
+
+  const handleInsertSignature = useCallback(() => {
+    apiRef.current?.insertSignatureToken();
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const updated = await updateTemplate(template.id, {
+        html_body: html,
+        css,
+      });
+      // Keep the seeds in sync so persisting doesn't trigger a remount/re-seed.
+      seededRef.current = updated.html_body;
+      seededCssRef.current = updated.css;
+      onChange(updated);
+      toast.success("Template saved");
+    } catch (e) {
+      const msg =
+        e instanceof ApiError ? e.message : "Could not save the template.";
+      toast.error("Save failed", { description: msg });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const showUpload = !template.html_body && !template.source_file_id;
+
+  return (
+    <div className="space-y-6">
+      {showUpload && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Start from a document</CardTitle>
+            <CardDescription>
+              Upload a DOCX or PDF to convert into an editable template — or just
+              start typing in the editor below.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <SourceUploadPanel templateId={template.id} onUploaded={onChange} />
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-1">
+            <h2 className="text-sm font-medium">Design your template</h2>
+            <p className="text-xs text-muted-foreground">
+              Write freely and drop in field placeholders — they're bound from an
+              extracted document at generate time.
+            </p>
+          </div>
+          <Button size="sm" disabled={saving} onClick={() => void handleSave()}>
+            {saving ? <Loader2 className="animate-spin" /> : <Save />}
+            Save template
+          </Button>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[1fr_18rem]">
+          <TemplateEditor
+            key={editorKey}
+            html={html}
+            onChange={setHtml}
+            editorRef={handleEditorReady}
+          />
+          <PlaceholderPalette
+            templateId={template.id}
+            onInsertField={handleInsertField}
+            onInsertSignature={handleInsertSignature}
+          />
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Generate</CardTitle>
+          <CardDescription>
+            Fill this template from a processed {template.doc_type} and download
+            the result.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <GeneratePanel template={template} />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

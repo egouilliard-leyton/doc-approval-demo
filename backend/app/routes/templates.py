@@ -21,13 +21,17 @@ from app.models import (
     _utcnow,
 )
 from app.pipeline.generation import (
+    convert_docx,
+    convert_pdf,
     enumerate_form_fields,
     field_catalogue,
     generate_pdf,
+    generate_rich,
     suggest_mapping,
 )
 from app.schemas import (
     FieldCatalogueEntry,
+    GenerateOutputFile,
     GenerateResult,
     MappingSuggestResponse,
     TemplateCreate,
@@ -41,8 +45,30 @@ router = APIRouter(prefix="/templates", tags=["templates"])
 
 
 def _to_detail(t: Template) -> TemplateDetail:
-    source_url = storage.template_source_url(t.id) if t.source_file_id else None
+    source_url = (
+        storage.template_source_url(t.id, t.source_ext or ".pdf") if t.source_file_id else None
+    )
     return TemplateDetail(**t.model_dump(), source_url=source_url)
+
+
+def _load_structured_fields(session: Session, document_id: str) -> dict:
+    """Return a document's latest ``structure`` stage ``fields`` blob, or 400 if absent.
+
+    Shared by both generation modes: the newest pipeline run must carry a structuring
+    result, otherwise there is nothing to bind/fill from.
+    """
+    run = session.exec(
+        select(PipelineRun)
+        .where(PipelineRun.document_id == document_id)
+        .order_by(PipelineRun.created_at.desc())
+    ).first()
+    structure = (run.stage_results.get("structure") if run else None) or None
+    fields = structure.get("fields") if isinstance(structure, dict) else None
+    if not fields:
+        raise HTTPException(
+            status_code=400, detail="Document has no structured extraction yet."
+        )
+    return fields
 
 
 @router.post("", response_model=TemplateDetail, status_code=201)
@@ -134,39 +160,60 @@ async def upload_template_source(
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
 ) -> TemplateDetail:
-    """Attach a source PDF, enumerate its AcroForm, and set the template's mode.
+    """Attach a source (PDF or DOCX) and set the template's mode from what it holds.
 
     A PDF carrying an AcroForm switches the template to ``form_fill`` (its fields are
-    persisted for the mapper); one without stays ``rich_html``. A non-PDF is a 415;
-    an unreadable PDF is a 422 (mirroring the document upload path).
+    persisted for the mapper). A PDF without a form, or any DOCX, becomes ``rich_html``
+    and is converted to an editable HTML body + baseline stylesheet. A non-PDF/DOCX is a
+    415; an unreadable source is a 422 (mirroring the document upload path).
     """
     tmpl = session.get(Template, template_id)
     if tmpl is None:
         raise HTTPException(status_code=404, detail="Template not found.")
 
     try:
-        ext, mime = storage.detect_type(file.filename or "")
+        ext, mime = storage.detect_template_source_type(file.filename or "")
     except storage.UnsupportedFileType:
-        ext, mime = "", ""
-    if mime != "application/pdf":
-        raise HTTPException(status_code=415, detail="Template source must be a PDF.")
+        raise HTTPException(
+            status_code=415, detail="Template source must be a PDF or DOCX."
+        )
 
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
     source = storage.save_template_source(tmpl.id, ext, content)
+
+    mode = TemplateMode.rich_html
+    form_fields: list = []
+    html_body: str | None = None
+    css: str | None = None
     try:
-        has_acroform, fields = enumerate_form_fields(source)
-    except Exception as exc:  # corrupt/unreadable PDF
+        if mime == "application/pdf":
+            has_acroform, fields = enumerate_form_fields(source)
+            if has_acroform:
+                mode = TemplateMode.form_fill
+                form_fields = [f.model_dump() for f in fields]
+            else:
+                converted = await asyncio.to_thread(convert_pdf, source)
+                html_body, css = converted.html, converted.css
+        else:  # DOCX
+            converted = await asyncio.to_thread(convert_docx, content)
+            html_body, css = converted.html, converted.css
+    except Exception as exc:  # corrupt/unreadable source or conversion failure
         raise HTTPException(
-            status_code=422, detail="Could not read the PDF; it may be corrupt or unsupported."
+            status_code=422,
+            detail="Could not read the source; it may be corrupt or unsupported.",
         ) from exc
 
     tmpl.source_file_id = tmpl.id
-    tmpl.mode = TemplateMode.form_fill if has_acroform else TemplateMode.rich_html
-    tmpl.form_fields = [f.model_dump() for f in fields]
+    tmpl.source_ext = ext
+    tmpl.mode = mode
+    tmpl.form_fields = form_fields
     tmpl.form_field_map = {}  # a new source invalidates any prior binding
+    if mode == TemplateMode.rich_html:
+        tmpl.html_body = html_body
+        tmpl.css = css
     tmpl.updated_at = _utcnow()
 
     session.add(tmpl)
@@ -229,41 +276,70 @@ async def generate_template_output(
     signature_image: UploadFile | None = File(default=None),
     session: Session = Depends(get_session),
 ) -> GenerateResult:
-    """Fill the template's source PDF from a document's structured extraction.
+    """Generate the template's output from a document's structured extraction.
 
-    Requires a ``form_fill`` template with an uploaded source, and a document whose
-    latest pipeline run holds a ``structure`` stage result. An optional
-    ``signature_image`` is stamped onto any bound signature fields.
+    A ``form_fill`` template fills its source PDF's AcroForm; a ``rich_html`` template
+    binds its HTML body and renders it to each configured output format. Both require a
+    document whose latest pipeline run holds a ``structure`` stage result. An optional
+    ``signature_image`` is stamped onto any bound signature field/placeholder.
     """
     tmpl = session.get(Template, template_id)
     if tmpl is None:
         raise HTTPException(status_code=404, detail="Template not found.")
-    if tmpl.mode != TemplateMode.form_fill or not tmpl.source_file_id:
-        raise HTTPException(
-            status_code=400, detail="Template is not a form-fill template with a source PDF."
-        )
 
-    run = session.exec(
-        select(PipelineRun)
-        .where(PipelineRun.document_id == document_id)
-        .order_by(PipelineRun.created_at.desc())
-    ).first()
-    structure = (run.stage_results.get("structure") if run else None) or None
-    fields = structure.get("fields") if isinstance(structure, dict) else None
-    if not fields:
-        raise HTTPException(
-            status_code=400, detail="Document has no structured extraction yet."
-        )
-
+    fields = _load_structured_fields(session, document_id)
     signature_bytes = await signature_image.read() if signature_image is not None else None
 
-    outcome = await asyncio.to_thread(generate_pdf, tmpl, fields, signature_bytes, flatten)
+    if tmpl.mode == TemplateMode.form_fill:
+        if not tmpl.source_file_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Template is not a form-fill template with a source PDF.",
+            )
+        outcome = await asyncio.to_thread(generate_pdf, tmpl, fields, signature_bytes, flatten)
+        output_url = storage.template_output_url(tmpl.id, outcome.output_id)
+        return GenerateResult(
+            output_url=output_url,
+            output_id=outcome.output_id,
+            filled_fields=outcome.filled,
+            skipped_fields=outcome.skipped,
+            signature_stamped=outcome.signature_stamped,
+            warnings=outcome.warnings,
+            outputs=[
+                GenerateOutputFile(format="pdf", output_id=outcome.output_id, output_url=output_url)
+            ],
+        )
 
+    # rich_html: bind the HTML body, render every configured format, persist each.
+    if not tmpl.html_body:
+        raise HTTPException(status_code=400, detail="Template has no HTML body yet.")
+
+    rich = await asyncio.to_thread(
+        generate_rich, tmpl, fields, signature_bytes, tmpl.output_formats or ["pdf"]
+    )
+    if not rich.rendered:
+        # Every format failed (e.g. no renderer available) — nothing to return.
+        raise HTTPException(status_code=503, detail="; ".join(rich.warnings))
+
+    outputs: list[GenerateOutputFile] = []
+    for rf in rich.rendered:
+        storage.save_template_output(tmpl.id, rf.output_id, rf.content, ext=f".{rf.format}")
+        outputs.append(
+            GenerateOutputFile(
+                format=rf.format,
+                output_id=rf.output_id,
+                output_url=storage.template_output_url(tmpl.id, rf.output_id, ext=f".{rf.format}"),
+            )
+        )
+
+    # The PDF is the primary output when present, else the first rendered file.
+    primary = next((o for o in outputs if o.format == "pdf"), outputs[0])
     return GenerateResult(
-        output_url=storage.template_output_url(tmpl.id, outcome.output_id),
-        output_id=outcome.output_id,
-        filled_fields=outcome.filled,
-        skipped_fields=outcome.skipped,
-        signature_stamped=outcome.signature_stamped,
-        warnings=outcome.warnings,
+        output_url=primary.output_url,
+        output_id=primary.output_id,
+        filled_fields=rich.filled,
+        skipped_fields=rich.skipped,
+        signature_stamped=rich.signature_stamped,
+        warnings=rich.warnings,
+        outputs=outputs,
     )

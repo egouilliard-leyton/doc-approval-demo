@@ -1,10 +1,10 @@
 // Detail view for a single template. Fetches the template on mount and shows
 // its identity. Form-fill templates get the full authoring flow (upload → map →
 // generate); rich-HTML templates still show a "later phase" placeholder.
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, getTemplate } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,14 @@ import type {
   TemplateStatus,
 } from "@/lib/types";
 import { FormFillPanel } from "@/features/templates/FormFillPanel";
+
+// Lazy-loaded so TipTap (and its ProseMirror deps) only ship when a rich-HTML
+// template is actually opened, keeping the main bundle lean.
+const RichHtmlPanel = lazy(() =>
+  import("@/features/templates/RichHtmlPanel").then((m) => ({
+    default: m.RichHtmlPanel,
+  })),
+);
 
 const LOAD_ERROR = "Could not load this template.";
 
@@ -110,11 +118,16 @@ export function TemplateDetail({ id }: { id: string }) {
       {template.mode === "form_fill" ? (
         <FormFillPanel template={template} onChange={setTemplate} />
       ) : (
-        <Card>
-          <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            The rich-HTML template editor arrives in a later phase.
-          </CardContent>
-        </Card>
+        <Suspense
+          fallback={
+            <div className="space-y-4">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-96 w-full" />
+            </div>
+          }
+        >
+          <RichHtmlPanel template={template} onChange={setTemplate} />
+        </Suspense>
       )}
     </div>
   );

@@ -20,15 +20,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   ApiError,
   fileUrl,
   generateTemplateOutput,
   listDocuments,
+  updateTemplate,
 } from "@/lib/api";
 import type {
   DocumentStatus,
   DocumentSummary,
+  GenerateOutputFile,
   GenerateResult,
   TemplateDetail,
 } from "@/lib/types";
@@ -38,6 +41,9 @@ const STATUS_LABEL: Partial<Record<DocumentStatus, string>> = {
   decided: "Decided",
 };
 
+// Formats the generator can emit. Kept in sync with the backend's supported set.
+const OUTPUT_FORMATS = ["pdf", "docx"] as const;
+
 function isEligible(
   doc: DocumentSummary,
   docType: TemplateDetail["doc_type"],
@@ -46,6 +52,23 @@ function isEligible(
     doc.doc_type === docType &&
     (doc.status === "structured" || doc.status === "decided")
   );
+}
+
+// A signature can be stamped when the template has a signature form field OR its
+// rich-HTML body carries a `data-signature` image marker.
+function hasSignatureTarget(template: TemplateDetail): boolean {
+  return (
+    template.form_fields.some((f) => f.kind === "signature") ||
+    (template.html_body?.includes("data-signature") ?? false)
+  );
+}
+
+// Prefer the per-format outputs; fall back to the legacy single-file fields.
+function resultOutputs(result: GenerateResult): GenerateOutputFile[] {
+  if (result.outputs && result.outputs.length > 0) return result.outputs;
+  return [
+    { format: "pdf", output_id: result.output_id, output_url: result.output_url },
+  ];
 }
 
 function SignaturePicker({
@@ -131,17 +154,21 @@ function ResultCard({ result }: { result: GenerateResult }) {
             </Badge>
           )}
         </div>
-        <Button size="sm" asChild>
-          <a
-            href={fileUrl(result.output_url)}
-            target="_blank"
-            rel="noreferrer"
-            download
-          >
-            <Download />
-            Open generated PDF
-          </a>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {resultOutputs(result).map((out) => (
+            <Button key={out.output_id} size="sm" asChild>
+              <a
+                href={fileUrl(out.output_url)}
+                target="_blank"
+                rel="noreferrer"
+                download
+              >
+                <Download />
+                Open {out.format.toUpperCase()}
+              </a>
+            </Button>
+          ))}
+        </div>
       </div>
 
       {result.skipped_fields.length > 0 && (
@@ -175,10 +202,11 @@ export function GeneratePanel({ template }: { template: TemplateDetail }) {
   const [signature, setSignature] = useState<File | null>(null);
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<GenerateResult | null>(null);
-
-  const hasSignatureField = template.form_fields.some(
-    (f) => f.kind === "signature",
+  const [formats, setFormats] = useState<string[]>(() =>
+    template.output_formats.length > 0 ? template.output_formats : ["pdf"],
   );
+
+  const hasSignatureField = hasSignatureTarget(template);
 
   useEffect(() => {
     let cancelled = false;
@@ -202,15 +230,22 @@ export function GeneratePanel({ template }: { template: TemplateDetail }) {
   }, [template.doc_type]);
 
   const handleGenerate = async () => {
-    if (!selectedId) return;
+    if (!selectedId || formats.length === 0) return;
     setGenerating(true);
     try {
+      // Persist the chosen output formats so the generator emits them.
+      const persisted = new Set(template.output_formats);
+      const changed =
+        formats.length !== persisted.size || formats.some((f) => !persisted.has(f));
+      if (changed) {
+        await updateTemplate(template.id, { output_formats: formats });
+      }
       const res = await generateTemplateOutput(template.id, {
         documentId: selectedId,
         signatureImage: signature ?? undefined,
       });
       setResult(res);
-      toast.success("PDF generated");
+      toast.success("Output generated");
     } catch (e) {
       const msg =
         e instanceof ApiError ? e.message : "Could not generate the PDF.";
@@ -282,12 +317,33 @@ export function GeneratePanel({ template }: { template: TemplateDetail }) {
         />
       )}
 
+      <div className="space-y-2">
+        <label className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          Output formats
+        </label>
+        <ToggleGroup
+          type="multiple"
+          variant="outline"
+          value={formats}
+          onValueChange={(v) => {
+            // Keep at least one format selected.
+            if (v.length > 0) setFormats(v);
+          }}
+        >
+          {OUTPUT_FORMATS.map((f) => (
+            <ToggleGroupItem key={f} value={f} disabled={generating}>
+              {f.toUpperCase()}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </div>
+
       <Button
-        disabled={!selectedId || generating}
+        disabled={!selectedId || generating || formats.length === 0}
         onClick={() => void handleGenerate()}
       >
         {generating ? <Loader2 className="animate-spin" /> : <Sparkles />}
-        Generate PDF
+        Generate
       </Button>
 
       {result && <ResultCard result={result} />}

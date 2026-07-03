@@ -17,7 +17,13 @@ from io import BytesIO
 from pypdf import PdfReader
 
 from app import models, storage
+from app.pipeline.generation.binder import bind_html
 from app.pipeline.generation.forms import fill_form
+from app.pipeline.generation.render import (
+    RenderUnavailableError,
+    render_docx,
+    render_pdf,
+)
 from app.pipeline.generation.values import flatten_field_values
 
 
@@ -26,6 +32,26 @@ class GenerateOutcome:
     """Result of :func:`generate_pdf`: the saved output id + fill/stamp trace."""
 
     output_id: str
+    filled: list[str] = dc_field(default_factory=list)
+    skipped: list[str] = dc_field(default_factory=list)
+    signature_stamped: bool = False
+    warnings: list[str] = dc_field(default_factory=list)
+
+
+@dataclass
+class RenderedFile:
+    """One rendered output of :func:`generate_rich`: its format, id, and bytes."""
+
+    format: str  # "pdf" | "docx"
+    output_id: str
+    content: bytes
+
+
+@dataclass
+class GenerateRichOutcome:
+    """Result of :func:`generate_rich`: every rendered file + the bind trace."""
+
+    rendered: list[RenderedFile] = dc_field(default_factory=list)
     filled: list[str] = dc_field(default_factory=list)
     skipped: list[str] = dc_field(default_factory=list)
     signature_stamped: bool = False
@@ -143,3 +169,56 @@ def generate_pdf(
         signature_stamped=fill.signature_stamped,
         warnings=warnings + fill.warnings,
     )
+
+
+# --- Phase 2 (rich-HTML): bind a template's HTML body + render to PDF/DOCX -----
+
+# Each requested format maps to its renderer; both raise on an unavailable engine.
+_RENDERERS = {"pdf": render_pdf, "docx": render_docx}
+
+
+def generate_rich(
+    template,
+    structured_fields: dict,
+    signature_image_bytes: bytes | None,
+    formats: list[str],
+) -> GenerateRichOutcome:
+    """Bind ``template``'s HTML body from a document's fields, render to each format.
+
+    ``template`` is the ORM row (its ``html_body`` + ``css`` drive the render); the body's
+    ``span[data-field]`` / ``img[data-signature]`` markers are filled from the flattened
+    structured values. Each requested format is rendered independently: a failed render
+    (missing engine or otherwise) is folded into a warning and skipped rather than aborting
+    the whole call, so ``rendered`` may be empty if every format failed.
+    """
+    flat = flatten_field_values(structured_fields)
+    bound = bind_html(template.html_body or "", flat, signature_image_bytes)
+
+    outcome = GenerateRichOutcome(
+        filled=bound.filled,
+        skipped=bound.skipped,
+        signature_stamped=bound.signature_stamped,
+        warnings=list(bound.warnings),
+    )
+
+    # De-dup while preserving order; empty request defaults to a single PDF.
+    wanted = list(dict.fromkeys(formats)) or ["pdf"]
+    css = template.css or ""
+    for fmt in wanted:
+        renderer = _RENDERERS.get(fmt)
+        if renderer is None:
+            outcome.warnings.append(f"{fmt}: unsupported output format; skipped")
+            continue
+        try:
+            content = renderer(bound.html, css)
+        except RenderUnavailableError as exc:
+            outcome.warnings.append(f"{fmt}: renderer unavailable; skipped ({exc})")
+            continue
+        except Exception as exc:  # noqa: BLE001 — one bad format must not fail the rest
+            outcome.warnings.append(f"{fmt}: rendering failed; skipped ({exc})")
+            continue
+        outcome.rendered.append(
+            RenderedFile(format=fmt, output_id=models._new_id(), content=content)
+        )
+
+    return outcome

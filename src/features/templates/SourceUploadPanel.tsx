@@ -21,10 +21,10 @@ export function SourceUploadPanel({
     try {
       const detail = await uploadTemplateSource(templateId, file);
       onUploaded(detail);
-      toast.success("Source PDF uploaded");
+      toast.success("Source uploaded");
     } catch (e) {
       const msg =
-        e instanceof ApiError ? e.message : "Could not upload the source PDF.";
+        e instanceof ApiError ? e.message : "Could not upload the source file.";
       toast.error("Upload failed", { description: msg });
     } finally {
       setUploading(false);
@@ -33,11 +33,15 @@ export function SourceUploadPanel({
 
   return (
     <div className="space-y-4">
-      <Dropzone accept=".pdf" onFile={handleFile} disabled={uploading} />
+      <Dropzone accept=".pdf,.docx" onFile={handleFile} disabled={uploading} />
+      <p className="text-center text-xs text-muted-foreground">
+        A PDF with fillable fields, or a DOCX/PDF to convert into an editable
+        template.
+      </p>
       {uploading && (
         <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />
-          Uploading & scanning for form fields…
+          Uploading & scanning…
         </div>
       )}
     </div>

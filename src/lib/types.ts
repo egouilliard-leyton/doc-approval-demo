@@ -221,9 +221,17 @@ export interface MappingSuggestResponse {
   provider_used: string;
 }
 
+/** One generated artifact (a template can now emit several formats at once). */
+export interface GenerateOutputFile {
+  format: string;
+  output_id: string;
+  output_url: string;
+}
+
 export interface GenerateResult {
   output_url: string;
   output_id: string;
+  outputs: GenerateOutputFile[];
   filled_fields: string[];
   skipped_fields: string[];
   signature_stamped: boolean;

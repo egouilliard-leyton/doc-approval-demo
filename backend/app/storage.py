@@ -35,6 +35,15 @@ ALLOWED_TYPES: dict[str, str] = {
 }
 
 
+# Accepted template source uploads: extension -> canonical MIME. A template source is
+# either a fillable PDF (form-fill mode) or a Word doc converted to rich HTML (Phase 2).
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+TEMPLATE_SOURCE_TYPES: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".docx": DOCX_MIME,
+}
+
+
 class UnsupportedFileType(Exception):
     """Raised when an upload has an extension we don't accept."""
 
@@ -47,6 +56,15 @@ def detect_type(filename: str) -> tuple[str, str]:
     """Return (lowercased extension, MIME) for an accepted file, else raise."""
     ext = Path(filename).suffix.lower()
     mime = ALLOWED_TYPES.get(ext)
+    if mime is None:
+        raise UnsupportedFileType(ext or filename)
+    return ext, mime
+
+
+def detect_template_source_type(filename: str) -> tuple[str, str]:
+    """Return (lowercased extension, MIME) for an accepted template source, else raise."""
+    ext = Path(filename).suffix.lower()
+    mime = TEMPLATE_SOURCE_TYPES.get(ext)
     if mime is None:
         raise UnsupportedFileType(ext or filename)
     return ext, mime
@@ -253,9 +271,9 @@ def delete_template_dir(template_id: str) -> None:
     )
 
 
-def template_source_path(template_id: str) -> Path:
-    """Absolute path to a template's uploaded source PDF."""
-    return _template_dir(template_id) / "source.pdf"
+def template_source_path(template_id: str, ext: str = ".pdf") -> Path:
+    """Absolute path to a template's uploaded source (``.pdf`` by default, or ``.docx``)."""
+    return _template_dir(template_id) / f"source{ext}"
 
 
 def save_template_source(template_id: str, ext: str, content: bytes) -> Path:
@@ -277,15 +295,17 @@ def template_outputs_dir(template_id: str) -> Path:
     return _template_dir(template_id) / "outputs"
 
 
-def save_template_output(template_id: str, output_id: str, content: bytes) -> Path:
-    """Persist a generated output as data/templates/<id>/outputs/<output_id>.pdf."""
+def save_template_output(
+    template_id: str, output_id: str, content: bytes, ext: str = ".pdf"
+) -> Path:
+    """Persist a generated output as data/templates/<id>/outputs/<output_id><ext>."""
     out_dir = template_outputs_dir(template_id)
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{output_id}.pdf"
+    path = out_dir / f"{output_id}{ext}"
     path.write_bytes(content)
     return path
 
 
-def template_output_url(template_id: str, output_id: str) -> str:
+def template_output_url(template_id: str, output_id: str, ext: str = ".pdf") -> str:
     """Relative URL (served via /files) for a template's generated output."""
-    return f"/files/templates/{template_id}/outputs/{output_id}.pdf"
+    return f"/files/templates/{template_id}/outputs/{output_id}{ext}"

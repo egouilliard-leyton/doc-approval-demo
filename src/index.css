@@ -171,3 +171,68 @@
     @apply cursor-pointer;
   }
 }
+
+/* --- Rich-HTML editor (TipTap) ----------------------------------------------
+   A minimal, hand-rolled prose ruleset (no @tailwindcss/typography dep) plus the
+   two placeholder appearances. Scoped to `.tiptap` so it never leaks into the
+   rest of the app. The `[data-field]` / `[data-signature]` markup is exactly what
+   `editor.getHTML()` serializes and the backend binds — only the *appearance*
+   lives here. */
+@layer components {
+  .tiptap :where(h1) {
+    @apply mt-4 mb-2 text-xl font-semibold tracking-tight first:mt-0;
+  }
+  .tiptap :where(h2) {
+    @apply mt-4 mb-2 text-lg font-semibold tracking-tight first:mt-0;
+  }
+  .tiptap :where(h3) {
+    @apply mt-3 mb-1.5 text-base font-semibold first:mt-0;
+  }
+  .tiptap :where(p) {
+    @apply my-2;
+  }
+  .tiptap :where(ul) {
+    @apply my-2 list-disc pl-6;
+  }
+  .tiptap :where(ol) {
+    @apply my-2 list-decimal pl-6;
+  }
+  .tiptap :where(li) {
+    @apply my-0.5;
+  }
+  .tiptap :where(li p) {
+    @apply my-0;
+  }
+  .tiptap :where(blockquote) {
+    @apply my-2 border-l-2 border-border pl-3 text-muted-foreground italic;
+  }
+  .tiptap :where(a) {
+    @apply text-brand underline underline-offset-2;
+  }
+  .tiptap :where(code) {
+    @apply rounded bg-muted px-1 py-0.5 font-mono text-[0.85em];
+  }
+  .tiptap :where(pre) {
+    @apply my-2 overflow-x-auto rounded-lg bg-muted p-3 font-mono text-xs;
+  }
+  .tiptap :where(hr) {
+    @apply my-4 border-border;
+  }
+  .tiptap :where(table) {
+    @apply my-2 w-full border-collapse text-sm;
+  }
+  .tiptap :where(th, td) {
+    @apply border border-border px-2 py-1 text-left;
+  }
+
+  /* Bound-field placeholder: a distinct inline chip. */
+  .tiptap [data-field] {
+    @apply mx-0.5 inline-flex items-center rounded-md border border-brand/30 bg-brand/10 px-1.5 py-0.5 align-baseline font-mono text-[0.8em] font-medium whitespace-nowrap text-brand;
+  }
+
+  /* Signature-image target: a small dashed placeholder box (no src → clean
+     serialization to `<img data-signature>`). */
+  .tiptap img[data-signature] {
+    @apply mx-0.5 inline-block h-12 w-40 rounded-md border-2 border-dashed border-brand/40 bg-brand/5 align-middle;
+  }
+}

@@ -132,8 +132,20 @@ class MappingSuggestResponse(BaseModel):
     provider_used: str  # "llm" | "mock" (reflects the actual, post-fallback provider)
 
 
+class GenerateOutputFile(BaseModel):
+    """One rendered output file of ``POST /templates/{id}/generate`` (Phase 2)."""
+
+    format: str  # "pdf" | "docx"
+    output_id: str
+    output_url: str
+
+
 class GenerateResult(BaseModel):
-    """Response of ``POST /templates/{id}/generate``: the filled output + trace."""
+    """Response of ``POST /templates/{id}/generate``: the filled output(s) + trace.
+
+    ``output_url``/``output_id`` remain the primary (first/PDF) output for the form-fill
+    path; ``outputs`` lists every rendered file (Phase 2 rich-HTML may emit PDF + DOCX).
+    """
 
     output_url: str
     output_id: str
@@ -141,6 +153,7 @@ class GenerateResult(BaseModel):
     skipped_fields: list[str]
     signature_stamped: bool
     warnings: list[str] = []
+    outputs: list[GenerateOutputFile] = []
 
 
 # --- Phase 2: pre-flight / quality metrics -----------------------------------

@@ -85,6 +85,7 @@ class Template(SQLModel, table=True):
     doc_type: DocType
     mode: TemplateMode = Field(default=TemplateMode.rich_html)
     source_file_id: str | None = None  # Phase 1 (source upload) will populate this
+    source_ext: str | None = None  # uploaded source's extension (e.g. ".pdf", ".docx")
     html_body: str | None = None
     css: str | None = None
     form_fields: list = Field(default_factory=list, sa_column=Column(JSON))  # AcroForm enumeration
