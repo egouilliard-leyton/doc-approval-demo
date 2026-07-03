@@ -33,6 +33,18 @@ export function wizardReducer(
   action: WizardAction,
 ): WizardCoreState {
   switch (action.type) {
+    case "SEED_INITIAL":
+      // Opening the wizard is not an AI turn: pre-load the fixed spec template and
+      // the fixed first questions so the assistant only gets involved on the first Send.
+      return {
+        ...state,
+        loading: false,
+        error: null,
+        currentQuestions: action.questions,
+        answers: freshAnswers(action.questions.length),
+        specMarkdown: action.specMarkdown,
+      };
+
     case "TURN_START":
       return {
         ...state,
@@ -105,10 +117,21 @@ export function wizardReducer(
   }
 }
 
-/** Assemble a labeled "Q1: …\nA: …" block from the current questions + answers. */
-function buildUserContent(questions: string[], answers: string[]): string {
+/** Assemble the user turn: a labeled "Q1: …\nA: …" block, or — when the assistant
+ * asked nothing (a stranded turn) — the user's free-form note, else a finalize nudge.
+ * Exported for unit testing (the reducer is exported for the same reason). */
+export function buildUserContent(
+  questions: string[],
+  answers: string[],
+  freeform?: string,
+): string {
   if (questions.length === 0) {
-    return "Let's design a new document type. Please ask me what you need to know.";
+    const extra = freeform?.trim();
+    return (
+      extra ||
+      "Continue. If you now have everything you need, finalize: emit the full " +
+        "draft_doctype and set done=true. Otherwise, tell me what's still missing."
+    );
   }
   return questions
     .map((q, i) => {
@@ -122,12 +145,12 @@ export function useWizardState() {
   const [state, dispatch] = useReducer(wizardReducer, initialWizardState);
 
   const sendTurn = useCallback(
-    async (answers: string[]): Promise<void> => {
+    async (answers: string[], freeform?: string): Promise<void> => {
       if (state.loading) return;
 
       const userMessage: AssistMessage = {
         role: "user",
-        content: buildUserContent(state.currentQuestions, answers),
+        content: buildUserContent(state.currentQuestions, answers, freeform),
       };
 
       dispatch({ type: "TURN_START" });

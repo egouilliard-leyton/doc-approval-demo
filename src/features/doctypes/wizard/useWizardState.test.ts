@@ -4,7 +4,11 @@
 import { describe, expect, it } from "vitest";
 import type { AssistResponse, DocTypeCreate } from "@/lib/doc-type-schema";
 import type { AnswerState, WizardCoreState } from "./types";
-import { initialWizardState, wizardReducer } from "./useWizardState";
+import {
+  buildUserContent,
+  initialWizardState,
+  wizardReducer,
+} from "./useWizardState";
 
 function makeResponse(overrides: Partial<AssistResponse> = {}): AssistResponse {
   return {
@@ -28,6 +32,22 @@ describe("wizardReducer", () => {
     expect(initialWizardState.done).toBe(false);
     expect(initialWizardState.draftDocType).toBeNull();
     expect(initialWizardState.error).toBeNull();
+  });
+
+  it("SEED_INITIAL loads the fixed questions + template without an AI turn", () => {
+    const next = wizardReducer(initialWizardState, {
+      type: "SEED_INITIAL",
+      questions: ["Q one?", "Q two?"],
+      specMarkdown: "# Template",
+    });
+    expect(next.loading).toBe(false);
+    expect(next.currentQuestions).toEqual(["Q one?", "Q two?"]);
+    expect(next.specMarkdown).toBe("# Template");
+    // one fresh (empty, unsaved) answer per seeded question
+    expect(next.answers).toHaveLength(2);
+    expect(next.answers.every((a) => a.text === "" && !a.saved)).toBe(true);
+    // no transcript is written — the assistant only runs from the first Send
+    expect(next.messages).toEqual([]);
   });
 
   it("TURN_START sets loading, clears warnings/error, resets answers", () => {
@@ -138,6 +158,23 @@ describe("wizardReducer", () => {
     });
     expect(removed.processDocs).toHaveLength(0);
     expect(removed.exampleDocs).toHaveLength(1);
+  });
+
+  it("buildUserContent labels each Q/A when there are questions", () => {
+    const content = buildUserContent(["What is it?", "Which fields?"], ["A memo", ""]);
+    expect(content).toBe("Q1: What is it?\nA: A memo\n\nQ2: Which fields?\nA: (no answer)");
+  });
+
+  it("buildUserContent returns the free-form note when the assistant asked nothing", () => {
+    // The stranded state (no questions, not done): the user's free-form box drives the turn.
+    expect(buildUserContent([], [], "  add a discount field  ")).toBe("add a discount field");
+  });
+
+  it("buildUserContent falls back to a finalize nudge when stranded with no note", () => {
+    // Empty send in the stranded state must still produce a real, actionable message.
+    const content = buildUserContent([], [], "   ");
+    expect(content).toContain("finalize");
+    expect(content).toContain("done=true");
   });
 
   it("ANNOTATION_CAPTURED appends an annotation entry", () => {
