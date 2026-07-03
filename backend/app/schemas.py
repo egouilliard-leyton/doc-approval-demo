@@ -294,6 +294,19 @@ class DocTypeUpdate(BaseModel):
     ocr_fallback_engines: list[str] = []
 
 
+class DocTypeRoutingUpdate(BaseModel):
+    """Narrow OCR-routing patch for a doc type (built-in OR custom).
+
+    Touches ONLY the multi-engine routing columns — never the extraction/rule
+    definition — so it stays allowed for built-in types whose *definition* is
+    read-only. Both names are permissive (not validated against the live engine
+    registry; unknown/disabled names are skipped gracefully at resolution time).
+    """
+
+    preferred_ocr_engine: str | None = None
+    ocr_fallback_engines: list[str] = []
+
+
 class DocTypePreviewRequest(BaseModel):
     """Run the structuring + rules pipeline over ad-hoc sample text for a doc type."""
 

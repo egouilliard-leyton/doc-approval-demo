@@ -24,6 +24,7 @@ from app.schemas import (
     DocTypePreviewRequest,
     DocTypePreviewResponse,
     DocTypeResponse,
+    DocTypeRoutingUpdate,
     DocTypeUpdate,
 )
 from app.serialization import (
@@ -156,6 +157,45 @@ def update_doc_type(
         except ValueError:
             pass
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return row
+
+
+@router.patch("/{name}/routing", response_model=DocTypeResponse)
+def update_doc_type_routing(
+    name: str, body: DocTypeRoutingUpdate, session: Session = Depends(get_session)
+) -> DocTypeDefinitionRow:
+    """Update ONLY the OCR-routing columns for a doc type — allowed for built-ins too.
+
+    Routing (preferred engine + ordered fallbacks) is a PIPELINE concern, orthogonal to
+    the read-only extraction/rule DEFINITION, so this narrow patch works for built-in
+    (invoice/contract/po/delivery_note) AND custom types without touching their
+    protected definition. Engine names are NOT validated here (permissive-at-save);
+    unknown/disabled names are skipped gracefully when the chain is resolved.
+    """
+    row = session.get(DocTypeDefinitionRow, name)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Doc type '{name}' not found.")
+
+    row.preferred_ocr_engine = body.preferred_ocr_engine
+    row.ocr_fallback_engines = list(body.ocr_fallback_engines)
+    row.version += 1
+    row.updated_at = _utcnow()
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+
+    # Re-register so the live registry mirrors the stored row. Routing itself is read
+    # from the DB by resolve_engine_chain, but this keeps parity with update_doc_type.
+    # Built-ins always resolve from code, so only re-register custom (DB-backed) types.
+    if not row.builtin:
+        doc_types.invalidate(name)
+        try:
+            doc_types.register_from_row(row)
+        except ValueError:
+            # A pre-existing definition that no longer builds shouldn't fail a routing
+            # patch; the stored routing columns are already committed regardless.
+            pass
 
     return row
 
