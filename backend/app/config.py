@@ -94,6 +94,17 @@ class Settings(BaseSettings):
     agent_authoring_max_tool_iterations: int = 6  # tool-call rounds before stopping.
     agent_authoring_timeout_s: float = 120.0  # per-request wall-clock ceiling.
 
+    # Vision-QA layer (Phase 4). A multimodal OpenRouter call judges a rendered
+    # template PDF against a reference (or the described HTML) for visual-fidelity
+    # issues. The "llm" path is lazily imported; "mock" is offline and the graceful
+    # fallback when the key/network/parse fails.
+    qa_vision_provider: str = "llm"  # "llm" | "mock"
+    qa_vision_model: str = "qwen/qwen3-vl-235b-a22b-instruct"
+    qa_vision_base_url: str = "https://openrouter.ai/api/v1"
+    qa_timeout_s: float = 180.0  # per-request wall-clock ceiling.
+    qa_render_dpi: int = 120  # rasterize the preview PDF to PNG at this DPI.
+    qa_max_pages: int = 5  # cap images sent to the judge (adds a truncation warning).
+
     # Browser origins allowed to call the API (Vite dev server by default).
     cors_origins: list[str] = ["http://localhost:5173"]
 

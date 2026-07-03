@@ -141,3 +141,26 @@ def test_agent_route_missing_template_404():
     with TestClient(app) as client:
         resp = client.post("/templates/missing/agent", json={"message": "x", "provider": "mock"})
         assert resp.status_code == 404, resp.text
+
+
+# --- unit: the render_preview tool (real render + rasterize + mock vision) -----
+
+
+def test_render_preview_tool_returns_summary_and_findings():
+    """Fully offline: render + rasterize run for real, the vision leg uses the mock."""
+    with TestClient(app) as client:
+        tid = _create_template(client)
+        _put_body(client, tid, "<h1>Invoice</h1><p>Body</p>")
+
+    result = _execute_tool("render_preview", {"provider": "mock"}, tid, "invoice")
+    assert result["ok"] is True
+    assert isinstance(result["summary"], str) and result["summary"]
+    assert isinstance(result["findings"], list) and result["findings"]
+
+
+def test_render_preview_tool_without_body_errors():
+    with TestClient(app) as client:
+        tid = _create_template(client)  # created with no html_body
+    result = _execute_tool("render_preview", {"provider": "mock"}, tid, "invoice")
+    assert result["ok"] is False
+    assert "no HTML body" in result["error"]

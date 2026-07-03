@@ -36,6 +36,7 @@ docgen = [
     "beautifulsoup4>=4.13,<5",
     "html-for-docx>=1.1.5,<2",
     "mammoth>=1.11.0,<2",
+    "pypdfium2>=5.8.0",
     "weasyprint>=68.0,<69",
 ]
 

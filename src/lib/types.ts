@@ -297,6 +297,37 @@ export interface TemplateUpdate {
   revision_note?: string;
 }
 
+// --- vision QA / fidelity ----------------------------------------------------
+
+/** One fidelity issue the vision model flagged between reference and render. */
+export interface QaFinding {
+  severity: "low" | "medium" | "high";
+  category: "layout" | "color" | "table" | "spacing" | "text" | "missing";
+  description: string;
+  suggested_fix: string | null;
+  page: number | null;
+}
+
+export interface QaRequest {
+  document_id?: string | null;
+  provider?: string;
+  instructions?: string | null;
+}
+
+export interface QaReport {
+  template_id: string;
+  document_id: string | null;
+  mode: "source_pdf" | "self_review";
+  ok: boolean;
+  summary: string;
+  findings: QaFinding[];
+  rendered_image_urls: string[];
+  reference_image_urls: string[];
+  provider_used: string;
+  model: string;
+  warnings: string[];
+}
+
 // --- decision ----------------------------------------------------------------
 
 export interface Check {

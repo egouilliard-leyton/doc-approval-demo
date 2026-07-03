@@ -309,3 +309,30 @@ def save_template_output(
 def template_output_url(template_id: str, output_id: str, ext: str = ".pdf") -> str:
     """Relative URL (served via /files) for a template's generated output."""
     return f"/files/templates/{template_id}/outputs/{output_id}{ext}"
+
+
+# --- Phase 4 (Vision QA): rendered + reference page images per QA run ----------
+
+# A QA run rasterizes the template's preview PDF ("rendered") and, when available,
+# the source/reference ("reference") into per-page PNGs the vision judge compares.
+
+
+def template_qa_dir(template_id: str, run_id: str) -> Path:
+    """Directory holding one QA run's rendered + reference page images."""
+    return _template_dir(template_id) / "qa" / run_id
+
+
+def save_qa_page(
+    template_id: str, run_id: str, kind: str, page_no: int, content: bytes
+) -> Path:
+    """Write a QA page PNG as qa/<run_id>/<kind>/page-NNN.png (kind: "rendered"|"reference")."""
+    out_dir = template_qa_dir(template_id, run_id) / kind
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"page-{page_no:03d}.png"
+    path.write_bytes(content)
+    return path
+
+
+def qa_page_url(template_id: str, run_id: str, kind: str, page_no: int) -> str:
+    """Relative URL (served via /files) for a QA run's rendered/reference page PNG."""
+    return f"/files/templates/{template_id}/qa/{run_id}/{kind}/page-{page_no:03d}.png"

@@ -22,6 +22,7 @@ import type { TemplateEditorApi } from "@/features/templates/editor/TemplateEdit
 import { TemplateEditor } from "@/features/templates/editor/TemplateEditor";
 import { PlaceholderPalette } from "@/features/templates/editor/PlaceholderPalette";
 import { AgentChatPanel } from "@/features/templates/editor/AgentChatPanel";
+import { FidelityPanel } from "@/features/templates/editor/FidelityPanel";
 
 const BLANK = "<p></p>";
 
@@ -41,6 +42,15 @@ export function RichHtmlPanel({
   // Force the editor to remount only when a *new* persisted body arrives
   // (e.g. right after a source upload converts a DOCX into HTML).
   const [editorKey, setEditorKey] = useState(0);
+  // The right-rail tabs are controlled so an upload can flip to "Fidelity" and a
+  // fidelity handoff can flip to "AI edit".
+  const [activeTab, setActiveTab] = useState("insert");
+  // Bumped after a source upload to trigger a one-shot auto-validation.
+  const [autoRunKey, setAutoRunKey] = useState(0);
+  // A fidelity → agent handoff, passed into AgentChatPanel. The monotonic nonce
+  // makes a repeated identical instruction still fire (dedup by event, not text).
+  const [pendingAgentMessage, setPendingAgentMessage] =
+    useState<{ text: string; nonce: number }>();
   const seededRef = useRef(template.html_body);
   const seededCssRef = useRef(template.css);
   const apiRef = useRef<TemplateEditorApi | null>(null);
@@ -92,6 +102,27 @@ export function RichHtmlPanel({
     setCss(next);
   }, []);
 
+  // A source upload that yields a converted rich template (html_body present)
+  // flips to the Fidelity tab and bumps the auto-run key so validation fires
+  // immediately, surfacing the side-by-side + verdict.
+  const handleUploaded = useCallback(
+    (t: TemplateDetail) => {
+      onChange(t);
+      if (t.html_body) {
+        setActiveTab("fidelity");
+        setAutoRunKey((k) => k + 1);
+      }
+    },
+    [onChange],
+  );
+
+  // Fidelity → agent handoff: stash the composed instruction and switch to the
+  // "AI edit" tab, where AgentChatPanel auto-sends it.
+  const handleSendToAgent = useCallback((message: string) => {
+    setPendingAgentMessage((prev) => ({ text: message, nonce: (prev?.nonce ?? 0) + 1 }));
+    setActiveTab("agent");
+  }, []);
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -127,7 +158,10 @@ export function RichHtmlPanel({
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <SourceUploadPanel templateId={template.id} onUploaded={onChange} />
+            <SourceUploadPanel
+              templateId={template.id}
+              onUploaded={handleUploaded}
+            />
           </CardContent>
         </Card>
       )}
@@ -155,10 +189,15 @@ export function RichHtmlPanel({
             editorRef={handleEditorReady}
             editable={!streaming}
           />
-          <Tabs defaultValue="insert" className="min-h-0">
+          <Tabs
+            value={activeTab}
+            onValueChange={setActiveTab}
+            className="min-h-0"
+          >
             <TabsList className="w-full">
               <TabsTrigger value="insert">Insert field</TabsTrigger>
               <TabsTrigger value="agent">AI edit</TabsTrigger>
+              <TabsTrigger value="fidelity">Fidelity</TabsTrigger>
             </TabsList>
             <TabsContent value="insert" className="min-h-0">
               <PlaceholderPalette
@@ -167,12 +206,32 @@ export function RichHtmlPanel({
                 onInsertSignature={handleInsertSignature}
               />
             </TabsContent>
-            <TabsContent value="agent" className="min-h-0">
+            {/* forceMount keeps these panels mounted so a handoff (fidelity →
+                agent) and the post-upload auto-validate fire on prop change
+                rather than being swallowed by a fresh mount that re-inits their
+                "already handled" refs. */}
+            <TabsContent
+              value="agent"
+              forceMount
+              className="min-h-0 data-[state=inactive]:hidden"
+            >
               <AgentChatPanel
                 templateId={template.id}
                 onHtml={handleAgentHtml}
                 onCss={handleAgentCss}
                 onStreamingChange={setStreaming}
+                pendingMessage={pendingAgentMessage}
+              />
+            </TabsContent>
+            <TabsContent
+              value="fidelity"
+              forceMount
+              className="min-h-0 data-[state=inactive]:hidden"
+            >
+              <FidelityPanel
+                template={template}
+                onSendToAgent={handleSendToAgent}
+                autoRunKey={autoRunKey}
               />
             </TabsContent>
           </Tabs>

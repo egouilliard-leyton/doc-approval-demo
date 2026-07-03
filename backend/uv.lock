@@ -176,6 +176,7 @@ docgen = [
     { name = "beautifulsoup4" },
     { name = "html-for-docx" },
     { name = "mammoth" },
+    { name = "pypdfium2" },
     { name = "weasyprint" },
 ]
 docling = [
@@ -210,6 +211,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.14.1" },
     { name = "pymupdf", specifier = ">=1.27.2.3" },
     { name = "pypdf", specifier = ">=6.12.1" },
+    { name = "pypdfium2", marker = "extra == 'docgen'", specifier = ">=5.8.0" },
     { name = "python-multipart", specifier = ">=0.0.29" },
     { name = "reportlab", specifier = ">=4.4.10" },
     { name = "sqlmodel", specifier = ">=0.0.38" },

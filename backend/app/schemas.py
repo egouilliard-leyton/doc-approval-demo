@@ -384,3 +384,40 @@ class AgentEvent(BaseModel):
     css: str | None = None
     revision_id: str | None = None
     message: str | None = None
+
+
+# --- Phase 4 (Vision QA): render + judge a rich-HTML template -----------------
+
+
+class QaFinding(BaseModel):
+    """One visual-fidelity issue the vision judge reported on a rendered template."""
+
+    severity: str  # "low" | "medium" | "high"
+    category: str  # "layout" | "color" | "table" | "spacing" | "text" | "missing"
+    description: str
+    suggested_fix: str | None = None
+    page: int | None = None
+
+
+class QaRequest(BaseModel):
+    """Request body for ``POST /templates/{id}/qa``: optionally fill from a document."""
+
+    document_id: str | None = None  # fill the preview from this document's structure
+    provider: str = ""  # "" -> settings default; "llm" | "mock"
+    instructions: str | None = None  # extra guidance passed to the judge
+
+
+class QaReport(BaseModel):
+    """Response of ``POST /templates/{id}/qa``: the fidelity critique + page images."""
+
+    template_id: str
+    document_id: str | None
+    mode: str  # "source_pdf" (compared to the source) | "self_review" (no reference)
+    ok: bool
+    summary: str
+    findings: list[QaFinding]
+    rendered_image_urls: list[str]
+    reference_image_urls: list[str]
+    provider_used: str  # "llm" | "mock" (reflects the actual, post-fallback provider)
+    model: str
+    warnings: list[str]

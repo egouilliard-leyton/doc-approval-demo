@@ -23,6 +23,11 @@ from .generate import (
     generate_rich,
 )
 from .mapper import PROVIDERS, suggest_mapping
+from .preview import render_template_preview
+from .qa import run_template_qa
+from .qa_vision import PROVIDERS as QA_PROVIDERS
+from .qa_vision import QaOutcome, run_qa
+from .rasterize import render_pdf_to_pngs
 from .render import RenderUnavailableError, render_docx, render_pdf
 from .template_edits import apply_template_update, sanitize_template_html
 from .values import flatten_field_values, resolve_path
@@ -57,4 +62,10 @@ __all__ = [
     "run_authoring_agent",
     "AUTHORING_PROVIDERS",
     "TOOL_SCHEMAS",
+    "render_pdf_to_pngs",
+    "render_template_preview",
+    "run_qa",
+    "run_template_qa",
+    "QA_PROVIDERS",
+    "QaOutcome",
 ]

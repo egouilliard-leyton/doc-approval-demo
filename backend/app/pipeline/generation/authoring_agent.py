@@ -27,11 +27,12 @@ from sqlmodel import Session, select
 
 from app.config import settings
 from app.db import engine
-from app.models import DocType, Template, TemplateRevision
+from app.models import DocType, Template, TemplateMode, TemplateRevision
 from app.schemas import AgentEvent, AgentRequest, TemplateUpdate
 
 from .binder import render_field_placeholder
 from .catalogue import field_catalogue
+from .qa import run_template_qa
 from .template_edits import apply_template_update
 
 PROVIDERS = {"llm", "mock"}
@@ -111,6 +112,29 @@ TOOL_SCHEMAS: list[dict] = [
             "name": "list_available_fields",
             "description": "List every bindable field path (with label + kind) for this doc type.",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "render_preview",
+            "description": (
+                "Render the current template to page images and get a vision-based fidelity "
+                "critique of your own work. Use after making visual edits to check them."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "instructions": {
+                        "type": "string",
+                        "description": "Optional extra guidance for the reviewer.",
+                    },
+                    "provider": {
+                        "type": "string",
+                        "description": "Optional QA vision provider override.",
+                    },
+                },
+            },
         },
     },
 ]
@@ -222,6 +246,26 @@ def _execute_tool(name: str, args: dict, template_id: str, doc_type: DocType) ->
         ]
         return {"ok": True, "fields": fields}
 
+    if name == "render_preview":
+        with Session(engine) as session:
+            tmpl = session.get(Template, template_id)
+            if tmpl is None:
+                return {"ok": False, "error": "template not found"}
+            if tmpl.mode != TemplateMode.rich_html or not tmpl.html_body:
+                return {"ok": False, "error": "no HTML body to preview"}
+            report = run_template_qa(
+                tmpl,
+                document_id=None,
+                structured_fields=None,
+                provider=args.get("provider", ""),
+                instructions=args.get("instructions"),
+            )
+        return {
+            "ok": True,
+            "summary": report.summary,
+            "findings": [f.model_dump() for f in report.findings],
+        }
+
     return {"ok": False, "error": f"unknown tool '{name}'"}
 
 
@@ -287,7 +331,8 @@ def _system_prompt(
         "documents. You edit the template's HTML body and CSS on request using the provided "
         "tools.\n\n"
         "IMPORTANT rules:\n"
-        "- You CANNOT see the rendered output. Work only from the HTML/CSS text below.\n"
+        "- You can call `render_preview` to render the current template and get a vision "
+        "critique of your own work. Use it after making visual edits to check them.\n"
         "- set_html and set_css must ALWAYS carry the COMPLETE document, never a fragment — "
         "they wholesale-replace the body/stylesheet.\n"
         "- Only bind field paths that appear in the catalogue below; use "

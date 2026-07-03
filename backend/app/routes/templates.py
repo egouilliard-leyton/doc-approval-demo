@@ -13,6 +13,7 @@ from sqlmodel import Session, delete, select
 from starlette.concurrency import iterate_in_threadpool
 
 from app import storage
+from app.config import settings
 from app.db import get_session
 from app.models import (
     DocType,
@@ -24,6 +25,8 @@ from app.models import (
 )
 from app.pipeline.generation import (
     AUTHORING_PROVIDERS,
+    QA_PROVIDERS,
+    RenderUnavailableError,
     apply_template_update,
     convert_docx,
     convert_pdf,
@@ -32,6 +35,7 @@ from app.pipeline.generation import (
     generate_pdf,
     generate_rich,
     run_authoring_agent,
+    run_template_qa,
     suggest_mapping,
 )
 from app.schemas import (
@@ -41,6 +45,8 @@ from app.schemas import (
     GenerateOutputFile,
     GenerateResult,
     MappingSuggestResponse,
+    QaReport,
+    QaRequest,
     TemplateCreate,
     TemplateDetail,
     TemplateFormField,
@@ -174,6 +180,59 @@ async def run_template_agent(
             yield f"data: {AgentEvent(type='done').model_dump_json()}\n\n".encode()
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+@router.post("/{template_id}/qa", response_model=QaReport, status_code=201)
+async def run_template_qa_endpoint(
+    template_id: str, body: QaRequest, session: Session = Depends(get_session)
+) -> QaReport:
+    """Render the template and return a vision-based visual-fidelity critique.
+
+    Only rich-HTML templates with a body can be QA'd (400 otherwise). An unknown ``provider``
+    is a 400 up front (mirroring the agent route). With a ``document_id`` the preview is
+    filled from that document's structured extraction (400 if it has none); without one, a
+    ``[Label]`` placeholder preview is judged. The render + rasterize + judge runs in a
+    threadpool with a timeout (504); a missing renderer maps to 503.
+    """
+    tmpl = session.get(Template, template_id)
+    if tmpl is None:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    if tmpl.mode != TemplateMode.rich_html or not tmpl.html_body:
+        raise HTTPException(
+            status_code=400,
+            detail="QA is only available for rich-HTML templates with a body.",
+        )
+    if body.provider and body.provider not in QA_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown qa vision provider '{body.provider}'. "
+                f"Available: {', '.join(sorted(QA_PROVIDERS))}"
+            ),
+        )
+
+    structured_fields = (
+        _load_structured_fields(session, body.document_id) if body.document_id else None
+    )
+
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                run_template_qa,
+                tmpl,
+                body.document_id,
+                structured_fields,
+                body.provider,
+                body.instructions,
+            ),
+            timeout=settings.qa_timeout_s,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504, detail=f"QA timed out after {settings.qa_timeout_s:.0f}s."
+        ) from None
+    except RenderUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.delete("/{template_id}", status_code=204)

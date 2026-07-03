@@ -26,11 +26,16 @@ export function AgentChatPanel({
   onHtml,
   onCss,
   onStreamingChange,
+  pendingMessage,
 }: {
   templateId: string;
   onHtml: (html: string, revisionId?: string) => void;
   onCss: (css: string, revisionId?: string) => void;
   onStreamingChange: (streaming: boolean) => void;
+  /** A message handed off from elsewhere (e.g. the Fidelity tab). Each handoff
+   *  carries a monotonic `nonce` so a repeated *identical* instruction still
+   *  fires (dedup by event, not by text). Auto-sent through the normal path. */
+  pendingMessage?: { text: string; nonce: number };
 }) {
   const [messages, setMessages] = useState<AgentChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -39,6 +44,9 @@ export function AgentChatPanel({
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const toolIdRef = useRef(0);
+  // Guards against re-sending the same handoff twice (parent re-renders, etc.).
+  // Keyed on the handoff nonce so a repeated identical message still fires.
+  const handledPendingRef = useRef<number>(pendingMessage?.nonce ?? 0);
 
   // Keep the transcript pinned to the latest content as tokens stream in.
   useEffect(() => {
@@ -50,9 +58,15 @@ export function AgentChatPanel({
     return () => abortRef.current?.abort();
   }, []);
 
-  const handleSend = async () => {
-    const message = input.trim();
-    if (!message || streaming) return;
+  const handleSend = async (override?: string) => {
+    const message = (override ?? input).trim();
+    if (!message) return;
+    // A turn is already in flight: keep a handoff message in the input so the
+    // user can send it once the current stream finishes, rather than dropping it.
+    if (streaming) {
+      if (override) setInput(override);
+      return;
+    }
 
     const history = messages;
     setInput("");
@@ -146,6 +160,15 @@ export function AgentChatPanel({
       onStreamingChange(false);
     }
   };
+
+  // A new handoff message (from the Fidelity tab) prefills the input and, unless
+  // a turn is already streaming, auto-sends it once through the normal path.
+  useEffect(() => {
+    if (!pendingMessage || pendingMessage.nonce === handledPendingRef.current) return;
+    handledPendingRef.current = pendingMessage.nonce;
+    void handleSend(pendingMessage.text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingMessage]);
 
   return (
     <div className="flex h-full flex-col gap-3">

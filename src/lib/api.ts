@@ -12,6 +12,7 @@ import type {
   MappingSuggestResponse,
   OcrEngine,
   OCRResult,
+  QaReport,
   QualityReport,
   StructuredResult,
   TemplateCreate,
@@ -214,6 +215,19 @@ export async function generateTemplateOutput(
     method: "POST",
     query: { document_id: p.documentId, flatten: p.flatten ?? true },
     body: form,
+  });
+}
+
+// --- vision QA / fidelity ----------------------------------------------------
+
+export async function runTemplateQa(
+  id: string,
+  body: { document_id?: string | null; provider?: string; instructions?: string | null },
+): Promise<QaReport> {
+  return request<QaReport>(`/templates/${id}/qa`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
   });
 }
 
