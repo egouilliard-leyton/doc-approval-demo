@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.models import DocType, DocumentStatus
+from app.models import DocType, DocumentStatus, TemplateMode, TemplateStatus
 
 
 class DocumentSummary(BaseModel):
@@ -32,6 +32,63 @@ class DocumentDetail(DocumentSummary):
     """List fields plus per-page image/thumbnail URLs."""
 
     pages: list[PageInfo]
+
+
+# --- Phase 0: template registry ----------------------------------------------
+
+
+class TemplateSummary(BaseModel):
+    """Compact shape for the template list view."""
+
+    id: str
+    name: str
+    doc_type: DocType
+    mode: TemplateMode
+    status: TemplateStatus
+    output_formats: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class TemplateDetail(TemplateSummary):
+    """List fields plus the template body, styles, and field/placeholder maps."""
+
+    source_file_id: str | None
+    html_body: str | None
+    css: str | None
+    form_field_map: dict
+    placeholder_map: dict
+
+
+class TemplateRevisionInfo(BaseModel):
+    """A single pre-update snapshot of a template's html/css."""
+
+    id: str
+    html: str | None
+    css: str | None
+    note: str | None
+    created_at: datetime
+
+
+class TemplateCreate(BaseModel):
+    """Request body to create a template."""
+
+    name: str
+    doc_type: DocType
+    mode: TemplateMode = TemplateMode.rich_html
+
+
+class TemplateUpdate(BaseModel):
+    """Partial update; every field is optional (only provided fields are applied)."""
+
+    name: str | None = None
+    html_body: str | None = None
+    css: str | None = None
+    form_field_map: dict | None = None
+    placeholder_map: dict | None = None
+    output_formats: list[str] | None = None
+    status: TemplateStatus | None = None
+    revision_note: str | None = None
 
 
 # --- Phase 2: pre-flight / quality metrics -----------------------------------

@@ -61,3 +61,46 @@ class PipelineRun(SQLModel, table=True):
     stage_results: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class TemplateMode(str, Enum):
+    """How a template renders its output."""
+
+    form_fill = "form_fill"
+    rich_html = "rich_html"
+
+
+class TemplateStatus(str, Enum):
+    """Lifecycle of a template through the authoring flow."""
+
+    draft = "draft"
+    ready = "ready"
+
+
+class Template(SQLModel, table=True):
+    """A reusable output template for a document type (Phase 0 registry)."""
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    name: str
+    doc_type: DocType
+    mode: TemplateMode = Field(default=TemplateMode.rich_html)
+    source_file_id: str | None = None  # Phase 1 (source upload) will populate this
+    html_body: str | None = None
+    css: str | None = None
+    form_field_map: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    placeholder_map: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    output_formats: list = Field(default_factory=lambda: ["pdf"], sa_column=Column(JSON))
+    status: TemplateStatus = Field(default=TemplateStatus.draft)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class TemplateRevision(SQLModel, table=True):
+    """A pre-update snapshot of a template's html/css, for edit history."""
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    template_id: str = Field(foreign_key="template.id", index=True)
+    html: str | None = None
+    css: str | None = None
+    note: str | None = None
+    created_at: datetime = Field(default_factory=_utcnow)

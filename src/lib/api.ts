@@ -9,6 +9,10 @@ import type {
   OCRResult,
   QualityReport,
   StructuredResult,
+  TemplateCreate,
+  TemplateDetail,
+  TemplateSummary,
+  TemplateUpdate,
 } from "@/lib/types";
 
 const API_BASE_URL: string =
@@ -43,11 +47,12 @@ interface RequestOpts {
   method?: string;
   query?: Record<string, string | number | boolean | undefined>;
   body?: BodyInit;
+  headers?: Record<string, string>;
   signal?: AbortSignal;
 }
 
 async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
-  const { method = "GET", query, body, signal } = opts;
+  const { method = "GET", query, body, headers, signal } = opts;
   const qs = query
     ? "?" +
       Object.entries(query)
@@ -57,7 +62,12 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
     : "";
   let res: Response;
   try {
-    res = await fetch(`${API_BASE_URL}${path}${qs}`, { method, body, signal });
+    res = await fetch(`${API_BASE_URL}${path}${qs}`, {
+      method,
+      body,
+      headers,
+      signal,
+    });
   } catch {
     throw new ApiError(0, "Cannot reach the backend — is it running on :8000?");
   }
@@ -114,6 +124,47 @@ export async function deleteDocument(id: string): Promise<void> {
 
 export async function deleteAllDocuments(): Promise<void> {
   await request<void>("/documents", { method: "DELETE" });
+}
+
+// --- templates ---------------------------------------------------------------
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+export async function listTemplates(
+  docType?: DocType,
+): Promise<TemplateSummary[]> {
+  return request<TemplateSummary[]>("/templates", {
+    query: { doc_type: docType },
+  });
+}
+
+export async function getTemplate(id: string): Promise<TemplateDetail> {
+  return request<TemplateDetail>(`/templates/${id}`);
+}
+
+export async function createTemplate(
+  body: TemplateCreate,
+): Promise<TemplateDetail> {
+  return request<TemplateDetail>("/templates", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateTemplate(
+  id: string,
+  body: TemplateUpdate,
+): Promise<TemplateDetail> {
+  return request<TemplateDetail>(`/templates/${id}`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  await request<void>(`/templates/${id}`, { method: "DELETE" });
 }
 
 // --- persisted stage results (GET; 404 when a stage hasn't run) ---------------

@@ -151,6 +151,55 @@ export interface StructuredResult {
   raw_artifact_url: string | null;
 }
 
+// --- templates ---------------------------------------------------------------
+
+export type TemplateMode = "form_fill" | "rich_html";
+export type TemplateStatus = "draft" | "ready";
+
+export interface TemplateSummary {
+  id: string;
+  name: string;
+  doc_type: DocType;
+  mode: TemplateMode;
+  status: TemplateStatus;
+  output_formats: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TemplateDetail extends TemplateSummary {
+  source_file_id: string | null;
+  html_body: string | null;
+  css: string | null;
+  form_field_map: Record<string, unknown>;
+  placeholder_map: Record<string, unknown>;
+}
+
+export interface TemplateRevisionInfo {
+  id: string;
+  html: string | null;
+  css: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface TemplateCreate {
+  name: string;
+  doc_type: DocType;
+  mode?: TemplateMode;
+}
+
+export interface TemplateUpdate {
+  name?: string;
+  html_body?: string;
+  css?: string;
+  form_field_map?: Record<string, unknown>;
+  placeholder_map?: Record<string, unknown>;
+  output_formats?: string[];
+  status?: TemplateStatus;
+  revision_note?: string;
+}
+
 // --- decision ----------------------------------------------------------------
 
 export interface Check {

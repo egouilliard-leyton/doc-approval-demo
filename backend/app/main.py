@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.db import init_db
-from app.routes import documents, pipeline
+from app.routes import documents, pipeline, templates
 
 
 @asynccontextmanager
@@ -45,6 +45,7 @@ app.mount("/files", StaticFiles(directory=settings.data_path), name="files")
 
 app.include_router(documents.router)
 app.include_router(pipeline.router)
+app.include_router(templates.router)
 
 
 @app.get("/health")
