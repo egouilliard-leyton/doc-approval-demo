@@ -5,6 +5,9 @@ import type {
   DocumentSummary,
   DecisionResult,
   DocType,
+  FieldCatalogueEntry,
+  GenerateResult,
+  MappingSuggestResponse,
   OcrEngine,
   OCRResult,
   QualityReport,
@@ -165,6 +168,49 @@ export async function updateTemplate(
 
 export async function deleteTemplate(id: string): Promise<void> {
   await request<void>(`/templates/${id}`, { method: "DELETE" });
+}
+
+// --- template form-fill: source, catalogue, mapping, generate ----------------
+
+export async function uploadTemplateSource(
+  id: string,
+  file: File,
+): Promise<TemplateDetail> {
+  const form = new FormData();
+  form.append("file", file);
+  return request<TemplateDetail>(`/templates/${id}/source`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+export async function getTemplateCatalogue(
+  id: string,
+): Promise<FieldCatalogueEntry[]> {
+  return request<FieldCatalogueEntry[]>(`/templates/${id}/catalogue`);
+}
+
+export async function suggestTemplateMapping(
+  id: string,
+  provider?: string,
+): Promise<MappingSuggestResponse> {
+  return request<MappingSuggestResponse>(`/templates/${id}/suggest-mapping`, {
+    method: "POST",
+    query: { provider },
+  });
+}
+
+export async function generateTemplateOutput(
+  id: string,
+  p: { documentId: string; flatten?: boolean; signatureImage?: File },
+): Promise<GenerateResult> {
+  const form = new FormData();
+  if (p.signatureImage) form.append("signature_image", p.signatureImage);
+  return request<GenerateResult>(`/templates/${id}/generate`, {
+    method: "POST",
+    query: { document_id: p.documentId, flatten: p.flatten ?? true },
+    body: form,
+  });
 }
 
 // --- persisted stage results (GET; 404 when a stage hasn't run) ---------------

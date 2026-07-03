@@ -167,12 +167,67 @@ export interface TemplateSummary {
   updated_at: string;
 }
 
+/** One fillable field discovered in a source PDF's AcroForm. */
+export interface TemplateFormField {
+  name: string;
+  kind: "text" | "checkbox" | "radio" | "choice" | "signature";
+  page: number;
+  rect: number[] | null;
+  options: string[] | null;
+  nearby_label: string | null;
+}
+
+/**
+ * A persisted mapping from a PDF form field to an extracted document field.
+ * `is_signature` short-circuits `field_path` (the field is stamped at generate).
+ */
+export interface FormFieldMapEntry {
+  field_path: string | null;
+  is_signature: boolean;
+  source?: string;
+  confidence?: number | null;
+}
+
 export interface TemplateDetail extends TemplateSummary {
   source_file_id: string | null;
+  source_url: string | null;
   html_body: string | null;
   css: string | null;
-  form_field_map: Record<string, unknown>;
+  form_fields: TemplateFormField[];
+  form_field_map: Record<string, FormFieldMapEntry>;
   placeholder_map: Record<string, unknown>;
+}
+
+// --- template form-fill mapping / generation ---------------------------------
+
+/** One selectable extracted field a PDF form field can map to. */
+export interface FieldCatalogueEntry {
+  path: string;
+  label: string;
+  kind: string;
+}
+
+/** An AI-proposed mapping for a single PDF form field. */
+export interface MappingSuggestion {
+  field_path: string | null;
+  confidence: number | null;
+  source: string;
+  is_signature: boolean;
+  rationale: string | null;
+}
+
+export interface MappingSuggestResponse {
+  suggestions: Record<string, MappingSuggestion>;
+  provider_used: string;
+}
+
+export interface GenerateResult {
+  output_url: string;
+  output_id: string;
+  filled_fields: string[];
+  skipped_fields: string[];
+  signature_stamped: boolean;
+  warnings: string[];
 }
 
 export interface TemplateRevisionInfo {

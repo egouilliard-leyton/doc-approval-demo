@@ -87,6 +87,7 @@ class Template(SQLModel, table=True):
     source_file_id: str | None = None  # Phase 1 (source upload) will populate this
     html_body: str | None = None
     css: str | None = None
+    form_fields: list = Field(default_factory=list, sa_column=Column(JSON))  # AcroForm enumeration
     form_field_map: dict = Field(default_factory=dict, sa_column=Column(JSON))
     placeholder_map: dict = Field(default_factory=dict, sa_column=Column(JSON))
     output_formats: list = Field(default_factory=lambda: ["pdf"], sa_column=Column(JSON))

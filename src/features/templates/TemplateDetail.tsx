@@ -1,6 +1,6 @@
-// Placeholder detail view for a single template. Fetches the template on mount
-// and shows its identity + a note that the editor arrives later. The real
-// editor lands in a subsequent phase.
+// Detail view for a single template. Fetches the template on mount and shows
+// its identity. Form-fill templates get the full authoring flow (upload → map →
+// generate); rich-HTML templates still show a "later phase" placeholder.
 import { useEffect, useState } from "react";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +8,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ApiError, getTemplate } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { TemplateDetail, TemplateStatus } from "@/lib/types";
+import type {
+  TemplateDetail as TemplateDetailData,
+  TemplateStatus,
+} from "@/lib/types";
+import { FormFillPanel } from "@/features/templates/FormFillPanel";
 
 const LOAD_ERROR = "Could not load this template.";
 
@@ -35,8 +39,8 @@ function BackLink() {
   );
 }
 
-export function TemplateDetailStub({ id }: { id: string }) {
-  const [template, setTemplate] = useState<TemplateDetail | null>(null);
+export function TemplateDetail({ id }: { id: string }) {
+  const [template, setTemplate] = useState<TemplateDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,11 +107,15 @@ export function TemplateDetailStub({ id }: { id: string }) {
         </div>
       </div>
 
-      <Card>
-        <CardContent className="py-8 text-center text-sm text-muted-foreground">
-          The template editor arrives in a later phase.
-        </CardContent>
-      </Card>
+      {template.mode === "form_fill" ? (
+        <FormFillPanel template={template} onChange={setTemplate} />
+      ) : (
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            The rich-HTML template editor arrives in a later phase.
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

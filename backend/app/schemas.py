@@ -50,12 +50,33 @@ class TemplateSummary(BaseModel):
     updated_at: datetime
 
 
+class TemplateFormField(BaseModel):
+    """One enumerated AcroForm field of a template's source PDF (Phase 1 form-fill)."""
+
+    name: str
+    kind: str  # "text" | "checkbox" | "radio" | "choice" | "signature"
+    page: int
+    rect: list[float] | None = None  # [x0, y0, x1, y1] in PDF user space
+    options: list[str] | None = None
+    nearby_label: str | None = None
+
+
+class FieldCatalogueEntry(BaseModel):
+    """One bindable leaf value a template can map onto (Phase 1 form-fill)."""
+
+    path: str  # dotted path into a structured result, e.g. "line_items.0.amount"
+    label: str
+    kind: str  # "scalar" | "number" | "text"
+
+
 class TemplateDetail(TemplateSummary):
     """List fields plus the template body, styles, and field/placeholder maps."""
 
     source_file_id: str | None
+    source_url: str | None = None
     html_body: str | None
     css: str | None
+    form_fields: list[TemplateFormField] = []
     form_field_map: dict
     placeholder_map: dict
 
@@ -89,6 +110,37 @@ class TemplateUpdate(BaseModel):
     output_formats: list[str] | None = None
     status: TemplateStatus | None = None
     revision_note: str | None = None
+
+
+# --- Phase 1 (form-fill): AI mapping + generation (Waves 3+4) -----------------
+
+
+class MappingSuggestion(BaseModel):
+    """A suggested binding for one PDF form field (Wave 3 AI/heuristic mapper)."""
+
+    field_path: str | None = None  # catalogue path to bind, or None if unmatched
+    confidence: float | None = None  # 0-1 (heuristic overlap score or LLM confidence)
+    source: str = "heuristic"  # "ai" (LLM) | "heuristic" (offline token overlap)
+    is_signature: bool = False  # this field is a signature target (stamp, not text)
+    rationale: str | None = None
+
+
+class MappingSuggestResponse(BaseModel):
+    """Response of ``POST /templates/{id}/suggest-mapping`` (not persisted)."""
+
+    suggestions: dict[str, MappingSuggestion]  # keyed by PDF field name
+    provider_used: str  # "llm" | "mock" (reflects the actual, post-fallback provider)
+
+
+class GenerateResult(BaseModel):
+    """Response of ``POST /templates/{id}/generate``: the filled output + trace."""
+
+    output_url: str
+    output_id: str
+    filled_fields: list[str]
+    skipped_fields: list[str]
+    signature_stamped: bool
+    warnings: list[str] = []
 
 
 # --- Phase 2: pre-flight / quality metrics -----------------------------------

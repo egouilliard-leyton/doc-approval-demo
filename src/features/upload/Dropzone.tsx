@@ -7,9 +7,11 @@ const ACCEPT = ".pdf,.png,.jpg,.jpeg,.tif,.tiff";
 export function Dropzone({
   onFile,
   disabled,
+  accept = ACCEPT,
 }: {
   onFile: (file: File) => void;
   disabled?: boolean;
+  accept?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -56,7 +58,7 @@ export function Dropzone({
       <input
         ref={inputRef}
         type="file"
-        accept={ACCEPT}
+        accept={accept}
         className="hidden"
         disabled={disabled}
         onChange={(e) => {

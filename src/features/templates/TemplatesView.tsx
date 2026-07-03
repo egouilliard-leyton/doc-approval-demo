@@ -23,12 +23,12 @@ import { routeToHash } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import type {
   DocType,
-  TemplateDetail,
+  TemplateDetail as TemplateDetailData,
   TemplateStatus,
   TemplateSummary,
 } from "@/lib/types";
 import { useHashRoute } from "@/hooks/useHashRoute";
-import { TemplateDetailStub } from "@/features/templates/TemplateDetailStub";
+import { TemplateDetail } from "@/features/templates/TemplateDetail";
 import { TemplateWizard } from "@/features/templates/TemplateWizard";
 
 const LOAD_ERROR = "Could not load templates.";
@@ -183,7 +183,7 @@ function TemplateList() {
     };
   }, []);
 
-  const handleCreated = useCallback((t: TemplateDetail) => {
+  const handleCreated = useCallback((t: TemplateDetailData) => {
     setWizardOpen(false);
     setTemplates((prev) => [t, ...prev]);
     toast.success("Template created");
@@ -301,7 +301,7 @@ function TemplateList() {
 export function TemplatesView() {
   const route = useHashRoute();
   if (route.view === "templates" && route.id) {
-    return <TemplateDetailStub id={route.id} />;
+    return <TemplateDetail id={route.id} />;
   }
   return <TemplateList />;
 }

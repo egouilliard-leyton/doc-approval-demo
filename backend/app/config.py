@@ -78,6 +78,13 @@ class Settings(BaseSettings):
         "California",
     ]
 
+    # Form-fill mapping layer (Phase 1, Wave 3). A single OpenRouter call suggests
+    # which catalogue path each PDF form field binds to; the offline "mock" heuristic
+    # (token overlap) is both the no-key fallback and each field's per-field fallback.
+    mapping_provider: str = "llm"  # "llm" | "mock"
+    mapping_model: str = "deepseek/deepseek-v4-flash"
+    mapping_base_url: str = "https://openrouter.ai/api/v1"
+
     # Browser origins allowed to call the API (Vite dev server by default).
     cors_origins: list[str] = ["http://localhost:5173"]
 
