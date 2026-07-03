@@ -37,6 +37,41 @@ export interface FieldCorrection {
   updated_at: string;
 }
 
+/** One day's document count in a time series ("YYYY-MM-DD"). */
+export interface DayBucket {
+  date: string;
+  count: number;
+}
+
+/** A zero-filled, ascending daily time series over a fixed window. */
+export interface TimeSeries {
+  window_days: number;
+  buckets: DayBucket[];
+}
+
+/** Latest accuracy-eval headline numbers across the system. */
+export interface AccuracySummary {
+  latest_overall_score: number | null;
+  latest_line_item_score: number | null;
+  eval_runs_total: number;
+  doc_types_evaluated: number;
+}
+
+/** Per-doc-type KPI rollup for the overview table. */
+export interface DocTypeKpi {
+  doc_type: string;
+  documents: number;
+  pct_of_total: number;
+  avg_extraction_confidence: number | null;
+  decisions: Record<string, number>;
+  corrections_total: number;
+  corrected_documents: number;
+  latest_accuracy: number | null;
+  latest_accuracy_engine: string | null;
+  latest_line_item_score: number | null;
+  eval_runs: number;
+}
+
 /** Consolidated system counts for the admin overview. */
 export interface OverviewStats {
   documents_total: number;
@@ -47,6 +82,11 @@ export interface OverviewStats {
   doc_types: number;
   engines_enabled: number;
   avg_extraction_confidence: number | null;
+  doc_types_used: number;
+  accuracy: AccuracySummary;
+  throughput: TimeSeries;
+  maintenance: TimeSeries;
+  by_doc_type: DocTypeKpi[];
 }
 export type DocumentStatus =
   | "uploaded"

@@ -452,6 +452,45 @@ class CorrectionExample(BaseModel):
 # --- admin overview ----------------------------------------------------------
 
 
+class DayBucket(BaseModel):
+    """One calendar day's count in a time series."""
+
+    date: str  # "YYYY-MM-DD"
+    count: int
+
+
+class TimeSeries(BaseModel):
+    """A zero-filled daily time series over a fixed window (oldest -> newest)."""
+
+    window_days: int
+    buckets: list[DayBucket]
+
+
+class AccuracySummary(BaseModel):
+    """Headline evaluation-accuracy numbers rolled up across all eval runs."""
+
+    latest_overall_score: float | None
+    latest_line_item_score: float | None
+    eval_runs_total: int
+    doc_types_evaluated: int
+
+
+class DocTypeKpi(BaseModel):
+    """Per-doc-type KPI slice for the overview dashboard breakdown."""
+
+    doc_type: str
+    documents: int
+    pct_of_total: float
+    avg_extraction_confidence: float | None
+    decisions: dict[str, int]
+    corrections_total: int
+    corrected_documents: int
+    latest_accuracy: float | None
+    latest_accuracy_engine: str | None
+    latest_line_item_score: float | None
+    eval_runs: int
+
+
 class OverviewStats(BaseModel):
     """Consolidated counts for the admin overview dashboard."""
 
@@ -463,6 +502,12 @@ class OverviewStats(BaseModel):
     doc_types: int
     engines_enabled: int
     avg_extraction_confidence: float | None
+    # --- KPI dashboard extension (additive) ---
+    doc_types_used: int
+    accuracy: AccuracySummary
+    throughput: TimeSeries
+    maintenance: TimeSeries
+    by_doc_type: list[DocTypeKpi]
 
 
 # --- review queue ------------------------------------------------------------
