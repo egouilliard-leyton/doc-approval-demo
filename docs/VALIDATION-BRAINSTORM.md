@@ -13,7 +13,7 @@
 
 ## Implementation status
 
-The **entire single-document validation surface is shipped** — 21 declarative rule primitives, each wired end-to-end (interpreter + serialization + save-time validation + builder UI + tests), all inside the existing "rules as data" engine. Built-in invoice/contract rule sets are untouched; the full suite passes (backend 429, frontend build + 41).
+The **entire single-document validation surface is shipped** — 23 declarative rule primitives, each wired end-to-end (interpreter + serialization + save-time validation + builder UI + tests), all inside the existing "rules as data" engine. Built-in invoice/contract rule sets are untouched; the full suite passes (backend 483, frontend build + 105).
 
 **Shipped primitives** (in `backend/app/rules/definition.py` unless noted):
 `PresenceRuleDef` · `ThresholdCompareRuleDef` · `ArithmeticIdentityRuleDef` · `SetMembershipRuleDef` · `FieldDependencyRuleDef` · `UniquenessVsHistoryRuleDef` (pre-existing) · **`EqualityRuleDef`** (exact/normalized/regex/fuzzy + threshold slider) · **`DateConstraintRuleDef`** · **`ExpressionRuleDef`** (sandboxed formula DSL — `rules/expression.py`) · **`AggregateRuleDef`** · **`NumericRangeRuleDef`** · **`PercentageToleranceRuleDef`** · **`FormatRuleDef`** (IBAN/checksum/email/UUID/ISO — `rules/formats.py`) · **`ConditionalPresenceRuleDef`** · **`MutualExclusivityRuleDef`** · **`AtLeastNOfRuleDef`** · **`RequiredTogetherRuleDef`** · **`ContainsRuleDef`** · **`LengthBoundsRuleDef`** · **`FieldConfidenceFloorRuleDef`** · **`GroundedOnPageRuleDef`** · **`SignaturePresenceRuleDef`** · plus the two Tier-3 hatches (`CodedRuleDef`, `LlmAdvisoryRuleDef`).
