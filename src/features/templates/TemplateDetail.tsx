@@ -5,6 +5,11 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ApiError, getTemplate } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -109,6 +114,30 @@ export function TemplateDetail({ id }: { id: string }) {
           >
             {template.status === "ready" ? "Ready" : "Draft"}
           </Badge>
+          {template.lint.orphaned_paths.length > 0 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="outline"
+                  className="border-review/40 text-review"
+                >
+                  ⚠ {template.lint.orphaned_paths.length} placeholder
+                  {template.lint.orphaned_paths.length === 1 ? "" : "s"} reference
+                  removed fields
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>
+                <div className="space-y-1">
+                  <p className="font-medium">Orphaned placeholders</p>
+                  <ul className="space-y-0.5 font-mono">
+                    {template.lint.orphaned_paths.map((p) => (
+                      <li key={p}>{p}</li>
+                    ))}
+                  </ul>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          )}
           <span className="text-xs text-muted-foreground">
             Updated {formatDate(template.updated_at)}
           </span>

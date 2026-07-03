@@ -188,6 +188,13 @@ export interface FormFieldMapEntry {
   confidence?: number | null;
 }
 
+/** Advisory placeholder health: how many bound tokens still point at live fields. */
+export interface TemplateLint {
+  orphaned_paths: string[];
+  bound_count: number;
+  total_count: number;
+}
+
 export interface TemplateDetail extends TemplateSummary {
   source_file_id: string | null;
   source_url: string | null;
@@ -196,6 +203,7 @@ export interface TemplateDetail extends TemplateSummary {
   form_fields: TemplateFormField[];
   form_field_map: Record<string, FormFieldMapEntry>;
   placeholder_map: Record<string, unknown>;
+  lint: TemplateLint;
 }
 
 // --- template form-fill mapping / generation ---------------------------------

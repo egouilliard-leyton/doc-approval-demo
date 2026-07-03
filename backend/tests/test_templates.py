@@ -95,6 +95,70 @@ def test_revisions_missing_returns_404():
         assert client.get("/templates/does-not-exist/revisions").status_code == 404
 
 
+def test_restore_revision_rolls_back_and_is_itself_undoable():
+    with TestClient(app) as client:
+        tid = _create(client, "Invoice A")["id"]
+        client.put(f"/templates/{tid}", json={"html_body": "<p>A</p>"})  # snapshots blank
+        client.put(f"/templates/{tid}", json={"html_body": "<p>B</p>"})  # snapshots "A"
+
+        history = client.get(f"/templates/{tid}/revisions").json()
+        # newest-first: [0] snapshot of "A" (from the B edit), [1] snapshot of blank original
+        a_rev = history[0]
+        assert a_rev["html"] == "<p>A</p>"
+
+        restored = client.post(f"/templates/{tid}/revisions/{a_rev['id']}/restore")
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["html_body"] == "<p>A</p>"
+
+        # Restore snapshotted the current ("B") state first -> it's undoable.
+        after = client.get(f"/templates/{tid}/revisions").json()
+        assert len(after) == 3
+        assert after[0]["html"] == "<p>B</p>"
+
+
+def test_restore_blank_original_clears_body_not_a_noop():
+    with TestClient(app) as client:
+        tid = _create(client, "Invoice A")["id"]
+        client.put(f"/templates/{tid}", json={"html_body": "<p>A</p>"})  # snapshots blank(None)
+
+        blank_rev = client.get(f"/templates/{tid}/revisions").json()[0]
+        assert blank_rev["html"] is None  # the original blank state
+
+        restored = client.post(f"/templates/{tid}/revisions/{blank_rev['id']}/restore")
+        assert restored.status_code == 200, restored.text
+        # None -> "" coercion: the body is cleared, not left at "<p>A</p>".
+        assert restored.json()["html_body"] == ""
+
+
+def test_restore_404s_for_bad_template_or_revision():
+    with TestClient(app) as client:
+        tid = _create(client, "Invoice A")["id"]
+        client.put(f"/templates/{tid}", json={"html_body": "<p>A</p>"})
+        rev_id = client.get(f"/templates/{tid}/revisions").json()[0]["id"]
+
+        assert client.post(f"/templates/nope/revisions/{rev_id}/restore").status_code == 404
+        assert client.post(f"/templates/{tid}/revisions/nope/restore").status_code == 404
+        # A revision that belongs to a different template must not be restorable here.
+        other = _create(client, "Invoice B")["id"]
+        assert client.post(f"/templates/{other}/revisions/{rev_id}/restore").status_code == 404
+
+
+def test_template_detail_surfaces_orphaned_placeholders():
+    with TestClient(app) as client:
+        tid = _create(client, "Invoice A")["id"]
+        html = (
+            '<p><span data-field="vendor">Vendor</span> '
+            '<span data-field="ghost.field">Ghost</span></p>'
+        )
+        client.put(f"/templates/{tid}", json={"html_body": html})
+
+        detail = client.get(f"/templates/{tid}").json()
+        assert "lint" in detail
+        assert detail["lint"]["orphaned_paths"] == ["ghost.field"]
+        assert detail["lint"]["total_count"] == 2
+        assert detail["lint"]["bound_count"] == 1
+
+
 def test_sanitize_template_html_strips_active_content():
     cleaned = sanitize_template_html(
         '<p>ok<script>alert(1)</script><a href="javascript:x" onclick="y">t</a></p>'

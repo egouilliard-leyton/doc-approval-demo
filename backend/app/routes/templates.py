@@ -34,6 +34,7 @@ from app.pipeline.generation import (
     field_catalogue,
     generate_pdf,
     generate_rich,
+    lint_template,
     run_authoring_agent,
     run_template_qa,
     suggest_mapping,
@@ -50,6 +51,7 @@ from app.schemas import (
     TemplateCreate,
     TemplateDetail,
     TemplateFormField,
+    TemplateLint,
     TemplateRevisionInfo,
     TemplateSummary,
     TemplateUpdate,
@@ -62,7 +64,14 @@ def _to_detail(t: Template) -> TemplateDetail:
     source_url = (
         storage.template_source_url(t.id, t.source_ext or ".pdf") if t.source_file_id else None
     )
-    return TemplateDetail(**t.model_dump(), source_url=source_url)
+    # Advisory: which referenced field paths the doc type's catalogue no longer offers.
+    result = lint_template(t.mode, t.doc_type, t.html_body, t.form_field_map)
+    lint = TemplateLint(
+        orphaned_paths=result.orphaned_paths,
+        bound_count=result.bound_count,
+        total_count=result.total_count,
+    )
+    return TemplateDetail(**t.model_dump(), source_url=source_url, lint=lint)
 
 
 def _load_structured_fields(session: Session, document_id: str) -> dict:
@@ -144,6 +153,34 @@ def list_template_revisions(
         .where(TemplateRevision.template_id == template_id)
         .order_by(TemplateRevision.created_at.desc())
     ).all()
+
+
+@router.post("/{template_id}/revisions/{revision_id}/restore", response_model=TemplateDetail)
+def restore_template_revision(
+    template_id: str, revision_id: str, session: Session = Depends(get_session)
+) -> TemplateDetail:
+    """Roll a template's html/css back to a past snapshot.
+
+    The restore itself goes through ``apply_template_update``, so the *current* state is
+    snapshotted first — a restore is always undoable. Revisions carry ``None`` html/css
+    for the template's original blank state; those are coerced to ``""`` so restoring the
+    blank original clears the body rather than being a no-op (``apply_template_update``
+    skips ``None`` fields).
+    """
+    tmpl = session.get(Template, template_id)
+    if tmpl is None:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    rev = session.get(TemplateRevision, revision_id)
+    if rev is None or rev.template_id != template_id:
+        raise HTTPException(status_code=404, detail="Revision not found.")
+
+    body = TemplateUpdate(
+        html_body=rev.html if rev.html is not None else "",
+        css=rev.css if rev.css is not None else "",
+        revision_note=f"restore: {rev.id}",
+    )
+    tmpl = apply_template_update(session, tmpl, body)
+    return _to_detail(tmpl)
 
 
 @router.post("/{template_id}/agent")

@@ -22,6 +22,7 @@ from .generate import (
     generate_pdf,
     generate_rich,
 )
+from .lint import TemplateLintResult, lint_template
 from .mapper import PROVIDERS, suggest_mapping
 from .preview import render_template_preview
 from .qa import run_template_qa
@@ -68,4 +69,6 @@ __all__ = [
     "run_template_qa",
     "QA_PROVIDERS",
     "QaOutcome",
+    "lint_template",
+    "TemplateLintResult",
 ]

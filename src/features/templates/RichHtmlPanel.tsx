@@ -23,6 +23,7 @@ import { TemplateEditor } from "@/features/templates/editor/TemplateEditor";
 import { PlaceholderPalette } from "@/features/templates/editor/PlaceholderPalette";
 import { AgentChatPanel } from "@/features/templates/editor/AgentChatPanel";
 import { FidelityPanel } from "@/features/templates/editor/FidelityPanel";
+import { HistoryPanel } from "@/features/templates/editor/HistoryPanel";
 
 const BLANK = "<p></p>";
 
@@ -54,6 +55,17 @@ export function RichHtmlPanel({
   const seededRef = useRef(template.html_body);
   const seededCssRef = useRef(template.css);
   const apiRef = useRef<TemplateEditorApi | null>(null);
+  // Whether the editor holds edits not yet reflected in the last-seeded (i.e.
+  // persisted) body/css. Derived in an effect rather than during render so we
+  // can read the seed refs without tripping the react-hooks/refs lint rule.
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
+  useEffect(() => {
+    setHasUnsavedChanges(
+      html !== (seededRef.current ?? BLANK) ||
+        css !== (seededCssRef.current ?? ""),
+    );
+  }, [html, css, template]);
 
   useEffect(() => {
     if (template.html_body !== seededRef.current) {
@@ -144,7 +156,11 @@ export function RichHtmlPanel({
     }
   };
 
-  const showUpload = !template.html_body && !template.source_file_id;
+  // Hide the "start from a document" card once there's a source, a persisted
+  // body, OR the user has typed anything into the blank editor locally — so the
+  // card dismisses on first keystroke without waiting for a Save.
+  const showUpload =
+    !template.source_file_id && html === BLANK && !template.html_body;
 
   return (
     <div className="space-y-6">
@@ -167,7 +183,7 @@ export function RichHtmlPanel({
       )}
 
       <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="sticky top-14 z-10 -mx-6 flex flex-wrap items-center justify-between gap-3 border-b bg-background/95 px-6 py-3 backdrop-blur">
           <div className="space-y-1">
             <h2 className="text-sm font-medium">Design your template</h2>
             <p className="text-xs text-muted-foreground">
@@ -198,6 +214,7 @@ export function RichHtmlPanel({
               <TabsTrigger value="insert">Insert field</TabsTrigger>
               <TabsTrigger value="agent">AI edit</TabsTrigger>
               <TabsTrigger value="fidelity">Fidelity</TabsTrigger>
+              <TabsTrigger value="history">History</TabsTrigger>
             </TabsList>
             <TabsContent value="insert" className="min-h-0">
               <PlaceholderPalette
@@ -232,6 +249,15 @@ export function RichHtmlPanel({
                 template={template}
                 onSendToAgent={handleSendToAgent}
                 autoRunKey={autoRunKey}
+              />
+            </TabsContent>
+            {/* NOT forceMounted: natural remount-on-activate refetches the latest
+                revisions each time the tab is opened. */}
+            <TabsContent value="history" className="min-h-0">
+              <HistoryPanel
+                templateId={template.id}
+                hasUnsavedChanges={hasUnsavedChanges}
+                onRestored={onChange}
               />
             </TabsContent>
           </Tabs>

@@ -69,6 +69,14 @@ class FieldCatalogueEntry(BaseModel):
     kind: str  # "scalar" | "number" | "text"
 
 
+class TemplateLint(BaseModel):
+    """Advisory placeholder<->doc-type consistency check (Phase 5)."""
+
+    orphaned_paths: list[str] = []  # referenced paths the doc type's catalogue no longer offers
+    bound_count: int = 0  # placeholder/mapping occurrences resolving to a known path
+    total_count: int = 0  # total occurrences referencing any path
+
+
 class TemplateDetail(TemplateSummary):
     """List fields plus the template body, styles, and field/placeholder maps."""
 
@@ -79,6 +87,7 @@ class TemplateDetail(TemplateSummary):
     form_fields: list[TemplateFormField] = []
     form_field_map: dict
     placeholder_map: dict
+    lint: TemplateLint = TemplateLint()
 
 
 class TemplateRevisionInfo(BaseModel):

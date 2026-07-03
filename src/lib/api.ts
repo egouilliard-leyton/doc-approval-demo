@@ -275,6 +275,21 @@ export async function listTemplateRevisions(
   return request<TemplateRevisionInfo[]>(`/templates/${id}/revisions`);
 }
 
+/**
+ * Roll the template's html/css back to a prior snapshot. The backend snapshots
+ * the current state first, so a restore is itself undoable. Returns the updated
+ * template.
+ */
+export async function restoreTemplateRevision(
+  templateId: string,
+  revisionId: string,
+): Promise<TemplateDetail> {
+  return request<TemplateDetail>(
+    `/templates/${templateId}/revisions/${revisionId}/restore`,
+    { method: "POST" },
+  );
+}
+
 // --- persisted stage results (GET; 404 when a stage hasn't run) ---------------
 
 export async function getPrescan(id: string): Promise<QualityReport> {
