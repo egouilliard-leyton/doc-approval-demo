@@ -224,3 +224,20 @@ def test_preview_unknown_type_404():
             json={"sample_text": "anything", "provider": "mock"},
         )
         assert resp.status_code == 404, resp.text
+
+
+# --- Phase: active-learning Wave 1 — extraction-definition accessor ----------
+
+
+def test_get_extraction_definition_invoice_fields():
+    """The built-in invoice definition resolves with its expected scalar fields."""
+    defn = doc_types.get_extraction_definition("invoice")
+    field_names = {f.name for f in defn.fields}
+    assert {"invoice_no", "vendor", "total"} <= field_names
+
+
+def test_get_extraction_definition_unknown_raises():
+    import pytest
+
+    with pytest.raises(ValueError):
+        doc_types.get_extraction_definition("nope")

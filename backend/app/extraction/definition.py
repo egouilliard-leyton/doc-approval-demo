@@ -20,7 +20,7 @@ from typing import Literal
 
 from pydantic import create_model
 
-from app.schemas import FieldValue
+from app.schemas import FieldCorrection, FieldValue
 
 from .base import (
     DocTypeSpec,
@@ -270,6 +270,56 @@ def _make_examples_factory(examples: list[ExampleData]) -> Callable[[], list]:
         ]
 
     return factory
+
+
+def build_correction_examples(
+    corrections: list[FieldCorrection],
+    defn: DocTypeDefinition,
+    max_examples: int,
+) -> list[ExampleData]:
+    """Synthesise few-shot examples from a doc type's past reviewer corrections.
+
+    Only scalar fields that exist on ``defn`` with a non-empty ``new_value`` qualify:
+    a correction is turned into a tiny ``label: value`` example so the extractor sees
+    the reviewer-approved value verbatim next time. Corrections are deduped by
+    ``field_path`` (keeping the newest), sorted newest-first, and capped at
+    ``max_examples``. Pure — no DB or langextract import.
+    """
+    name_to_field = {f.name: f for f in defn.fields}
+
+    latest: dict[str, FieldCorrection] = {}
+    for c in corrections:
+        fd = name_to_field.get(c.field_path)
+        if fd is None or fd.kind != "scalar" or c.new_value in (None, ""):
+            continue
+        prev = latest.get(c.field_path)
+        if prev is None or c.updated_at > prev.updated_at:
+            latest[c.field_path] = c
+
+    kept = sorted(latest.values(), key=lambda c: c.updated_at, reverse=True)[:max_examples]
+
+    examples: list[ExampleData] = []
+    for c in kept:
+        fd = name_to_field[c.field_path]
+        label = fd.name.replace("_", " ").title()
+        value = str(c.new_value)
+        examples.append(
+            ExampleData(
+                text=f"{label}: {value}",
+                extractions=[ExampleExtraction(cls=fd.cls, text=value)],
+            )
+        )
+    return examples
+
+
+def _augment_examples_factory(
+    base_factory: Callable[[], list], extra: list[ExampleData]
+) -> Callable[[], list]:
+    """Lazily append ``extra``'s examples to whatever ``base_factory`` produces.
+
+    The closure stays lazy so langextract is still only imported when the engine runs.
+    """
+    return lambda: base_factory() + _make_examples_factory(extra)()
 
 
 def build_prompt(defn: DocTypeDefinition) -> str:

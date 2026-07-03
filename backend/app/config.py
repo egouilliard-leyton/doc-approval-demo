@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     structuring_sectioning: bool = True  # kill switch: False = always single-blob path.
     structuring_section_min_chars: int = 500  # a raw section shorter than this coalesces into a neighbor.
     structuring_max_sections: int = 40  # circuit breaker: more than this -> whole-doc fallback + warning.
+    # Active-learning loop: inject a doc type's past reviewer corrections as extra
+    # few-shot examples so the extractor stops repeating the same mistakes. NO-OP for
+    # the mock provider or when there are no corrections (spec stays byte-identical).
+    few_shot_corrections_enabled: bool = True
+    few_shot_max_examples: int = 5
 
     # Agent decision layer (Phase 5). A single OpenRouter call supplies qualitative
     # judgment; the deterministic rules below run in code and the LLM can never

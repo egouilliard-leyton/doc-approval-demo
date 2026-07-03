@@ -15,6 +15,7 @@ assembly live in ``app/extraction``.
 from __future__ import annotations
 
 import bisect
+import dataclasses
 import json
 import re
 from dataclasses import dataclass
@@ -23,10 +24,19 @@ from time import perf_counter
 from pydantic import BaseModel
 
 from app.config import settings
-from app.extraction import get_spec
+from app.extraction import get_extraction_definition, get_spec
 from app.extraction.base import FlatExtraction, GroundingCtx, ground_field
+from app.extraction.definition import _augment_examples_factory, build_correction_examples
 from app.models import Document, DocumentStatus
-from app.schemas import FieldValue, Grounding, OCRPage, OCRResult, OCRTable, StructuredResult
+from app.schemas import (
+    FieldCorrection,
+    FieldValue,
+    Grounding,
+    OCRPage,
+    OCRResult,
+    OCRTable,
+    StructuredResult,
+)
 from app import storage
 
 PROVIDERS = {"langextract", "mock"}
@@ -37,6 +47,7 @@ def run_structuring(
     ocr_result: OCRResult,
     doc_type: str,
     provider: str = "",
+    corrections: list[FieldCorrection] | None = None,
 ) -> StructuredResult:
     """Structure a document's OCR text into a validated, grounded result."""
     provider = provider or settings.structuring_provider
@@ -46,6 +57,18 @@ def run_structuring(
         )
 
     spec = get_spec(doc_type)
+    # Active-learning loop: fold a doc type's past reviewer corrections into the
+    # few-shot examples so the extractor stops repeating the same mistakes. NO-OP for
+    # the mock provider, an empty correction list, or the disabled flag — in every one
+    # of those cases ``spec`` stays byte-identical to today's.
+    if provider != "mock" and settings.few_shot_corrections_enabled and corrections:
+        defn = get_extraction_definition(doc_type)
+        examples = build_correction_examples(corrections, defn, settings.few_shot_max_examples)
+        if examples:
+            spec = dataclasses.replace(
+                spec,
+                examples_factory=_augment_examples_factory(spec.examples_factory, examples),
+            )
     # Feed the extractor the page text PLUS each page's table markdown: OCR engines
     # (Docling especially) keep tables out of ``full_text``, so invoice numbers,
     # dates and totals live only in the tables. Grounding uses the same augmented

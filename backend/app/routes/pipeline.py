@@ -32,6 +32,7 @@ from app.rules import DecisionContext
 from app.schemas import (
     ClassifyResult,
     DecisionResult,
+    FieldCorrection,
     FieldEditRequest,
     OCRResult,
     QualityReport,
@@ -311,8 +312,34 @@ async def structure_document(
         )
     ocr_result = OCRResult(**ocr_data)
 
+    # Active-learning loop: feed this doc type's past reviewer corrections into
+    # structuring so the extractor stops repeating the same mistakes (NO-OP for the
+    # mock provider / no corrections / disabled flag — see run_structuring).
+    rows = session.exec(
+        select(FieldCorrectionRow).where(FieldCorrectionRow.doc_type == resolved_type)
+    ).all()
+    corrections = [
+        FieldCorrection(
+            document_id=row.document_id,
+            doc_type=row.doc_type,
+            field_path=row.field_path,
+            original_value=row.original_value,
+            new_value=row.new_value,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+        for row in rows
+    ]
+
     result = await _run_stage(
-        "Structuring", settings.llm_timeout_s, run_structuring, doc, ocr_result, resolved_type, provider
+        "Structuring",
+        settings.llm_timeout_s,
+        run_structuring,
+        doc,
+        ocr_result,
+        resolved_type,
+        provider,
+        corrections=corrections,
     )
 
     # ``run`` is non-None here: an OCR result was found above, which requires a run.

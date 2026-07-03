@@ -18,4 +18,11 @@ def get_spec(doc_type: str) -> DocTypeSpec:
     return doc_types.get_spec(doc_type)
 
 
-__all__ = ["get_spec", "DocTypeSpec"]
+def get_extraction_definition(doc_type: str):
+    """Return the declarative definition for a document type (delegates to the registry)."""
+    from app import doc_types
+
+    return doc_types.get_extraction_definition(doc_type)
+
+
+__all__ = ["get_spec", "get_extraction_definition", "DocTypeSpec"]

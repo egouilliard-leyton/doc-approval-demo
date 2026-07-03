@@ -33,6 +33,7 @@ class _RegistryEntry:
     citation_paths: list[str]
     builtin: bool
     version: int
+    definition: object = None
 
 
 _REGISTRY: dict[str, _RegistryEntry] = {}
@@ -50,9 +51,13 @@ def _ensure_builtins() -> None:
     if _BUILTINS_LOADED:
         return
 
+    from app.extraction.contract import CONTRACT_DEFINITION
     from app.extraction.contract import SPEC as CON_SPEC
+    from app.extraction.delivery_note import DELIVERY_NOTE_DEFINITION
     from app.extraction.delivery_note import SPEC as DN_SPEC
+    from app.extraction.invoice import INVOICE_DEFINITION
     from app.extraction.invoice import SPEC as INV_SPEC
+    from app.extraction.po import PO_DEFINITION
     from app.extraction.po import SPEC as PO_SPEC
     from app.rules.contract import CONTRACT_RULE_DEFINITION
     from app.rules.definition import build_ruleset
@@ -66,6 +71,7 @@ def _ensure_builtins() -> None:
         citation_paths=INVOICE_RULE_DEFINITION.citation_paths,
         builtin=True,
         version=0,
+        definition=INVOICE_DEFINITION,
     )
     _REGISTRY["contract"] = _RegistryEntry(
         spec=CON_SPEC,
@@ -73,6 +79,7 @@ def _ensure_builtins() -> None:
         citation_paths=CONTRACT_RULE_DEFINITION.citation_paths,
         builtin=True,
         version=0,
+        definition=CONTRACT_DEFINITION,
     )
     _REGISTRY["po"] = _RegistryEntry(
         spec=PO_SPEC,
@@ -80,6 +87,7 @@ def _ensure_builtins() -> None:
         citation_paths=PO_RULE_DEFINITION.citation_paths,
         builtin=True,
         version=0,
+        definition=PO_DEFINITION,
     )
     _REGISTRY["delivery_note"] = _RegistryEntry(
         spec=DN_SPEC,
@@ -87,6 +95,7 @@ def _ensure_builtins() -> None:
         citation_paths=DELIVERY_NOTE_RULE_DEFINITION.citation_paths,
         builtin=True,
         version=0,
+        definition=DELIVERY_NOTE_DEFINITION,
     )
     _BUILTINS_LOADED = True
 
@@ -101,6 +110,18 @@ def get_spec(name: str):
         return _REGISTRY[name].spec
     except KeyError:
         raise ValueError(f"No extraction spec for doc_type {name!r}.") from None
+
+
+def get_extraction_definition(name: str):
+    """Return the declarative :class:`DocTypeDefinition` for ``name``.
+
+    Raises ``ValueError`` if ``name`` is unknown, mirroring :func:`get_spec`.
+    """
+    _ensure_builtins()
+    try:
+        return _REGISTRY[name].definition
+    except KeyError:
+        raise ValueError(f"No extraction definition for doc_type {name!r}.") from None
 
 
 def get_ruleset(name: str):
@@ -145,7 +166,8 @@ def register_from_row(row) -> None:
     from app.serialization import dict_to_extraction_defn, dict_to_rule_defn
 
     try:
-        spec = build_spec(dict_to_extraction_defn(row.extraction_definition))
+        definition = dict_to_extraction_defn(row.extraction_definition)
+        spec = build_spec(definition)
         ruleset = build_ruleset(dict_to_rule_defn(row.rule_definition))
     except Exception as exc:  # noqa: BLE001 — surface as a ValueError for the caller
         raise ValueError(f"Could not build doc type {row.name!r}: {exc}") from exc
@@ -156,6 +178,7 @@ def register_from_row(row) -> None:
         citation_paths=list(row.citation_paths),
         builtin=row.builtin,
         version=row.version,
+        definition=definition,
     )
 
 
@@ -238,6 +261,7 @@ def load_custom_types(session) -> None:
 
 __all__ = [
     "get_spec",
+    "get_extraction_definition",
     "get_ruleset",
     "get_citation_paths",
     "is_registered",

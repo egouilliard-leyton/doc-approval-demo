@@ -426,6 +426,20 @@ class FieldCorrection(BaseModel):
     updated_at: datetime
 
 
+class CorrectionExample(BaseModel):
+    """One document's corrections rolled up as a training-style example row.
+
+    Emitted by the ``examples``-shaped corrections export: the reviewer-approved
+    ``fields`` for a document, optionally paired with the OCR text they were read from.
+    """
+
+    document_id: str
+    doc_type: str
+    fields: dict
+    corrected_at: datetime
+    ocr_text: str | None = None
+
+
 # --- admin overview ----------------------------------------------------------
 
 

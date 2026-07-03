@@ -346,6 +346,26 @@ export async function listCorrections(
   });
 }
 
+/**
+ * Build a download URL for the corrections export endpoint. Like `fileUrl`, this
+ * returns a plain absolute URL string rather than going through `request()`:
+ * the endpoint streams a file (application/x-ndjson attachment) meant to be
+ * fetched by the browser via an `<a download>`, not parsed as JSON by the app.
+ * Only the provided params are appended.
+ */
+export function correctionsExportUrl(opts: {
+  docType?: string;
+  shape?: "raw" | "examples";
+  includeText?: boolean;
+}): string {
+  const params = new URLSearchParams();
+  if (opts.docType) params.set("doc_type", opts.docType);
+  if (opts.shape) params.set("shape", opts.shape);
+  if (opts.includeText) params.set("include_text", "true");
+  const qs = params.toString();
+  return `${API_BASE_URL}/corrections/export${qs ? `?${qs}` : ""}`;
+}
+
 // --- AI doc-type wizard ------------------------------------------------------
 
 export async function assistTurn(req: AssistRequest): Promise<AssistResponse> {
