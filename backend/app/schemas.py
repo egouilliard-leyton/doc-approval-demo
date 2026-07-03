@@ -456,6 +456,39 @@ class OverviewStats(BaseModel):
     avg_extraction_confidence: float | None
 
 
+# --- review queue ------------------------------------------------------------
+
+
+class ReviewQueueField(BaseModel):
+    """One at-risk extracted field: below the confidence threshold, not yet edited."""
+
+    path: str  # dotted path matching the PATCH /structure/field grammar
+    value: str | float | int | bool | None
+    confidence: float
+    grounding: Grounding | None = None
+
+
+class ReviewQueueDocument(BaseModel):
+    """A document with one or more at-risk fields, plus its review context."""
+
+    document_id: str
+    filename: str
+    doc_type: str
+    status: DocumentStatus
+    last_decision: Decision | None = None  # annotation only; never filters the queue
+    at_risk_count: int
+    lowest_confidence: float
+    fields: list[ReviewQueueField]  # worst-first (confidence ascending)
+
+
+class ReviewQueueResponse(BaseModel):
+    """The review queue: documents with low-confidence fields needing attention."""
+
+    threshold: float
+    total_at_risk_fields: int
+    documents: list[ReviewQueueDocument]
+
+
 # --- Phase 1: multi-document cases -------------------------------------------
 
 

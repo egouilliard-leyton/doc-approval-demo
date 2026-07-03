@@ -24,6 +24,7 @@ import type {
   OpenRouterModel,
   OverviewStats,
   QualityReport,
+  ReviewQueueResponse,
   Sheet,
   StructuredResult,
   VlmEngineRow,
@@ -364,6 +365,18 @@ export function correctionsExportUrl(opts: {
   if (opts.includeText) params.set("include_text", "true");
   const qs = params.toString();
   return `${API_BASE_URL}/corrections/export${qs ? `?${qs}` : ""}`;
+}
+
+/**
+ * At-risk fields grouped by document (confidence below the threshold). Documents
+ * come worst-first and fields worst-confidence-first from the backend.
+ */
+export async function listReviewQueue(
+  opts: { threshold?: number; docType?: string } = {},
+): Promise<ReviewQueueResponse> {
+  return request<ReviewQueueResponse>("/review-queue", {
+    query: { threshold: opts.threshold, doc_type: opts.docType },
+  });
 }
 
 // --- AI doc-type wizard ------------------------------------------------------

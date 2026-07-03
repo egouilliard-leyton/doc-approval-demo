@@ -94,6 +94,13 @@ describe("parseHash", () => {
     });
   });
 
+  it("parses the review-queue section", () => {
+    expect(parseHash("#/admin/review")).toEqual({
+      view: "admin",
+      section: "review",
+    });
+  });
+
   it("falls back to overview on an unknown admin section", () => {
     expect(parseHash("#/admin/bogus")).toEqual({
       view: "admin",
@@ -156,6 +163,9 @@ describe("formatHash", () => {
     expect(formatHash({ view: "admin", section: "documents" })).toBe(
       "#/admin/documents",
     );
+    expect(formatHash({ view: "admin", section: "review" })).toBe(
+      "#/admin/review",
+    );
     expect(
       formatHash({ view: "admin", section: "config", doctype: "invoice" }),
     ).toBe("#/admin/config/doctype/invoice");
@@ -180,6 +190,7 @@ describe("round-trip parseHash(formatHash(r))", () => {
     { view: "case", id: "case_9", member: "doc_3" },
     { view: "admin", section: "overview" },
     { view: "admin", section: "corrections" },
+    { view: "admin", section: "review" },
     { view: "admin", section: "config", doctype: "invoice" },
     { view: "admin", section: "eval" },
     { view: "admin", section: "eval", runId: "run_42" },

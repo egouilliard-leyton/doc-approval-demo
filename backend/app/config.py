@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     structuring_max_char_buffer: int = 8000  # chunk size fed to the model.
     structuring_extraction_passes: int = 2  # >1 improves recall at ~2x latency.
     extraction_confidence_warn: float = 0.60  # overall conf below this -> warn.
+    # Per-field review-queue cut-off: a leaf field whose confidence is below this is
+    # "at risk" and surfaced for reviewer attention. 0.5 == the ConfidencePill
+    # red/amber boundary in the UI. Env-overridable; overridable per-request via ?threshold=.
+    field_review_confidence_threshold: float = 0.5
     # Section-aware extraction (accuracy over cost). Partition a document into
     # heading-delimited sections and extract each against its own grounded substrate,
     # then merge — instead of flattening the whole document into one window.

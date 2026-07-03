@@ -14,7 +14,8 @@ export type AdminSection =
   | "documents"
   | "corrections"
   | "config"
-  | "eval";
+  | "eval"
+  | "review";
 
 /** A parsed location — the single shape the shell routes on. */
 export type Route =
@@ -39,6 +40,7 @@ const ADMIN_SECTIONS: AdminSection[] = [
   "corrections",
   "config",
   "eval",
+  "review",
 ];
 
 /** Tolerant tab coercion: an unknown/missing tab falls back to the default. */

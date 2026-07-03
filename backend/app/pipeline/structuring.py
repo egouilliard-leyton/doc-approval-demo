@@ -18,6 +18,7 @@ import bisect
 import dataclasses
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from time import perf_counter
 
@@ -813,22 +814,43 @@ def _overall_confidence(fields: dict, core_paths: list[str]) -> float:
     return round(sum(confs) / len(confs), 4) if confs else 0.0
 
 
-def _flatten_grounding(fields: dict, prefix: str = "", out: dict[str, Grounding] | None = None) -> dict[str, Grounding]:
-    """Flatten every grounded field into dotted-path -> Grounding for the hover UI."""
-    if out is None:
-        out = {}
+def _walk_leaves(fields: dict, prefix: str = "") -> Iterator[tuple[str, dict]]:
+    """Yield ``(dotted_path, raw FieldValue dict)`` for every leaf FieldValue.
+
+    Shared recursion behind both the grounding-only view (``_flatten_grounding``)
+    and the full flattening (``flatten_field_values``). The dotted-path grammar is
+    identical to the original grounding flattener: descending into a list appends
+    ``.{i}`` (the item index) and descending into a dict appends ``.{key}``.
+    """
     if _is_field_value(fields):
-        grounding = fields["grounding"]  # type: ignore[index]
-        if grounding is not None:
-            out[prefix] = Grounding(**grounding)
-        return out
+        yield prefix, fields
+        return
     if isinstance(fields, list):
         for i, item in enumerate(fields):
-            _flatten_grounding(item, f"{prefix}.{i}" if prefix else str(i), out)
+            yield from _walk_leaves(item, f"{prefix}.{i}" if prefix else str(i))
     elif isinstance(fields, dict):
         for key, value in fields.items():
-            _flatten_grounding(value, f"{prefix}.{key}" if prefix else key, out)
+            yield from _walk_leaves(value, f"{prefix}.{key}" if prefix else key)
+
+
+def _flatten_grounding(fields: dict, prefix: str = "") -> dict[str, Grounding]:
+    """Flatten every grounded field into dotted-path -> Grounding for the hover UI."""
+    out: dict[str, Grounding] = {}
+    for path, node in _walk_leaves(fields, prefix):
+        grounding = node["grounding"]
+        if grounding is not None:
+            out[path] = Grounding(**grounding)
     return out
+
+
+def flatten_field_values(fields: dict) -> dict[str, dict]:
+    """Flatten every leaf into dotted-path -> raw ``FieldValue`` dict.
+
+    Public counterpart to ``_flatten_grounding`` (which keeps only the grounding
+    view): the review-queue route consumes the full leaf nodes (value, confidence,
+    edited flag, grounding) keyed by the same dotted paths the PATCH endpoint uses.
+    """
+    return dict(_walk_leaves(fields))
 
 
 # --- Docling table fallback (minimal, best-effort) ---------------------------

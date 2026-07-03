@@ -7,6 +7,7 @@ import {
   GitCompare,
   Settings2,
   Target,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AdminSection, Route } from "@/lib/route";
@@ -16,6 +17,7 @@ import { DocumentsSection } from "@/features/admin/DocumentsSection";
 import { CorrectionsSection } from "@/features/admin/CorrectionsSection";
 import { ConfigurationSection } from "@/features/admin/ConfigurationSection";
 import { EvalSection } from "@/features/admin/EvalSection";
+import { ReviewQueueSection } from "@/features/admin/ReviewQueueSection";
 
 const SECTIONS: {
   id: AdminSection;
@@ -25,6 +27,7 @@ const SECTIONS: {
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "documents", label: "Documents", icon: FileText },
   { id: "corrections", label: "Corrections", icon: GitCompare },
+  { id: "review", label: "Review queue", icon: AlertTriangle },
   { id: "config", label: "Configuration", icon: Settings2 },
   { id: "eval", label: "Evaluation", icon: Target },
 ];
@@ -33,6 +36,7 @@ const TITLE: Record<AdminSection, string> = {
   overview: "Overview",
   documents: "Documents",
   corrections: "Corrections",
+  review: "Review queue",
   config: "Configuration",
   eval: "Evaluation",
 };
@@ -41,6 +45,7 @@ const SUBTITLE: Record<AdminSection, string> = {
   overview: "System health at a glance.",
   documents: "Every document — click one to open it in the workspace.",
   corrections: "Reviewer edits across all documents (likely extraction errors).",
+  review: "Low-confidence fields to review — worst first.",
   config: "Manage document types and OCR models.",
   eval: "Score extraction engines against golden samples.",
 };
@@ -101,6 +106,7 @@ export function AdminPanel({
         {section === "corrections" && (
           <CorrectionsSection onOpenDocument={onOpenDocument} />
         )}
+        {section === "review" && <ReviewQueueSection navigate={navigate} />}
         {section === "config" && <ConfigurationSection focusName={doctype} />}
         {section === "eval" && (
           <EvalSection runId={runId} onOpenDocument={onOpenDocument} />

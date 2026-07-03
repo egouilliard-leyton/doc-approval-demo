@@ -22,6 +22,7 @@ from app.routes import (
     evaluation,
     overview,
     pipeline,
+    review_queue,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ app.include_router(doctype_assist.router)
 app.include_router(engines_route.router)
 app.include_router(corrections.router)
 app.include_router(overview.router)
+app.include_router(review_queue.router)
 app.include_router(evaluation.router)
 
 

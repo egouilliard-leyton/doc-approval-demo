@@ -374,6 +374,35 @@ export interface CaseDecisionResult {
   llm_decision: Decision | null;
 }
 
+// --- review queue (per-field risk) -------------------------------------------
+
+/** One at-risk field surfaced in the review queue, with its confidence + grounding. */
+export interface ReviewQueueField {
+  path: string;
+  value: string | number | boolean | null;
+  confidence: number;
+  grounding: Grounding | null;
+}
+
+/** A document with at-risk fields, sorted worst-first by the backend. */
+export interface ReviewQueueDocument {
+  document_id: string;
+  filename: string;
+  doc_type: string;
+  status: DocumentStatus;
+  last_decision: Decision | null;
+  at_risk_count: number;
+  lowest_confidence: number;
+  fields: ReviewQueueField[];
+}
+
+/** The full review queue: documents worst-first, fields worst-confidence-first. */
+export interface ReviewQueueResponse {
+  threshold: number;
+  total_at_risk_fields: number;
+  documents: ReviewQueueDocument[];
+}
+
 // --- accuracy-evaluation harness ---------------------------------------------
 
 /** One scored field: expected vs actual, with exact/normalized match verdicts. */
