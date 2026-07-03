@@ -1,6 +1,6 @@
 // TypeScript mirrors of the configurable doc-type backend definitions and DTOs.
 // Extraction shapes mirror backend/app/extraction/definition.py (FieldDef/SubFieldDef),
-// rule shapes mirror backend/app/rules/definition.py (the 7 serializable rule kinds),
+// rule shapes mirror backend/app/rules/definition.py (the 23 serializable rule kinds),
 // and the DTOs mirror backend/app/schemas.py (DocType* models). Pure types, no runtime.
 import type { Check } from "@/lib/types";
 

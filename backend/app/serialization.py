@@ -212,8 +212,8 @@ def validate_custom_extraction_dict(d: dict) -> list[str]:
     An empty list means the definition is structurally sound. Checks:
 
     * ``name`` is a string and ``fields`` / ``core_paths`` are lists.
-    * each field has a unique non-empty string ``name``, a ``kind`` in the five valid
-      kinds, and a ``coerce`` in ``{text, number}``;
+    * each field has a unique non-empty string ``name``, a ``kind`` in
+      ``_VALID_FIELD_KINDS``, and a ``coerce`` in ``{text, number}``;
     * ``sub_fields`` is non-empty IFF ``kind`` is composite/list_composite, and each
       sub-field has a ``name``, a ``source`` in ``{span, attribute}``, and a valid
       ``coerce``;

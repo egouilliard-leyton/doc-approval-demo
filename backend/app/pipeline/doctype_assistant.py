@@ -20,6 +20,7 @@ import json
 
 from app.config import settings
 from app.extraction.definition import build_spec
+from app.pipeline.doctype_schema_reference import build_schema_reference
 from app.schemas import AssistRequest, AssistResponse, DocTypeCreate
 from app.serialization import (
     dict_to_extraction_defn,
@@ -27,7 +28,10 @@ from app.serialization import (
     validate_custom_rule_dict,
 )
 
-_SYSTEM_PROMPT = """\
+# The head + tail are static; the field/rule/DSL catalogue in the middle is DERIVED from
+# the live dataclasses (see doctype_schema_reference) so the prompt can never fall behind
+# the validator when a new primitive is added.
+_PROMPT_HEAD = """\
 You are a document-type design wizard. You help a user turn a description of a kind of \
 document (plus any uploaded process/example documents) into a precise, machine-runnable \
 document-type definition for an approval pipeline.
@@ -41,6 +45,10 @@ keep the markdown spec updated to reflect everything decided so far, and set \
 follow-up questions or finalize.
 - COMPLETE: when the design is unambiguous and the user is satisfied, set "done": true, \
 emit the full "draft_doctype" object, and return "questions": [].
+
+Prefer a dedicated rule kind over an "expression" or "llm_advisory" whenever one fits — \
+they are deterministic and clearer. Reach for "expression" only for a check no dedicated \
+kind covers, and "llm_advisory" only for genuinely subjective judgments.
 
 Respond ONLY with a JSON object (no markdown fences) of exactly this shape:
 {
@@ -60,54 +68,19 @@ The "draft_doctype" object MUST follow this contract exactly:
     "prompt": "",
     "core_paths": ["<declared field name>", ...],
     "examples": [],
-    "fields": [
-      {
-        "name": "<field name>",
-        "kind": "scalar"|"presence"|"list_scalar"|"list_composite"|"composite",
-        "cls": "<extraction class, see cls rule>",
-        "coerce": "text"|"number",
-        "is_core": false,
-        "sub_fields": [
-          {"name": "<sub-field>", "source": "span"|"attribute", "coerce": "text"|"number"}
-        ]
-      }
-    ]
+    "fields": [ ...field objects, see "Extraction fields" below... ]
   },
   "rule_definition": {
     "name": "<same as top-level name>",
     "citation_paths": ["<declared field name>", ...],
-    "rules": [ ...rule objects... ]
+    "rules": [ ...rule objects, see "Approval rule kinds" below... ]
   },
   "citation_paths": ["<declared field name>", ...]
-}
+}"""
 
-Field rules:
-- "sub_fields" MUST be non-empty IF AND ONLY IF "kind" is "composite" or \
-"list_composite"; for every other kind it MUST be empty/omitted.
-- Each sub-field is {"name", "source" ("span" reads the parent's verbatim text, \
-"attribute" reads a named column), "coerce"}.
-- "coerce" is "text" or "number" for both fields and sub-fields.
-
-The "cls" rule: "cls" is the extraction class the model emits for a field. Derive it \
-from the field name as a singular snake/lower token that the model can recognise. \
-Examples: line_items -> LineItem, invoice_no -> InvoiceNo, parties -> Party, \
-vendor -> Vendor, total -> Total.
-
-The six rule kinds (every rule object carries "kind", "name", "severity" \
-("hard"|"review"|"advisory") EXCEPT llm_advisory) plus llm_advisory:
-- "presence": {kind, name, severity, field_path}
-- "threshold": {kind, name, severity, field_path, op ("lte"|"gte"|"lt"|"gt"), and \
-EXACTLY ONE of "threshold" (a number) or "threshold_setting" (a settings name)}
-- "arithmetic": {kind, name, severity, result_path, addend_a_path, addend_b_path, \
-"tolerance"}
-- "set_membership": {kind, name, severity, field_path, and EXACTLY ONE of \
-"allowed_list" (a list of strings) or "allowed_list_setting"}
-- "field_dependency": {kind, name, severity, antecedent_path, consequent_path}
-- "uniqueness": {kind, name, severity, field_path}
-- "llm_advisory": {kind, name, question} — NO "severity" (it is forced to "review").
-
+_PROMPT_TAIL = """\
 Hard requirements:
-- Every "*_path" in a rule MUST be the name of a declared extraction field.
+- Every "*_path" / "*_paths" in a rule MUST name a declared extraction field.
 - extraction_definition.name == rule_definition.name == top-level name.
 - Always set "prompt": "" and "examples": [] in extraction_definition.
 
@@ -135,6 +108,14 @@ Always output "updated_spec_markdown" using EXACTLY this structure:
 <bullet list of anything still unresolved or assumed>
 
 Respond ONLY with a JSON object, no markdown fences."""
+
+
+def _build_system_prompt() -> str:
+    """Assemble the system prompt, injecting the dataclass-derived schema catalogue."""
+    return f"{_PROMPT_HEAD}\n\n{build_schema_reference()}\n\n{_PROMPT_TAIL}"
+
+
+_SYSTEM_PROMPT = _build_system_prompt()
 
 
 def _build_context_block(
