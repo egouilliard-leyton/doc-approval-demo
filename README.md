@@ -77,11 +77,48 @@ defaults). The essentials:
 override** a hard-failed rule; low OCR/extraction confidence or a poor scan caps the decision
 at `needs_review`.
 
+## Templates & document generation
+
+Once a document is extracted, the **Templates** section (top-nav → _Templates_, or `#/templates`)
+turns those fields into a filled, downloadable document. A template is tied to a doc type and
+works in one of two modes, auto-detected from the source you upload:
+
+- **Form-fill** — upload a fillable **PDF** (AcroForm). Its fields are enumerated, an
+  AI/heuristic mapper suggests which extracted field each maps to, and _Generate_ produces a
+  filled PDF (with optional signature-image stamping). Permissive stack: **pypdf** + **reportlab**.
+- **Rich-HTML** — upload a **DOCX / formatted PDF** (converted to editable HTML via
+  **mammoth** / **Docling**), or start blank. Author it in a **TipTap** WYSIWYG editor, drop in
+  `{{field}}` placeholders from the catalogue palette, and _Generate_ renders **PDF**
+  (**WeasyPrint**) and/or **DOCX** (**html4docx**).
+
+Three AI assists layer on top of the rich-HTML editor:
+
+- **AI edit** — a streaming (SSE) authoring agent that edits the HTML/CSS from natural language
+  ("make the header navy, bullets 11pt"); every edit is a revision.
+- **Fidelity (auto-validate on upload)** — renders the template to page images (**pypdfium2**)
+  and a vision model checks it against your uploaded example, showing a side-by-side + a
+  severity-coded discrepancy checklist; one click hands the fixes to the AI editor.
+- **History** — every edit snapshots a revision; restore rolls back (and is itself undoable).
+
+Key endpoints (all under `/templates`): CRUD, `POST /{id}/source`, `GET /{id}/catalogue`,
+`POST /{id}/suggest-mapping`, `POST /{id}/generate`, `POST /{id}/agent` (SSE),
+`POST /{id}/qa`, `GET /{id}/revisions`, `POST /{id}/revisions/{rev}/restore`.
+
+> **License note:** all generation libraries are permissive (BSD/MIT/Apache). New rasterization
+> uses **pypdfium2** (not the AGPL PyMuPDF, which is retained only for the pre-existing ingestion
+> path). WeasyPrint needs system **Pango + GDK-PixBuf** (`apt install libpango-1.0-0 libgdk-pixbuf2.0-0`);
+> without them, DOCX output still works and PDF degrades gracefully. Install the generation extra
+> with `uv sync --extra docgen` (already included in `make install`).
+
 ## Tests
 
 ```bash
-make test   # backend pytest — fully offline (mock OCR engine + mock LLM provider, no API key)
+make test   # backend pytest — fully offline (mock OCR/LLM/vision providers, no API key)
 ```
+
+The template/generation pipeline is fully offline-tested (WeasyPrint renders real PDFs,
+pypdfium2 rasterizes for real, the LLM/vision legs use deterministic mocks), including SSE
+streaming, vision-QA, and end-to-end smoke tests for both generation journeys.
 
 ## License
 
