@@ -381,6 +381,40 @@ def scenario_assist_wizard(client: TestClient) -> None:
         _settings.openrouter_api_key = saved_key
 
 
+def scenario_eval(client: TestClient) -> None:
+    """Accuracy-evaluation harness: list goldens, run mock/mock, list runs (offline)."""
+    section("6. Accuracy-evaluation harness (goldens / run / runs)")
+
+    goldens = client.get("/eval/goldens")
+    ok_list = check(
+        "GET /eval/goldens -> 200", goldens.status_code == 200, goldens.text[:200]
+    )
+    if ok_list:
+        ids = {g["id"] for g in goldens.json()}
+        check(
+            "goldens include mock-baseline",
+            "mock-baseline" in ids,
+            f"ids={sorted(ids)}",
+        )
+
+    run = client.post("/eval/run", json={"golden_id": "mock-baseline", "engine": "mock", "provider": "mock"})
+    ok_run = check("POST /eval/run (mock/mock) -> 200", run.status_code == 200, run.text[:200])
+    if ok_run:
+        body = run.json()
+        check(
+            "mock-baseline scores 1.0",
+            body.get("overall_score") == 1.0,
+            f"overall_score={body.get('overall_score')}",
+        )
+
+    runs = client.get("/eval/runs", params={"golden_id": "mock-baseline"})
+    check(
+        "GET /eval/runs reflects the run",
+        runs.status_code == 200 and len(runs.json()) >= 1,
+        f"status={runs.status_code} count={len(runs.json()) if runs.status_code == 200 else 'n/a'}",
+    )
+
+
 def main() -> int:
     print(f"doc-approval smoke test (DATA_DIR={_TMP_DATA})")
     with TestClient(app) as client:
@@ -389,6 +423,7 @@ def main() -> int:
         scenario_custom_crud(client)
         scenario_guards(client)
         scenario_assist_wizard(client)
+        scenario_eval(client)
 
     section("Summary")
     total = _PASSES + _FAILURES

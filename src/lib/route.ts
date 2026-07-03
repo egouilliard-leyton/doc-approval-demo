@@ -9,7 +9,12 @@
 /** Inspector tab a document view is focused on. Mirrors SplitInspector's tabs. */
 export type InspectorTab = "ocr" | "structured" | "decision" | "compare";
 /** Section of the admin panel. */
-export type AdminSection = "overview" | "documents" | "corrections" | "config";
+export type AdminSection =
+  | "overview"
+  | "documents"
+  | "corrections"
+  | "config"
+  | "eval";
 
 /** A parsed location — the single shape the shell routes on. */
 export type Route =
@@ -17,7 +22,7 @@ export type Route =
   | { view: "document"; id: string; tab: InspectorTab; field?: string }
   | { view: "cases" }
   | { view: "case"; id: string; member?: string }
-  | { view: "admin"; section: AdminSection; doctype?: string };
+  | { view: "admin"; section: AdminSection; doctype?: string; runId?: string };
 
 /** Where an empty or unrecognizable hash lands. */
 export const DEFAULT_ROUTE: Route = { view: "home" };
@@ -33,6 +38,7 @@ const ADMIN_SECTIONS: AdminSection[] = [
   "documents",
   "corrections",
   "config",
+  "eval",
 ];
 
 /** Tolerant tab coercion: an unknown/missing tab falls back to the default. */
@@ -97,6 +103,13 @@ export function parseHash(hash: string): Route {
     if (section === "config" && rest[1] === "doctype" && rest[2]) {
       return { view: "admin", section: "config", doctype: rest[2] };
     }
+    // `#/admin/eval?run=<id>` deep-links to one evaluation run.
+    if (section === "eval") {
+      const runId = query.get("run");
+      return runId
+        ? { view: "admin", section: "eval", runId }
+        : { view: "admin", section: "eval" };
+    }
     return { view: "admin", section };
   }
 
@@ -132,6 +145,9 @@ export function formatHash(route: Route): string {
       if (route.section === "config" && route.doctype) {
         return `#/admin/config/doctype/${encodeURIComponent(route.doctype)}`;
       }
+      if (route.section === "eval" && route.runId) {
+        return `#/admin/eval?run=${encodeURIComponent(route.runId)}`;
+      }
       return route.section === "overview"
         ? "#/admin"
         : `#/admin/${route.section}`;
@@ -155,7 +171,11 @@ export function routesEqual(a: Route, b: Route): boolean {
     }
     case "admin": {
       const other = b as Extract<Route, { view: "admin" }>;
-      return a.section === other.section && a.doctype === other.doctype;
+      return (
+        a.section === other.section &&
+        a.doctype === other.doctype &&
+        a.runId === other.runId
+      );
     }
     default:
       // home / cases carry no modifiers — same view is enough.

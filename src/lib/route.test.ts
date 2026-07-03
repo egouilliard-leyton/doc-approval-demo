@@ -82,6 +82,18 @@ describe("parseHash", () => {
     });
   });
 
+  it("parses the eval section and its run deep-link", () => {
+    expect(parseHash("#/admin/eval")).toEqual({
+      view: "admin",
+      section: "eval",
+    });
+    expect(parseHash("#/admin/eval?run=run_42")).toEqual({
+      view: "admin",
+      section: "eval",
+      runId: "run_42",
+    });
+  });
+
   it("falls back to overview on an unknown admin section", () => {
     expect(parseHash("#/admin/bogus")).toEqual({
       view: "admin",
@@ -148,6 +160,13 @@ describe("formatHash", () => {
       formatHash({ view: "admin", section: "config", doctype: "invoice" }),
     ).toBe("#/admin/config/doctype/invoice");
   });
+
+  it("formats the eval section and its run deep-link", () => {
+    expect(formatHash({ view: "admin", section: "eval" })).toBe("#/admin/eval");
+    expect(
+      formatHash({ view: "admin", section: "eval", runId: "run_42" }),
+    ).toBe("#/admin/eval?run=run_42");
+  });
 });
 
 describe("round-trip parseHash(formatHash(r))", () => {
@@ -162,6 +181,8 @@ describe("round-trip parseHash(formatHash(r))", () => {
     { view: "admin", section: "overview" },
     { view: "admin", section: "corrections" },
     { view: "admin", section: "config", doctype: "invoice" },
+    { view: "admin", section: "eval" },
+    { view: "admin", section: "eval", runId: "run_42" },
   ];
   for (const route of routes) {
     it(`round-trips ${JSON.stringify(route)}`, () => {

@@ -1,0 +1,24 @@
+{
+  "id": "invoice-mismatch",
+  "sample_file": "invoice-mismatch.pdf",
+  "doc_type": "invoice",
+  "expected_fields": {
+    "vendor": "NORTHWIND LTD.",
+    "invoice_no": "INV-2026-0419",
+    "po_number": "PO-558244",
+    "invoice_date": "2026-04-05",
+    "due_date": "2026-05-05",
+    "subtotal": 4820.00,
+    "tax": 385.60,
+    "total": 5025.60,
+    "currency": "USD",
+    "payment_terms": "Net 30",
+    "bank_details_present": true
+  },
+  "expected_collections": {
+    "line_items": [
+      {"desc": "Enterprise Server Rack", "qty": 2, "unit_price": 2000.00, "amount": 4000.00},
+      {"desc": "Developer Laptop", "qty": 1, "unit_price": 820.00, "amount": 820.00}
+    ]
+  }
+}

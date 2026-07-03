@@ -117,6 +117,29 @@ class FieldCorrectionRow(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
+class EvalRunRow(SQLModel, table=True):
+    """One scored evaluation run: a golden case measured against a structuring result.
+
+    Persisted like :class:`FieldCorrectionRow` — a uuid PK, the golden/doc-type/engine/
+    provider context, the document the run scored, the three headline accuracy numbers,
+    and the full per-field / per-collection breakdown as JSON columns. Lands via
+    ``create_all`` like every other table (additive; no migration).
+    """
+
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    golden_id: str = Field(index=True)
+    doc_type: str = ""
+    engine: str = ""
+    provider: str = ""
+    document_id: str = ""
+    overall_score: float = 0.0
+    field_accuracy_exact: float = 0.0
+    field_accuracy_normalized: float = 0.0
+    field_scores: list = Field(default_factory=list, sa_column=Column(JSON))
+    collection_scores: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class Case(SQLModel, table=True):
     """A case grouping N documents for cross-document reasoning (Phase 1).
 

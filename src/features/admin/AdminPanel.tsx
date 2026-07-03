@@ -6,6 +6,7 @@ import {
   FileText,
   GitCompare,
   Settings2,
+  Target,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AdminSection, Route } from "@/lib/route";
@@ -14,6 +15,7 @@ import { OverviewSection } from "@/features/admin/OverviewSection";
 import { DocumentsSection } from "@/features/admin/DocumentsSection";
 import { CorrectionsSection } from "@/features/admin/CorrectionsSection";
 import { ConfigurationSection } from "@/features/admin/ConfigurationSection";
+import { EvalSection } from "@/features/admin/EvalSection";
 
 const SECTIONS: {
   id: AdminSection;
@@ -24,6 +26,7 @@ const SECTIONS: {
   { id: "documents", label: "Documents", icon: FileText },
   { id: "corrections", label: "Corrections", icon: GitCompare },
   { id: "config", label: "Configuration", icon: Settings2 },
+  { id: "eval", label: "Evaluation", icon: Target },
 ];
 
 const TITLE: Record<AdminSection, string> = {
@@ -31,6 +34,7 @@ const TITLE: Record<AdminSection, string> = {
   documents: "Documents",
   corrections: "Corrections",
   config: "Configuration",
+  eval: "Evaluation",
 };
 
 const SUBTITLE: Record<AdminSection, string> = {
@@ -38,16 +42,19 @@ const SUBTITLE: Record<AdminSection, string> = {
   documents: "Every document — click one to open it in the workspace.",
   corrections: "Reviewer edits across all documents (likely extraction errors).",
   config: "Manage document types and OCR models.",
+  eval: "Score extraction engines against golden samples.",
 };
 
 export function AdminPanel({
   section,
   doctype,
+  runId,
   navigate,
   onOpenDocument,
 }: {
   section: AdminSection;
   doctype?: string;
+  runId?: string;
   navigate: (to: Route) => void;
   onOpenDocument: (id: string) => void;
 }) {
@@ -95,6 +102,9 @@ export function AdminPanel({
           <CorrectionsSection onOpenDocument={onOpenDocument} />
         )}
         {section === "config" && <ConfigurationSection focusName={doctype} />}
+        {section === "eval" && (
+          <EvalSection runId={runId} onOpenDocument={onOpenDocument} />
+        )}
       </div>
     </div>
   );

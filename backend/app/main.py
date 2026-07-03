@@ -19,6 +19,7 @@ from app.routes import (
     doctype_assist,
     documents,
     engines as engines_route,
+    evaluation,
     overview,
     pipeline,
 )
@@ -111,6 +112,7 @@ app.include_router(doctype_assist.router)
 app.include_router(engines_route.router)
 app.include_router(corrections.router)
 app.include_router(overview.router)
+app.include_router(evaluation.router)
 
 
 @app.get("/health")

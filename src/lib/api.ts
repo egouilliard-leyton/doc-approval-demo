@@ -14,6 +14,10 @@ import type {
   DecisionResult,
   DocType,
   EngineInfo,
+  EvalGoldenDetail,
+  EvalGoldenSummary,
+  EvalRunResult,
+  EvalRunSummary,
   FieldCorrection,
   OcrEngine,
   OCRResult,
@@ -485,6 +489,55 @@ export async function decideCase(
 
 export async function getCaseDecision(id: string): Promise<CaseDecisionResult> {
   return request<CaseDecisionResult>(`/cases/${id}/decide`);
+}
+
+// --- accuracy-evaluation harness ---------------------------------------------
+
+/** Golden samples in the catalogue. */
+export async function listEvalGoldens(): Promise<EvalGoldenSummary[]> {
+  return request<EvalGoldenSummary[]>("/eval/goldens");
+}
+
+/** One golden with its expected fields/collections (404 ApiError when unknown). */
+export async function getEvalGolden(id: string): Promise<EvalGoldenDetail> {
+  return request<EvalGoldenDetail>(`/eval/goldens/${id}`);
+}
+
+/** Score an engine against a golden; returns the persisted run result. */
+export async function runEval(body: {
+  golden_id: string;
+  engine?: string;
+  provider?: string;
+  document_id?: string | null;
+}): Promise<EvalRunResult> {
+  return request<EvalRunResult>("/eval/run", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      golden_id: body.golden_id,
+      engine: body.engine ?? "mock",
+      provider: body.provider ?? "mock",
+      document_id: body.document_id ?? null,
+    }),
+  });
+}
+
+/** List past runs (newest-first), optionally filtered by golden/doc-type/engine. */
+export async function listEvalRuns(
+  params: { golden_id?: string; doc_type?: string; engine?: string } = {},
+): Promise<EvalRunSummary[]> {
+  return request<EvalRunSummary[]>("/eval/runs", {
+    query: {
+      golden_id: params.golden_id,
+      doc_type: params.doc_type,
+      engine: params.engine,
+    },
+  });
+}
+
+/** Fetch a single run's full result (404 ApiError when unknown). */
+export async function getEvalRun(runId: string): Promise<EvalRunResult> {
+  return request<EvalRunResult>(`/eval/runs/${runId}`);
 }
 
 export { API_BASE_URL };

@@ -1,0 +1,17 @@
+{
+  "id": "mock-baseline",
+  "sample_file": "invoice-clean.pdf",
+  "doc_type": "invoice",
+  "expected_fields": {
+    "vendor": "MOCK INVOICE",
+    "invoice_no": "page 1",
+    "total": 1234.56,
+    "currency": "USD",
+    "po_number": null
+  },
+  "expected_collections": {
+    "line_items": [
+      {"desc": "Mock Widget", "qty": 1, "unit_price": 1234.56, "amount": 1234.56}
+    ]
+  }
+}

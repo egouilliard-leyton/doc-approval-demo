@@ -139,6 +139,7 @@ function Shell() {
           <AdminPanel
             section={route.view === "admin" ? route.section : "overview"}
             doctype={route.view === "admin" ? route.doctype : undefined}
+            runId={route.view === "admin" ? route.runId : undefined}
             navigate={navigate}
             onOpenDocument={(id) =>
               navigate({ view: "document", id, tab: "structured" })

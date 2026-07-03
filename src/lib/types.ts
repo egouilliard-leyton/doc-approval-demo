@@ -373,3 +373,73 @@ export interface CaseDecisionResult {
   citations: Citation[];
   llm_decision: Decision | null;
 }
+
+// --- accuracy-evaluation harness ---------------------------------------------
+
+/** One scored field: expected vs actual, with exact/normalized match verdicts. */
+export interface EvalFieldScore {
+  path: string;
+  expected: string | number | boolean | null;
+  actual: string | number | boolean | null;
+  kind: string;
+  exact_match: boolean;
+  normalized_match: boolean;
+}
+
+/** Scoring for one collection (line-item table): row P/R/F1 + cell accuracy. */
+export interface EvalCollectionScore {
+  row_precision: number;
+  row_recall: number;
+  row_f1: number;
+  cell_accuracy: number;
+  line_item_score: number;
+  matched: number;
+  n_expected: number;
+  n_actual: number;
+  detail: Array<{ expected: unknown; actual: unknown; cell_score: number }>;
+}
+
+/** Full result of scoring one run against a golden. */
+export interface EvalRunResult {
+  id: string;
+  golden_id: string;
+  doc_type: string;
+  engine: string;
+  provider: string;
+  document_id: string;
+  overall_score: number;
+  field_accuracy_exact: number;
+  field_accuracy_normalized: number;
+  field_scores: EvalFieldScore[];
+  collection_scores: Record<string, EvalCollectionScore>;
+  created_at: string;
+}
+
+/** Lightweight run row for the results list (newest-first). */
+export interface EvalRunSummary {
+  id: string;
+  golden_id: string;
+  doc_type: string;
+  engine: string;
+  provider: string;
+  document_id: string;
+  overall_score: number;
+  field_accuracy_exact: number;
+  field_accuracy_normalized: number;
+  created_at: string;
+}
+
+/** A golden sample in the catalogue. */
+export interface EvalGoldenSummary {
+  id: string;
+  sample_file: string;
+  doc_type: string;
+  field_count: number;
+  collection_count: number;
+}
+
+/** A golden with its expected values expanded. */
+export interface EvalGoldenDetail extends EvalGoldenSummary {
+  expected_fields: Record<string, unknown>;
+  expected_collections: Record<string, unknown>;
+}

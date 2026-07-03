@@ -585,3 +585,93 @@ class CaseDecisionResult(BaseModel):
     checks: list[Check]  # authoritative, code-computed rule-by-rule trace
     citations: list[Citation] = []  # built from the reconciled canonical fields
     llm_decision: str | None = None  # what the LLM proposed before reconciliation
+
+
+# --- accuracy-evaluation harness ---------------------------------------------
+
+
+class EvalFieldScore(BaseModel):
+    """One scored scalar/dotted field: expected vs. actual under its comparison kind."""
+
+    path: str
+    expected: str | float | int | bool | None
+    actual: str | float | int | bool | None
+    kind: str  # "money" | "date" | "string"
+    exact_match: bool
+    normalized_match: bool
+
+
+class EvalCollectionScore(BaseModel):
+    """Row + cell agreement for one aligned collection field (line_items, parties, …)."""
+
+    row_precision: float
+    row_recall: float
+    row_f1: float
+    cell_accuracy: float
+    line_item_score: float  # row_f1 * cell_accuracy
+    matched: int
+    n_expected: int
+    n_actual: int
+    detail: list[dict] = []  # per-matched-pair {expected, actual, cell_score}
+
+
+class EvalRunRequest(BaseModel):
+    """Run a golden case. Defaults to the offline mock engine + provider.
+
+    ``document_id`` re-scores an EXISTING document's persisted structure stage instead of
+    running the pipeline afresh (the engine/provider are then taken from that result).
+    """
+
+    golden_id: str
+    engine: str = "mock"
+    provider: str = "mock"
+    document_id: str | None = None
+
+
+class EvalRunResult(BaseModel):
+    """Full detail of one scored evaluation run."""
+
+    id: str
+    golden_id: str
+    doc_type: str
+    engine: str
+    provider: str
+    document_id: str
+    overall_score: float
+    field_accuracy_exact: float
+    field_accuracy_normalized: float
+    field_scores: list[EvalFieldScore]
+    collection_scores: dict[str, EvalCollectionScore]
+    created_at: datetime
+
+
+class EvalRunSummary(BaseModel):
+    """Compact shape for the runs list view."""
+
+    id: str
+    golden_id: str
+    doc_type: str
+    engine: str
+    provider: str
+    document_id: str
+    overall_score: float
+    field_accuracy_exact: float
+    field_accuracy_normalized: float
+    created_at: datetime
+
+
+class EvalGoldenSummary(BaseModel):
+    """Compact shape for the golden-catalogue list view."""
+
+    id: str
+    sample_file: str
+    doc_type: str
+    field_count: int
+    collection_count: int
+
+
+class EvalGoldenDetail(EvalGoldenSummary):
+    """A golden's full expected values."""
+
+    expected_fields: dict
+    expected_collections: dict
