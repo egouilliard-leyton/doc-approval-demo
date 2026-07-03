@@ -22,6 +22,7 @@ import {
   uploadDocument,
 } from "@/lib/api";
 import { isMemberTerminal } from "@/lib/case-status";
+import { AUTO_ENGINE } from "@/features/upload/EngineSelect";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import type { DocType, OcrEngine } from "@/lib/types";
 import {
@@ -132,12 +133,26 @@ export function useCase(): UseCase {
           await runPrescan(doc.id, { deskew: true, clean: true });
 
           dispatch({ type: "MEMBER_STAGE_START", memberId, status: "ocr_running" });
-          await runOcr(doc.id, ocrEngine);
+          // "auto" omits the engine so the backend routes by doc type; capture the
+          // engine it ACTUALLY ran so classify + later structure read that OCR
+          // rather than re-routing (and so the sentinel never reaches the backend).
+          const ocr = await runOcr(
+            doc.id,
+            ocrEngine === AUTO_ENGINE ? undefined : ocrEngine,
+          );
+          const actualEngine = ocr.engine_name;
 
           dispatch({ type: "MEMBER_STAGE_START", memberId, status: "classifying" });
-          const classify = await classifyDocument(doc.id, { ocrEngine });
+          const classify = await classifyDocument(doc.id, {
+            ocrEngine: actualEngine,
+          });
           if (runTokenRef.current !== token) return;
-          dispatch({ type: "MEMBER_CLASSIFY_DONE", memberId, classify });
+          dispatch({
+            type: "MEMBER_CLASSIFY_DONE",
+            memberId,
+            classify,
+            ocrEngine: actualEngine,
+          });
         } catch (e) {
           if (runTokenRef.current !== token) return;
           const message = errMessage(e);
@@ -190,9 +205,16 @@ export function useCase(): UseCase {
           if (!documentId || !confirmedDocType) return;
           try {
             dispatch({ type: "MEMBER_STAGE_START", memberId, status: "structuring" });
+            // Prefer the engine that actually ran this member's OCR (set during
+            // phase A) so structure reads the stored OCR — critical under "auto",
+            // where each member may have routed to a different engine. Fall back to
+            // the case-global engine (never the raw sentinel).
+            const structureEngine =
+              member.ocrEngine ??
+              (ocrEngine === AUTO_ENGINE ? undefined : ocrEngine);
             await runStructure(documentId, {
               docType: confirmedDocType,
-              ocrEngine,
+              ocrEngine: structureEngine,
             });
             if (runTokenRef.current !== token) return;
             dispatch({ type: "MEMBER_STAGE_DONE", memberId, status: "structured" });

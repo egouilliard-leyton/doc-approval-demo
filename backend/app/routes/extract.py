@@ -24,7 +24,7 @@ from app.doc_types import is_registered
 from app.models import Document, DocumentStatus, FieldCorrectionRow
 from app.pipeline.agent import run_decision
 from app.pipeline.classify import run_classify
-from app.pipeline.ocr import get_engine
+from app.pipeline.ocr import build_engine_objects, resolve_engine_chain, run_ocr_chain
 from app.pipeline.prescan import run_prescan
 from app.pipeline.structuring import run_structuring
 from app.routes.pipeline import (
@@ -141,18 +141,29 @@ async def _run_extract(
         )
 
     # --- OCR -----------------------------------------------------------------
-    engine = ocr_engine or settings.ocr_default_engine
-    # Spreadsheets are parsed cell-by-cell by the dedicated engine regardless of the
-    # requested engine (docling/VLM operate on page images that don't exist here).
+    # An explicit engine (or a spreadsheet, which must use the dedicated cell-parser)
+    # disables routing: the chain is exactly that one engine. Otherwise the doc type's
+    # preferred/fallback chain (or the global default) is resolved from the DB.
     if storage.is_spreadsheet(doc.mime):
-        engine = "spreadsheet"
-    try:
-        engine_obj = get_engine(engine, session)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    ocr_result = await _run_stage("OCR", settings.ocr_timeout_s, engine_obj.run, doc)
+        chain = ["spreadsheet"]
+    elif ocr_engine:
+        chain = [ocr_engine]
+    else:
+        chain = resolve_engine_chain(doc_type_override, session)
+    # resolve_engine_chain + build_engine_objects read the Session — request thread
+    # only; only the session-free run_ocr_chain enters the worker thread below.
+    engine_objs = build_engine_objects(chain, session)
+    if not engine_objs:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No usable OCR engine resolved from {chain}.",
+        )
+    ocr_result = await _run_stage(
+        "OCR", settings.ocr_timeout_s, run_ocr_chain, doc, engine_objs
+    )
     existing_ocr = dict(run.stage_results.get("ocr") or {})
-    existing_ocr[engine] = ocr_result.model_dump(mode="json")
+    # Persist under the ACTUAL engine that produced the result (not the requested one).
+    existing_ocr[ocr_result.engine_name] = ocr_result.model_dump(mode="json")
     _save_stage(session, run, doc, "ocr", existing_ocr, "ocr_done", DocumentStatus.ocr_done)
 
     # --- doc-type resolution (explicit override, else auto-classify) ---------

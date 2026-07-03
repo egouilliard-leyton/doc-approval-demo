@@ -90,6 +90,78 @@ def test_persisted_and_queryable_afterward():
         assert rq.status_code == 200, rq.text
 
 
+def _routed_type_body(name: str) -> dict:
+    """A minimal custom doc type that prefers the mock OCR engine."""
+    return {
+        "name": name,
+        "label": name.replace("_", " ").title(),
+        "icon": "",
+        "extraction_definition": {
+            "name": name,
+            "fields": [
+                {"name": "total", "kind": "scalar", "cls": "total", "coerce": "number"},
+            ],
+            "core_paths": ["total"],
+            "prompt": "",
+            "examples": [],
+        },
+        "rule_definition": {
+            "name": name,
+            "rules": [
+                {
+                    "kind": "presence",
+                    "name": "total_present",
+                    "field_path": "total",
+                    "severity": "review",
+                }
+            ],
+            "citation_paths": ["total"],
+        },
+        "citation_paths": ["total"],
+        "preferred_ocr_engine": "mock",
+    }
+
+
+def test_doc_type_preferred_engine_routes_without_explicit_ocr_engine():
+    """A doc type's preferred_ocr_engine drives OCR when no ocr_engine is passed."""
+    with TestClient(app) as client:
+        name = "routed-doc-a"
+        assert client.post("/doc-types", json=_routed_type_body(name)).status_code == 201
+
+        # NB: no ocr_engine in the payload -> routing resolves it from the doc type.
+        resp = _post_extract(
+            client,
+            "invoice-clean.pdf",
+            doc_type=name,
+            structuring_provider="mock",
+            decision_provider="mock",
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        # Structuring records which OCR engine produced its substrate.
+        assert body["structured"]["ocr_engine"] == "mock"
+
+
+def test_explicit_ocr_engine_overrides_routing():
+    """An explicit ocr_engine wins even when the doc type prefers another engine."""
+    with TestClient(app) as client:
+        name = "routed-doc-b"
+        body = _routed_type_body(name)
+        body["preferred_ocr_engine"] = "docling"  # would fail in tests if it were used
+        assert client.post("/doc-types", json=body).status_code == 201
+
+        resp = _post_extract(
+            client,
+            "invoice-clean.pdf",
+            doc_type=name,
+            ocr_engine="mock",  # explicit -> routing disabled
+            structuring_provider="mock",
+            decision_provider="mock",
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["structured"]["ocr_engine"] == "mock"
+
+
 def test_batch_mixed_good_and_bad():
     with TestClient(app) as client:
         with (SAMPLES / "invoice-clean.pdf").open("rb") as good:

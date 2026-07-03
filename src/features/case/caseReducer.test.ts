@@ -79,6 +79,28 @@ describe("caseReducer", () => {
     expect(s.members.m1.classify).toBe(classifyResult);
   });
 
+  it("MEMBER_CLASSIFY_DONE records the actual OCR engine when provided", () => {
+    let s = seeded();
+    expect(s.members.m1.ocrEngine).toBeNull();
+    s = caseReducer(s, {
+      type: "MEMBER_CLASSIFY_DONE",
+      memberId: "m1",
+      classify: classifyResult,
+      ocrEngine: "gemini-flash",
+    });
+    expect(s.members.m1.ocrEngine).toBe("gemini-flash");
+  });
+
+  it("MEMBER_CLASSIFY_DONE leaves ocrEngine untouched when omitted", () => {
+    let s = seeded();
+    s = caseReducer(s, {
+      type: "MEMBER_CLASSIFY_DONE",
+      memberId: "m1",
+      classify: classifyResult,
+    });
+    expect(s.members.m1.ocrEngine).toBeNull();
+  });
+
   it("classify -> confirm sets confirmedDocType", () => {
     let s = seeded();
     s = caseReducer(s, { type: "MEMBER_CLASSIFY_DONE", memberId: "m1", classify: classifyResult });

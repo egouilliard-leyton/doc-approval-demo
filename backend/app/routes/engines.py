@@ -81,6 +81,10 @@ def list_engines(session: Session = Depends(get_session)) -> list[EngineInfo]:
         select(VlmEngineRow).where(VlmEngineRow.enabled == True).order_by(VlmEngineRow.created_at)  # noqa: E712
     ).all()
     engines += [EngineInfo(key=r.key, label=r.label, kind="vlm") for r in rows]
+    # The external Digibot engine is only offered once an endpoint is configured
+    # (mirrors how spreadsheet is kept out of the picker until it applies).
+    if settings.digibot_endpoint:
+        engines.append(EngineInfo(key="digibot", label="Digibot", kind="external"))
     return engines
 
 

@@ -93,6 +93,11 @@ class DocTypeDefinitionRow(SQLModel, table=True):
     extraction_definition: dict = Field(default_factory=dict, sa_column=Column(JSON))
     rule_definition: dict = Field(default_factory=dict, sa_column=Column(JSON))
     citation_paths: list = Field(default_factory=list, sa_column=Column(JSON))
+    # Multi-engine OCR routing: a preferred engine + ordered fallbacks for this doc
+    # type. Both permissive (not validated against available engines at save time;
+    # unknown/disabled names are skipped gracefully when the chain is resolved).
+    preferred_ocr_engine: str | None = None
+    ocr_fallback_engines: list = Field(default_factory=list, sa_column=Column(JSON))
     builtin: bool = False
     version: int = 1
     created_at: datetime = Field(default_factory=_utcnow)

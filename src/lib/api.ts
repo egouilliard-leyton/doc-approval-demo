@@ -206,8 +206,10 @@ export async function runPrescan(
 
 export async function runOcr(
   id: string,
-  engine: OcrEngine,
+  engine?: OcrEngine,
 ): Promise<OCRResult> {
+  // Omitting `engine` (undefined is filtered out of the query string) tells the
+  // backend to route by the document's doc-type preferred engine + fallback chain.
   return request<OCRResult>(`/documents/${id}/ocr`, {
     method: "POST",
     query: { engine },
@@ -216,8 +218,10 @@ export async function runOcr(
 
 export async function runStructure(
   id: string,
-  p: { docType: DocType; ocrEngine: OcrEngine },
+  p: { docType: DocType; ocrEngine?: OcrEngine },
 ): Promise<StructuredResult> {
+  // A missing `ocr_engine` (filtered from the query) lets the backend fall back to
+  // its own routing; callers normally pass the engine that produced the stored OCR.
   return request<StructuredResult>(`/documents/${id}/structure`, {
     method: "POST",
     query: { doc_type: p.docType, ocr_engine: p.ocrEngine },

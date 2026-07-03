@@ -9,7 +9,7 @@ export type OcrEngine = string;
 export interface EngineInfo {
   key: string;
   label: string;
-  kind: "layout" | "vlm";
+  kind: "layout" | "vlm" | "external";
 }
 
 /** A connected VLM engine row (settings/catalog view). */
@@ -171,6 +171,10 @@ export interface OCRResult {
   table_count: number;
   latency_ms: number;
   warnings: string[];
+  // Ordered list of engines actually tried; length > 1 means a fallback fired,
+  // and the last entry is the engine that produced this result. Old results may
+  // omit it — treat undefined as [].
+  attempted_engines?: string[];
 }
 
 // --- structuring -------------------------------------------------------------

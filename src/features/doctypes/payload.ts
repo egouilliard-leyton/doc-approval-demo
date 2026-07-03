@@ -22,6 +22,9 @@ export interface DocTypeFormInput {
   icon: string;
   extraction_definition: ExtractionDefinition;
   rule_definition: RuleDefinition;
+  // Per-doctype OCR routing (optional in the DTO; the form always carries them).
+  preferred_ocr_engine: string | null;
+  ocr_fallback_engines: string[];
 }
 
 export function buildDocTypePayload(
@@ -61,5 +64,7 @@ export function buildDocTypePayload(
       extraction_definition as unknown as Record<string, unknown>,
     rule_definition: rule_definition as unknown as Record<string, unknown>,
     citation_paths,
+    preferred_ocr_engine: form.preferred_ocr_engine,
+    ocr_fallback_engines: form.ocr_fallback_engines,
   };
 }

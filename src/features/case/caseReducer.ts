@@ -22,6 +22,7 @@ export interface CaseMemberState {
   status: CaseMemberStatus;
   classify: ClassifyResult | null; // the auto-classification guess, if run
   confirmedDocType: DocType | null; // the reviewer-confirmed doc type
+  ocrEngine: string | null; // the engine that ACTUALLY ran OCR (may be routed under "auto")
   error: string | null;
 }
 
@@ -82,7 +83,12 @@ export type CaseAction =
       documentId?: string;
     }
   | { type: "MEMBER_STAGE_ERROR"; memberId: string; error: string }
-  | { type: "MEMBER_CLASSIFY_DONE"; memberId: string; classify: ClassifyResult }
+  | {
+      type: "MEMBER_CLASSIFY_DONE";
+      memberId: string;
+      classify: ClassifyResult;
+      ocrEngine?: string; // the engine that produced the OCR feeding this classify
+    }
   | { type: "MEMBER_CONFIRM_DOC_TYPE"; memberId: string; docType: DocType }
   | { type: "RECONCILE_START" }
   | { type: "RECONCILE_DONE"; result: CaseReconciliation }
@@ -131,6 +137,7 @@ export function caseReducer(state: CaseState, action: CaseAction): CaseState {
           status: "queued",
           classify: null,
           confirmedDocType: null,
+          ocrEngine: null,
           error: null,
         };
         order.push(m.memberId);
@@ -156,6 +163,7 @@ export function caseReducer(state: CaseState, action: CaseAction): CaseState {
       return patchMember(state, action.memberId, {
         classify: action.classify,
         status: "classified",
+        ...(action.ocrEngine ? { ocrEngine: action.ocrEngine } : {}),
       });
     case "MEMBER_CONFIRM_DOC_TYPE":
       return patchMember(state, action.memberId, {

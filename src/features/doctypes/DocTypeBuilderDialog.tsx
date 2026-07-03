@@ -36,9 +36,14 @@ import type {
   RuleDef,
   RuleDefinition,
 } from "@/lib/doc-type-schema";
+import { useEngines } from "@/features/upload/useEngines";
 import { FieldListEditor } from "./FieldListEditor";
 import { RuleListEditor } from "./RuleListEditor";
 import { buildDocTypePayload } from "./payload";
+
+// Sentinel Select value for "no preference"; Radix Select disallows an empty
+// string item value, so we map this to a null preferred_ocr_engine.
+const DEFAULT_ENGINE = "__default__";
 
 // Structured editing shape. The backend stores extraction/rule definitions as
 // opaque dicts (Record<string, unknown> on the wire), but the builder needs them
@@ -49,6 +54,8 @@ interface BuilderState {
   icon: string;
   extraction_definition: ExtractionDefinition;
   rule_definition: RuleDefinition;
+  preferred_ocr_engine: string | null;
+  ocr_fallback_engines: string[];
 }
 
 function blankState(): BuilderState {
@@ -64,6 +71,8 @@ function blankState(): BuilderState {
       examples: [],
     },
     rule_definition: { name: "", rules: [], citation_paths: [] },
+    preferred_ocr_engine: null,
+    ocr_fallback_engines: [],
   };
 }
 
@@ -91,6 +100,10 @@ function stateFromResponse(t: DocTypeResponse): BuilderState {
       rules: rules.rules ?? [],
       citation_paths: rules.citation_paths ?? [],
     },
+    // Existing types created before OCR routing simply lack these — default to
+    // the system engine (null) and no fallbacks.
+    preferred_ocr_engine: t.preferred_ocr_engine ?? null,
+    ocr_fallback_engines: t.ocr_fallback_engines ?? [],
   };
 }
 
@@ -132,6 +145,16 @@ export function DocTypeBuilderDialog({
   );
   const [saving, setSaving] = useState(false);
   const [formErrors, setFormErrors] = useState<string[]>([]);
+  const { engines } = useEngines();
+
+  // Toggle an engine in/out of the ordered fallback list (append keeps order).
+  const toggleFallback = (key: string, on: boolean) =>
+    setForm((f) => ({
+      ...f,
+      ocr_fallback_engines: on
+        ? [...f.ocr_fallback_engines, key]
+        : f.ocr_fallback_engines.filter((k) => k !== key),
+    }));
 
   const setExtraction = (patch: Partial<ExtractionDefinition>) =>
     setForm((f) => ({
@@ -167,6 +190,8 @@ export function DocTypeBuilderDialog({
           extraction_definition: built.extraction_definition,
           rule_definition: built.rule_definition,
           citation_paths: built.citation_paths,
+          preferred_ocr_engine: built.preferred_ocr_engine,
+          ocr_fallback_engines: built.ocr_fallback_engines,
         };
         await updateDocType(editingType.name, payload);
       } else {
@@ -311,6 +336,66 @@ export function DocTypeBuilderDialog({
                 placeholder="Optional guidance for the extraction model…"
                 onChange={(e) => setExtraction({ prompt: e.target.value })}
               />
+            </div>
+
+            <div className="space-y-1">
+              <Label>Preferred OCR engine</Label>
+              <Select
+                value={form.preferred_ocr_engine ?? DEFAULT_ENGINE}
+                onValueChange={(v) =>
+                  setForm((f) => ({
+                    ...f,
+                    preferred_ocr_engine: v === DEFAULT_ENGINE ? null : v,
+                  }))
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="— (default) —" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={DEFAULT_ENGINE}>— (default) —</SelectItem>
+                  {engines.map((e) => (
+                    <SelectItem key={e.key} value={e.key}>
+                      {e.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                OCR engine to try first for this type. Default uses the system
+                engine chosen at upload.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Fallback engines</Label>
+              {engines.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No engines available.
+                </p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {engines.map((e) => (
+                      <Toggle
+                        key={e.key}
+                        variant="outline"
+                        pressed={form.ocr_fallback_engines.includes(e.key)}
+                        onPressedChange={(pressed) =>
+                          toggleFallback(e.key, pressed)
+                        }
+                        aria-label={`Fallback to ${e.label}`}
+                      >
+                        {e.label}
+                      </Toggle>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Tried in order if the preferred engine fails. None selected
+                    means no fallback.
+                  </p>
+                </>
+              )}
             </div>
           </TabsContent>
         </Tabs>

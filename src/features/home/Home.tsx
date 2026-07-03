@@ -17,7 +17,7 @@ import { usePipelineContext } from "@/features/pipeline/PipelineContext";
 import { useCaseContext } from "@/features/case/CaseContext";
 import { Dropzone } from "@/features/upload/Dropzone";
 import { DocTypeToggle } from "@/features/upload/DocTypeToggle";
-import { EngineSelect } from "@/features/upload/EngineSelect";
+import { EngineSelect, AUTO_ENGINE } from "@/features/upload/EngineSelect";
 import { useEngines } from "@/features/upload/useEngines";
 import { useDocTypes } from "@/features/doctypes/useDocTypes";
 import { DocumentLibrary } from "@/features/upload/DocumentLibrary";
@@ -95,10 +95,12 @@ export function Home() {
   }, [docTypes, docType, loading, setDocType]);
 
   // Same guard for engines: default to the first available if the selection is gone.
+  // The "auto" sentinel is always valid (it isn't a real engine key), so leave it be.
   useEffect(() => {
     if (
       !enginesLoading &&
       engines.length > 0 &&
+      activeEngine !== AUTO_ENGINE &&
       !engines.some((e) => e.key === activeEngine)
     ) {
       setActiveEngine(engines[0].key);

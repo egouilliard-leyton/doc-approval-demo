@@ -374,6 +374,10 @@ export interface DocTypeResponse {
   extraction_definition: Record<string, unknown>;
   rule_definition: Record<string, unknown>;
   citation_paths: string[];
+  // Per-doctype OCR routing: the preferred engine (null = system default) and an
+  // ordered list of fallback engines tried when the preferred one fails.
+  preferred_ocr_engine?: string | null;
+  ocr_fallback_engines?: string[];
   builtin: boolean;
   version: number;
   created_at: string;
@@ -387,6 +391,8 @@ export interface DocTypeCreate {
   extraction_definition: Record<string, unknown>;
   rule_definition: Record<string, unknown>;
   citation_paths?: string[];
+  preferred_ocr_engine?: string | null;
+  ocr_fallback_engines?: string[];
 }
 
 export interface DocTypeUpdate {
@@ -395,6 +401,8 @@ export interface DocTypeUpdate {
   extraction_definition: Record<string, unknown>;
   rule_definition: Record<string, unknown>;
   citation_paths?: string[];
+  preferred_ocr_engine?: string | null;
+  ocr_fallback_engines?: string[];
 }
 
 export interface DocTypePreviewRequest {

@@ -49,6 +49,18 @@ class Settings(BaseSettings):
     ocr_timeout_s: float = 600.0  # generous to absorb a cold model download.
     llm_timeout_s: float = 120.0  # structuring + decision (network LLM).
 
+    # Multi-engine OCR routing + fallback (Phase 3). A doc type may name a
+    # preferred engine + ordered fallbacks; otherwise the default chain below is
+    # used. The chain advances to the next engine when one raises, returns empty
+    # text, or scores below the confidence floor (the last engine is always accepted).
+    ocr_fallback_confidence_threshold: float = 0.40  # avg conf below this -> try next engine.
+    ocr_default_fallback_engines: list[str] = []  # appended after ocr_default_engine.
+    # External OCR service adapter (Digibot/Rossum-style). The adapter is only
+    # reachable when an endpoint is configured; the key is read from the env only.
+    digibot_endpoint: str = ""  # HTTP endpoint of the external OCR service.
+    digibot_api_key: str = ""  # bearer token, if the service requires one.
+    digibot_timeout_s: float = 60.0  # per-request timeout for the external call.
+
     # Structuring layer (Phase 4). LangExtract turns OCR text into validated JSON;
     # the path is lazily imported, and the offline "mock" provider covers tests.
     structuring_provider: str = "langextract"  # "langextract" | "mock"

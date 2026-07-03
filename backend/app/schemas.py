@@ -133,6 +133,9 @@ class OCRResult(BaseModel):
     table_count: int = 0
     latency_ms: int = 0
     warnings: list[str] = []  # seals noted, low confidence, no-table-support, etc.
+    # Multi-engine routing trail: the engines tried (in order) before one produced
+    # this result. Additive/default-empty so previously persisted OCR JSON still loads.
+    attempted_engines: list[str] = []
 
 
 # --- Phase 4: structuring / extraction ----------------------------------------
@@ -252,6 +255,8 @@ class DocTypeResponse(BaseModel):
     extraction_definition: dict
     rule_definition: dict
     citation_paths: list[str]
+    preferred_ocr_engine: str | None = None
+    ocr_fallback_engines: list[str] = []
     builtin: bool
     version: int
     created_at: datetime
@@ -267,6 +272,8 @@ class DocTypeCreate(BaseModel):
     extraction_definition: dict
     rule_definition: dict
     citation_paths: list[str] = []
+    preferred_ocr_engine: str | None = None
+    ocr_fallback_engines: list[str] = []
 
 
 class DocTypeUpdate(BaseModel):
@@ -283,6 +290,8 @@ class DocTypeUpdate(BaseModel):
     extraction_definition: dict
     rule_definition: dict
     citation_paths: list[str] = []
+    preferred_ocr_engine: str | None = None
+    ocr_fallback_engines: list[str] = []
 
 
 class DocTypePreviewRequest(BaseModel):
@@ -369,7 +378,7 @@ class EngineInfo(BaseModel):
 
     key: str
     label: str
-    kind: Literal["layout", "vlm"]
+    kind: Literal["layout", "vlm", "external"]
 
 
 class VlmEngineResponse(BaseModel):

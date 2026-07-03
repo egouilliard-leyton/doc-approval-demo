@@ -88,6 +88,10 @@ def create_doc_type(
         extraction_definition=body.extraction_definition,
         rule_definition=body.rule_definition,
         citation_paths=list(body.citation_paths),
+        # Permissive: engine names are not validated against the live registry here;
+        # unknown/disabled names are skipped gracefully at chain-resolution time.
+        preferred_ocr_engine=body.preferred_ocr_engine,
+        ocr_fallback_engines=list(body.ocr_fallback_engines),
         builtin=False,
         version=1,
     )
@@ -128,6 +132,8 @@ def update_doc_type(
     row.extraction_definition = body.extraction_definition
     row.rule_definition = body.rule_definition
     row.citation_paths = list(body.citation_paths)
+    row.preferred_ocr_engine = body.preferred_ocr_engine
+    row.ocr_fallback_engines = list(body.ocr_fallback_engines)
     row.version += 1
     row.updated_at = _utcnow()
     session.add(row)
