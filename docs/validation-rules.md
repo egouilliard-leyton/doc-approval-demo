@@ -34,6 +34,7 @@ Where it lives:
 | `backend/app/serialization.py` | `_KIND_MAP` (kind ↔ dataclass) + `validate_custom_rule_dict` (save-time 422 gate). |
 | `src/lib/doc-type-schema.ts` | The TypeScript mirror of every rule kind. |
 | `src/features/doctypes/RuleListEditor.tsx` | The builder UI (one form per kind). |
+| `backend/app/pipeline/doctype_schema_reference.py` | Renders these primitives into the Create-with-AI wizard's system prompt, introspected from `_KIND_MAP` — so the AI can author every kind below without a hand-maintained list. |
 
 ---
 
@@ -180,6 +181,12 @@ A new rule kind touches five places (mirror the nearest existing primitive):
 5. **Tests** — `backend/tests/test_rules_definition.py` (interpreter: pass/fail/skip),
    `backend/tests/test_serialization.py` (round-trip + validation rejections), and the
    evaluator's `test_rules_expression.py` / `test_rules_formats.py` if you touch those.
+
+The **Create-with-AI wizard needs no change** — its prompt catalogue is generated from
+`_KIND_MAP` + the dataclasses (`pipeline/doctype_schema_reference.py`), so a new primitive
+appears automatically. `backend/tests/test_doctype_schema_reference.py` is the drift guard;
+it fails if a kind is missing from the generated reference. (Do **not** hand-edit the kind
+list into the wizard's system prompt.)
 
 **Conventions to keep:** custom types never carry code; skip (don't fail) on missing data
 unless the primitive is presence-shaped; reject non-numeric literals at validation time

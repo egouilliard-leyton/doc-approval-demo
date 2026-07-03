@@ -153,7 +153,14 @@ and (2) the approval rules — interpreted at runtime:
 - `doc_types.py` is the registry (built-ins from code + custom rebuilt from DB rows).
 - The **Create-with-AI wizard** (`pipeline/doctype_assistant.py` + `routes/doctype_assist.py`)
   is a stateless agent that designs a type conversationally, then emits a validated
-  `DocTypeCreate` through the same validators as a hand-built type.
+  `DocTypeCreate` through the same validators as a hand-built type. Its system prompt does
+  **not** hand-list the schema — the field/rule/DSL catalogue is generated at import time
+  from the very dataclasses the validator uses (`pipeline/doctype_schema_reference.py`
+  reads `serialization._KIND_MAP`, `extraction.definition.FieldDef`, and the expression
+  helpers), so every extraction kind (incl. `signature`) and all 23 rule primitives are
+  authorable and the prompt can never drift from `validate_custom_*`. Opening the wizard
+  seeds a fixed markdown template + first questions locally (no LLM call); the agent runs
+  only from the first **Send** onward.
 
 ### 4b. Large documents: section-aware extraction
 

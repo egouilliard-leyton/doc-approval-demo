@@ -27,7 +27,7 @@ Doc types became **data, not code**:
 ### Configurable validation model
 The rule layer grew from 6 primitives to a broad **single-document validation surface** — 23
 declarative kinds, each wired end-to-end (interpreter + serialization + save-time 422
-validation + builder UI + tests), all as *data, not code*:
+validation + builder UI + AI-wizard authoring + tests), all as *data, not code*:
 - **Equality & comparison** — `equality` (exact/normalized/regex/**fuzzy** with a threshold
   slider), `numeric_range`, `percentage_tolerance`.
 - **Arithmetic & aggregation** — `aggregate` (*total == Σ line_items*), and an

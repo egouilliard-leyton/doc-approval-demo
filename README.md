@@ -253,19 +253,27 @@ POST   /doc-types/{name}/preview  # dry-run a definition against sample text
 ### Create with AI (wizard)
 
 The **"Create with AI"** button (in the Manage-types dialog) opens a wizard where an LLM
-agent asks questions, ingests uploaded **process** docs and **example** docs (OCR'd via
-`qwen-vl`, or read directly if text), and iteratively refines a **markdown spec** of the
-type. The user answers each question in its own box (Enter = newline, Ctrl+Enter = save &
-advance, **Send** submits all) and can **annotate** the spec via an embedded
-[Plannotator](https://github.com/backnotprop/plannotator) session. When the agent is
-done it emits a validated `DocTypeCreate`, which is committed in one shot and then opened
-in the manual builder for fine-tuning.
+agent asks questions, ingests uploaded **process** docs and **example** docs (OCR'd via the
+configured OCR engine, or read directly if text), and iteratively refines a **markdown
+spec** of the type. Opening the wizard shows a **fixed** starting template + first
+questions immediately (no LLM call); the agent runs only from the first **Send**. The user
+answers each question in its own box (Enter = newline, Ctrl+Enter = save & advance, **Send**
+submits all) and can **annotate** the spec via an embedded
+[Plannotator](https://github.com/backnotprop/plannotator) session. If a turn comes back with
+no follow-up questions but isn't finished, a free-form continue/finalize box keeps the
+conversation moving. When the agent is done it emits a validated `DocTypeCreate`, which is
+committed in one shot and then opened in the manual builder for fine-tuning.
 
-The agent is **stateless** (the frontend re-sends the transcript + ingested texts + spec +
-annotations each turn) and its output goes through the same `validate_custom_*` +
-`build_spec` checks as a hand-built type (with one auto-repair turn), so a bad LLM payload
-degrades gracefully — it can never create an invalid type or inject code. Requires
-`OPENROUTER_API_KEY` (real per-turn LLM calls). Endpoints:
+The agent can author the **full** schema — every extraction kind (including `signature`
+fields) and all **23** rule primitives (equality, aggregate, format/checksum,
+date-constraint, the expression DSL, `signature_presence`, …). It doesn't hand-list them:
+the prompt's field/rule/DSL catalogue is generated from the same dataclasses the validator
+uses (`pipeline/doctype_schema_reference.py`), so it stays in lockstep with what a
+hand-built type can express. The agent is **stateless** (the frontend re-sends the
+transcript + ingested texts + spec + annotations each turn) and its output goes through the
+same `validate_custom_*` + `build_spec` checks as a hand-built type (with one auto-repair
+turn), so a bad LLM payload degrades gracefully — it can never create an invalid type or
+inject code. Requires `OPENROUTER_API_KEY` (real per-turn LLM calls). Endpoints:
 
 ```
 POST   /doc-types/assist                       # one Q&A turn -> {questions, spec_markdown, done, draft_doctype}
@@ -300,6 +308,7 @@ DELETE /doc-types/assist/annotate/{session_id} # cancel a session
 | Definition (de)serialization + validation | `backend/app/serialization.py` |
 | CRUD + preview routes | `backend/app/routes/doc_types.py` |
 | AI wizard agent | `backend/app/pipeline/doctype_assistant.py` |
+| Wizard prompt schema catalogue (derived from the validator's dataclasses) | `backend/app/pipeline/doctype_schema_reference.py` |
 | Plannotator subprocess manager | `backend/app/annotate_proc.py` |
 | Wizard routes (assist/ingest/annotate) | `backend/app/routes/doctype_assist.py` |
 | DB models (incl. `DocTypeDefinitionRow`) | `backend/app/models.py` |
