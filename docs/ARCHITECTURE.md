@@ -24,7 +24,7 @@ end-to-end pipeline, the swappable component layers, the data model, and the fro
 ┌────────────────────────────────────▼──────────────────────────────────────────┐
 │  FastAPI (backend/app)                                                          │
 │  routes/ ── documents · pipeline · doc_types · doctype_assist · engines ·       │
-│             corrections · overview                                              │
+│             cases · case_types · corrections · overview                         │
 │  pipeline/ ── prescan → ocr/ → structuring → agent (decide)                     │
 │  extraction/ (declarative → spec)   rules/ (primitives → ruleset)               │
 │  doc_types.py (registry)   models.py (SQLModel)   storage.py (files)            │
@@ -35,7 +35,8 @@ end-to-end pipeline, the swappable component layers, the data model, and the fro
 
 - **Backend** — FastAPI, Python 3.12, `uv`. Owns the pipeline and the REST API.
 - **Frontend** — Vite + React 19 + TypeScript at the repo root; Tailwind v4 + shadcn/ui.
-  **No router** — view switching is local state (see [§6](#6-frontend)).
+  A **hand-rolled hash router** (`src/lib/route.ts`, no `react-router`) makes every place a
+  shareable URL; the shell renders from the parsed route (see [§6](#6-frontend)).
 - **Storage** — SQLite for metadata + a per-document directory on disk for page images,
   OCR markdown, and artifacts. Zero cloud setup.
 - **External model calls** — everything model-shaped goes through **OpenRouter** with one
@@ -217,8 +218,14 @@ ceiling. Full design, weights delivery, and measured accuracy:
 
 ## 6. Frontend
 
-Vite + React 19, no router. `App.tsx`'s `Shell` holds a top-level **view** state and a
-header **Workspace / Admin** toggle.
+Vite + React 19. A **hand-rolled hash router** owns navigation: `src/lib/route.ts` is a pure,
+unit-tested mapping between the location hash and a typed `Route` (parse / format / equality),
+and `src/features/routing/` is the React seam (`useHashRoute` mirrors `window.location.hash`,
+`RouteContext` shares it, `CopyLinkButton` copies the current deep link). `App.tsx`'s `Shell`
+renders the pane from `route.view` and shows a header **Home / Admin** toggle; finer navigation
+(which document, tab, field, case, or admin section) lives in the `Route` itself, so every place
+is a shareable URL that restores on cold load. **Home is one unified upload entry** — one dropped
+document runs the single-document workspace; several become a multi-document case.
 
 ### Pipeline state
 

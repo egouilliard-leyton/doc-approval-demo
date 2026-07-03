@@ -28,6 +28,12 @@ Highlights:
   dedup, and a whole-document grounding fallback. See
   [large-document-extraction.md](docs/large-document-extraction.md).
 - **Human-in-the-loop** — edit any extracted value inline; every correction is logged.
+- **Multi-document cases** — drop several documents at once and they become a **case**: each
+  is classified and extracted, then reconciled across documents into one cross-checked
+  approve / flag decision. See [Multi-document cases](docs/multi-document-cases.md).
+- **Shareable deep links** — every place in the app has a real hash URL that updates the
+  address bar and restores on cold load (back/forward included), so any document, tab, field,
+  case, or admin view can be copied and shared. See [Shareable links](#shareable-links).
 - **Admin panel** — a consolidated overview, documents, corrections log, and configuration.
   See [Admin panel](#admin-panel).
 
@@ -38,7 +44,8 @@ so OCR engines can be compared side-by-side on camera.
 > **📚 Full documentation** lives in [`docs/`](docs/README.md):
 > [Architecture](docs/ARCHITECTURE.md) · [API reference](docs/API.md) ·
 > [Roadmap & work log](docs/ROADMAP.md) · [Validation rules](docs/validation-rules.md).
-> Deep dives: [Large-document extraction](docs/large-document-extraction.md) ·
+> Deep dives: [Multi-document cases](docs/multi-document-cases.md) ·
+> [Large-document extraction](docs/large-document-extraction.md) ·
 > [Signature detection](docs/signature-extraction.md).
 
 - **Backend:** FastAPI (`backend/`, Python 3.12, `uv`) — the pipeline + REST API.
@@ -81,7 +88,8 @@ make warm
 
 ```bash
 make dev        # backend on :8000 + frontend on :5173 (Ctrl+C stops both)
-# open http://localhost:5173 — drag a file from backend/samples/ to run the pipeline
+# open http://localhost:5173 — drop one document (from backend/samples/) to analyze it,
+# or several to cross-check them as a case
 ```
 
 Other targets: `make dev-backend`, `make dev-frontend`, `make test` (offline suite),
@@ -188,6 +196,29 @@ the structured result:
   *original → final* with the field's source box on the document.
 - **Optional currency** — money-like numeric fields render with the document's currency when
   one was extracted; other extractions are unaffected.
+
+## Shareable links
+
+Every navigable place in the app has a real, shareable **hash URL** that updates the address
+bar as you move and restores that exact place when the link is opened cold (browser back /
+forward work throughout). A **Copy link** button sits on the document, case, and admin
+headers.
+
+The router is hand-rolled — no `react-router`. Its core is a pure, unit-tested mapping between
+the location hash and a typed `Route` (`src/lib/route.ts` + `route.test.ts`); the React seam and
+the header button live in `src/features/routing/`. The URL grammar:
+
+| URL | Opens |
+| --- | --- |
+| `#/` | Home — the unified upload entry + recent work |
+| `#/documents/<id>?tab=<ocr\|structured\|decision\|compare>&field=<path>` | A document, focused on a tab (and optionally a field) |
+| `#/cases` · `#/cases/<id>?member=<docId>` | The cases list · one case (optionally drilled into a member document) |
+| `#/admin/<overview\|documents\|corrections\|config>` | An admin section |
+| `#/admin/config/doctype/<name>` | The doc-type builder for one type |
+
+A shared `#/cases/<id>` link cold-loads the case into a **read-only** overview (a fresh fetch
+of the saved case + its reconciliation/decision) — the saved result, not a resumed live
+classify/reconcile orchestration.
 
 ## Signature detection
 
@@ -304,6 +335,7 @@ DELETE /doc-types/assist/annotate/{session_id} # cancel a session
 | Rule engine (primitives + escape hatches) | `backend/app/rules/definition.py` (`build_ruleset`) |
 | Doc-type registry (built-ins in code + custom from DB) | `backend/app/doc_types.py` |
 | Inspector: highlights + color model | `src/lib/grounding.ts` · `src/lib/highlights.ts` · `src/features/inspector/` |
+| Hash router / deep links | `src/lib/route.ts` · `src/features/routing/` |
 | Admin panel (overview/documents/corrections/config) | `src/features/admin/` |
 | Definition (de)serialization + validation | `backend/app/serialization.py` |
 | CRUD + preview routes | `backend/app/routes/doc_types.py` |

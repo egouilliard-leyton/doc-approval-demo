@@ -14,6 +14,7 @@ Project documentation for the Document Auto-Approval System.
 
 | Doc | What's in it |
 | --- | --- |
+| [multi-document-cases.md](./multi-document-cases.md) | **Multi-document cases** — the Case entity, classify → reconcile → decide across N documents, and the design/phase plan behind it. |
 | [large-document-extraction.md](./large-document-extraction.md) | **Extraction accuracy on long docs** — proximity grounding, section-aware extraction, cross-section list dedup, and the whole-document grounding fallback. |
 | [signature-extraction.md](./signature-extraction.md) | **Signature detection** — the YOLOv8-ONNX best-effort spatial post-pass, its config, weights delivery, and measured accuracy. |
 

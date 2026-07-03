@@ -41,7 +41,9 @@ validation + builder UI + AI-wizard authoring + tests), all as *data, not code*:
   `grounded_on_page`, and `signature_presence` (over the signature post-pass).
 
 Cross-document validations (same value/date across a set, bundle completeness, signature
-*matching*) are deferred — they need the multi-document/bundle substrate (see the backlog and
+*matching*) still aren't **configurable rule primitives** — though the bundle substrate they'd
+build on now ships (see **Multi-document cases** below), so what's deferred is exposing them as
+authorable kinds (see the backlog and
 [validation-rules.md §6](./validation-rules.md#6-cross-document-validations-not-yet-built)).
 Full catalogue: **[validation-rules.md](./validation-rules.md)**.
 
@@ -115,12 +117,37 @@ Located + cropped handwritten-signature extraction, layered onto the text-ground
   one was extracted; other extractions are untouched.
 
 ### Admin panel
-A consolidated **Admin** area (header Workspace/Admin toggle + left sidebar):
+A consolidated **Admin** area (header Home/Admin toggle + left sidebar):
 - **Overview** — KPI cards + status/decision breakdowns (`GET /overview`).
 - **Documents** — status filter chips (with counts) + search + pagination; open → workspace.
 - **Corrections** — cross-document edit log grouped by document, with **accordion** and
   **master–detail** lenses.
 - **Configuration** — doc-type + OCR-model managers inline in one place.
+
+### Multi-document cases
+Uploading became **multi-document**: drop several files on Home and they form a **case**, the
+cross-checked counterpart to the single-document pipeline.
+- **Unified upload** — Home is one entry: one dropped document runs the single-document
+  workspace; several become a case. The header toggle is now **Home / Admin** (the old
+  separate Workspace and Cases tabs are gone).
+- **The `Case` entity** groups N documents; each is **auto-classified (confirm before commit)**,
+  extracted with the existing per-document pipeline, then **reconciled** into shared canonical
+  fields — agreements yield a cited value, disagreements route the case to `needs_review`.
+- **One case decision** lifts the deterministic-checks-hard-fail + advisory-LLM hybrid to the
+  case level, with completeness checks for defined **case types** (e.g. `ap_match`).
+- New backend surface (`/cases`, `/case-types`, case reconcile/decide, a `/classify` stage) +
+  a case-level frontend (`src/features/case/`). Full design:
+  **[multi-document-cases.md](./multi-document-cases.md)**.
+
+### Shareable deep links
+Every navigable place got a **real, shareable hash URL** that updates the address bar and
+restores on cold load (browser back/forward included).
+- A **hand-rolled hash router** — no `react-router`. The core is a pure, unit-tested mapping
+  between the location hash and a typed `Route` (`src/lib/route.ts` + `route.test.ts`); the
+  React seam and a **Copy link** button (on the document, case, and admin headers) live in
+  `src/features/routing/`.
+- Grammar covers home, a document (`?tab=…&field=…`), the cases list + one case (`?member=…`),
+  and the admin sections (incl. `config/doctype/<name>`).
 
 ---
 
@@ -138,10 +165,11 @@ Not built yet — candidate next steps, roughly ordered by value.
 - **Batch actions** — multi-select in the Documents table (re-run a stage, re-decide, delete).
 - **Auth & multi-user** — the app is single-user/local today (Plannotator is loopback-only).
   A deployed version needs auth, per-user data, and a native in-app annotation layer.
-- **Cross-document validations** — same value/date across a set of documents, bundle
-  completeness, cross-references, and same-signatory *matching*. Needs a **bundle** concept
-  (multiple documents' extractions evaluated together) that the multi-document extraction &
-  configuration work builds first. Design in
+- **Cross-document validation _primitives_** — the **bundle** substrate now exists (Cases ship,
+  and the case decision engine already runs cross-document conflict + completeness checks in
+  code). Still open: exposing cross-document checks — same value/date across a set, bundle
+  completeness, cross-references, same-signatory *matching* — as **configurable rule primitives**
+  authorable like the single-document kinds. Design in
   [validation-rules.md §6](./validation-rules.md#6-cross-document-validations-not-yet-built)
   and [VALIDATION-BRAINSTORM.md §3](./VALIDATION-BRAINSTORM.md).
 - **Export** — download a decision + citations as a PDF/JSON audit record.

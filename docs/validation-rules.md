@@ -197,12 +197,15 @@ rule definitions untouched (their parity tests assert exact check-name sets).
 
 ## 6. Cross-document validations (not yet built)
 
-Everything above is **single-document**. Cross-document checks — same value/date across a
-set of documents, bundle completeness, cross-references, same-signatory *matching* — are
-deferred because they need a **bundle** (multiple documents' extractions evaluated together),
-a subsystem that doesn't exist yet and that the multi-document extraction & configuration
-work builds first. See [VALIDATION-BRAINSTORM.md §0, §3, §9](./VALIDATION-BRAINSTORM.md) for
-the design and the planned `CrossDocConsistencyRuleDef` / `BundleCompletenessRuleDef`.
+Every primitive above is **single-document**. The **bundle** substrate they'd build on now
+exists: multi-document **Cases** ship, and the case decision engine already runs cross-document
+**conflict** (sources disagree → `needs_review`) and **completeness** checks in code
+(`backend/app/case_decision.py`; see [multi-document-cases.md](./multi-document-cases.md)).
+What's still not built is exposing cross-document checks — same value/date across a set,
+bundle completeness, cross-references, same-signatory *matching* — as **configurable rule
+primitives** authorable like the single-document kinds above (the planned
+`CrossDocConsistencyRuleDef` / `BundleCompletenessRuleDef`). See
+[VALIDATION-BRAINSTORM.md §0, §3, §9](./VALIDATION-BRAINSTORM.md) for the design.
 
 
 ---
