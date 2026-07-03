@@ -13,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError, updateTemplate } from "@/lib/api";
 import type { FieldCatalogueEntry, TemplateDetail } from "@/lib/types";
 import { GeneratePanel } from "@/features/templates/GeneratePanel";
@@ -20,6 +21,7 @@ import { SourceUploadPanel } from "@/features/templates/SourceUploadPanel";
 import type { TemplateEditorApi } from "@/features/templates/editor/TemplateEditor";
 import { TemplateEditor } from "@/features/templates/editor/TemplateEditor";
 import { PlaceholderPalette } from "@/features/templates/editor/PlaceholderPalette";
+import { AgentChatPanel } from "@/features/templates/editor/AgentChatPanel";
 
 const BLANK = "<p></p>";
 
@@ -33,6 +35,9 @@ export function RichHtmlPanel({
   const [html, setHtml] = useState(template.html_body ?? BLANK);
   const [css, setCss] = useState(template.css ?? "");
   const [saving, setSaving] = useState(false);
+  // True while the authoring agent is streaming an edit — locks the editor so
+  // the user's keystrokes don't fight the agent's live changes.
+  const [streaming, setStreaming] = useState(false);
   // Force the editor to remount only when a *new* persisted body arrives
   // (e.g. right after a source upload converts a DOCX into HTML).
   const [editorKey, setEditorKey] = useState(0);
@@ -69,6 +74,22 @@ export function RichHtmlPanel({
 
   const handleInsertSignature = useCallback(() => {
     apiRef.current?.insertSignatureToken();
+  }, []);
+
+  // The agent already persisted its edit server-side (creating a revision), so
+  // the incoming html/css is authoritative-and-saved. Keep the seeds in sync so
+  // a later Save doesn't fight it, and bump editorKey to remount TipTap — it
+  // only picks up new content on mount.
+  const handleAgentHtml = useCallback((next: string) => {
+    seededRef.current = next;
+    setHtml(next);
+    setEditorKey((k) => k + 1);
+    toast.success("Applied agent edit");
+  }, []);
+
+  const handleAgentCss = useCallback((next: string) => {
+    seededCssRef.current = next;
+    setCss(next);
   }, []);
 
   const handleSave = async () => {
@@ -132,12 +153,29 @@ export function RichHtmlPanel({
             html={html}
             onChange={setHtml}
             editorRef={handleEditorReady}
+            editable={!streaming}
           />
-          <PlaceholderPalette
-            templateId={template.id}
-            onInsertField={handleInsertField}
-            onInsertSignature={handleInsertSignature}
-          />
+          <Tabs defaultValue="insert" className="min-h-0">
+            <TabsList className="w-full">
+              <TabsTrigger value="insert">Insert field</TabsTrigger>
+              <TabsTrigger value="agent">AI edit</TabsTrigger>
+            </TabsList>
+            <TabsContent value="insert" className="min-h-0">
+              <PlaceholderPalette
+                templateId={template.id}
+                onInsertField={handleInsertField}
+                onInsertSignature={handleInsertSignature}
+              />
+            </TabsContent>
+            <TabsContent value="agent" className="min-h-0">
+              <AgentChatPanel
+                templateId={template.id}
+                onHtml={handleAgentHtml}
+                onCss={handleAgentCss}
+                onStreamingChange={setStreaming}
+              />
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
 

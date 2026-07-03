@@ -12,6 +12,7 @@ Binding never raises on a bad path — every decision is recorded in the :class:
 from __future__ import annotations
 
 import base64
+import html
 from dataclasses import dataclass, field as dc_field
 
 
@@ -64,3 +65,18 @@ def bind_html(
 
     outcome.html = str(soup)
     return outcome
+
+
+def render_field_placeholder(path: str, label: str, kind: str | None) -> str:
+    """Build a ``span[data-field]`` placeholder marker for the editor / bind contract.
+
+    Returns exactly ``<span data-field="{path}" data-field-kind="{kind}">{label}</span>`` with
+    ``path``/``kind`` escaped for attribute safety and ``label`` HTML-escaped; the ``data-field-kind``
+    attribute is omitted entirely when ``kind is None``. Mirrors the frontend field-token markup and
+    is parseable by :func:`bind_html`'s ``span[data-field]`` selector.
+    """
+    kind_attr = f' data-field-kind="{html.escape(kind, quote=True)}"' if kind is not None else ""
+    return (
+        f'<span data-field="{html.escape(path, quote=True)}"{kind_attr}>'
+        f"{html.escape(label)}</span>"
+    )

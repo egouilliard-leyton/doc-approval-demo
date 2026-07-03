@@ -31,14 +31,17 @@ export function TemplateEditor({
   html,
   onChange,
   editorRef,
+  editable = true,
 }: {
   html: string;
   onChange: (html: string) => void;
   editorRef?: (api: TemplateEditorApi) => void;
+  editable?: boolean;
 }) {
   const editor = useEditor({
     extensions: [StarterKit, FieldToken, SignatureToken],
     content: html,
+    editable,
     // Client-only SPA, but this avoids a first-paint hydration warning.
     immediatelyRender: false,
     editorProps: {
@@ -49,6 +52,12 @@ export function TemplateEditor({
     },
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
   });
+
+  // Toggle editability without a remount (e.g. lock the editor while the agent
+  // is streaming an edit into it).
+  useEffect(() => {
+    if (editor) editor.setEditable(editable);
+  }, [editor, editable]);
 
   // Expose the imperative insert commands to the parent once the editor exists.
   useEffect(() => {

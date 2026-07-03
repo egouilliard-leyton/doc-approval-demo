@@ -7,6 +7,7 @@ a DOCX and a non-fillable PDF both convert to a non-empty HTML body.
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.pipeline.generation import render_field_placeholder, sanitize_template_html
 from app.storage import DOCX_MIME
 
 from .generation_fixtures import make_docx_bytes, make_plain_pdf
@@ -76,6 +77,49 @@ def test_update_html_body_twice_snapshots_revision():
         )
         assert second.status_code == 200, second.text
         assert second.json()["html_body"] == "<p>v2</p>"
+
+        # Two edits -> two PRE-update snapshots, newest first: the second edit snapshotted
+        # "v1" (with the note), the first edit snapshotted the original empty body.
+        revs = client.get(f"/templates/{tmpl['id']}/revisions")
+        assert revs.status_code == 200, revs.text
+        history = revs.json()
+        assert len(history) == 2
+        assert history[0]["html"] == "<p>v1</p>"
+        assert history[0]["note"] == "second edit"
+        assert history[1]["html"] is None
+        assert history[1]["note"] is None
+
+
+def test_revisions_missing_returns_404():
+    with TestClient(app) as client:
+        assert client.get("/templates/does-not-exist/revisions").status_code == 404
+
+
+def test_sanitize_template_html_strips_active_content():
+    cleaned = sanitize_template_html(
+        '<p>ok<script>alert(1)</script><a href="javascript:x" onclick="y">t</a></p>'
+    )
+    assert "<script>" not in cleaned
+    assert "alert(1)" not in cleaned
+    assert "onclick" not in cleaned
+    assert "javascript:" not in cleaned
+    assert "<p>ok" in cleaned
+    assert ">t</a>" in cleaned
+
+
+def test_sanitize_template_html_none_passthrough():
+    assert sanitize_template_html(None) is None
+
+
+def test_render_field_placeholder_markup():
+    assert (
+        render_field_placeholder("vendor", "Vendor", "text")
+        == '<span data-field="vendor" data-field-kind="text">Vendor</span>'
+    )
+    assert (
+        render_field_placeholder("vendor", "Vendor", None)
+        == '<span data-field="vendor">Vendor</span>'
+    )
 
 
 def test_update_missing_returns_404():

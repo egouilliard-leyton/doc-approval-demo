@@ -345,3 +345,42 @@ class DecisionResult(BaseModel):
     llm_decision: Decision | None = None  # what the LLM proposed before reconciliation
     warnings: list[str] = []
     latency_ms: int = 0
+
+
+# --- Phase 3: authoring agent (Waves 2+3) ------------------------------------
+
+
+class AgentChatMessage(BaseModel):
+    """One turn of the authoring-agent conversation, replayed into the LLM."""
+
+    role: str  # "user" | "assistant"
+    content: str
+
+
+class AgentRequest(BaseModel):
+    """Request body for ``POST /templates/{id}/agent``: a message + prior turns."""
+
+    message: str
+    history: list[AgentChatMessage] = []
+    provider: str = ""  # "" -> settings default; "llm" | "mock"
+
+
+class AgentEvent(BaseModel):
+    """One server-sent event emitted by the authoring agent's stream.
+
+    ``type`` selects which of the all-optional payload fields carry meaning:
+    ``token`` (text), ``tool_call`` (tool_name/tool_args), ``tool_result``
+    (tool_name/ok/detail), ``html``/``css`` (the new document + revision_id),
+    ``error`` (message), ``done`` (terminal, no payload).
+    """
+
+    type: str  # "token"|"tool_call"|"tool_result"|"html"|"css"|"error"|"done"
+    text: str | None = None
+    tool_name: str | None = None
+    tool_args: dict | None = None
+    ok: bool | None = None
+    detail: str | None = None
+    html: str | None = None
+    css: str | None = None
+    revision_id: str | None = None
+    message: str | None = None

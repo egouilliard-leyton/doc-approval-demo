@@ -85,6 +85,15 @@ class Settings(BaseSettings):
     mapping_model: str = "deepseek/deepseek-v4-flash"
     mapping_base_url: str = "https://openrouter.ai/api/v1"
 
+    # Authoring-agent layer (Phase 3). A tool-calling OpenRouter agent edits a
+    # template's HTML/CSS on request; the offline "mock" provider covers tests.
+    # The "llm" path is lazily imported; agent + SSE route land in later waves.
+    agent_authoring_provider: str = "llm"  # "llm" | "mock"
+    agent_authoring_model: str = "deepseek/deepseek-v4-flash"
+    agent_authoring_base_url: str = "https://openrouter.ai/api/v1"
+    agent_authoring_max_tool_iterations: int = 6  # tool-call rounds before stopping.
+    agent_authoring_timeout_s: float = 120.0  # per-request wall-clock ceiling.
+
     # Browser origins allowed to call the API (Vite dev server by default).
     cors_origins: list[str] = ["http://localhost:5173"]
 

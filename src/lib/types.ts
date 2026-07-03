@@ -246,6 +246,40 @@ export interface TemplateRevisionInfo {
   created_at: string;
 }
 
+// --- authoring agent (SSE chat) ----------------------------------------------
+
+/** One turn in the authoring-agent chat transcript. */
+export interface AgentChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/**
+ * A single SSE frame streamed by `POST /templates/{id}/agent`. `type` is the
+ * discriminant; the other fields are populated per event (see the backend
+ * contract). Sequence: `token`* → `tool_call` → `tool_result` → optional
+ * `html`/`css` → … → `done`. `error` carries `message`.
+ */
+export interface AgentEvent {
+  type:
+    | "token"
+    | "tool_call"
+    | "tool_result"
+    | "html"
+    | "css"
+    | "error"
+    | "done";
+  text?: string;
+  tool_name?: string;
+  tool_args?: Record<string, unknown>;
+  ok?: boolean;
+  detail?: string;
+  html?: string;
+  css?: string;
+  revision_id?: string;
+  message?: string;
+}
+
 export interface TemplateCreate {
   name: string;
   doc_type: DocType;

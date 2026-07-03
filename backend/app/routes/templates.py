@@ -8,7 +8,9 @@ extraction, optionally stamping a signature).
 import asyncio
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlmodel import Session, delete, select
+from starlette.concurrency import iterate_in_threadpool
 
 from app import storage
 from app.db import get_session
@@ -21,15 +23,20 @@ from app.models import (
     _utcnow,
 )
 from app.pipeline.generation import (
+    AUTHORING_PROVIDERS,
+    apply_template_update,
     convert_docx,
     convert_pdf,
     enumerate_form_fields,
     field_catalogue,
     generate_pdf,
     generate_rich,
+    run_authoring_agent,
     suggest_mapping,
 )
 from app.schemas import (
+    AgentEvent,
+    AgentRequest,
     FieldCatalogueEntry,
     GenerateOutputFile,
     GenerateResult,
@@ -37,6 +44,7 @@ from app.schemas import (
     TemplateCreate,
     TemplateDetail,
     TemplateFormField,
+    TemplateRevisionInfo,
     TemplateSummary,
     TemplateUpdate,
 )
@@ -113,27 +121,59 @@ def update_template(
     if tmpl is None:
         raise HTTPException(status_code=404, detail="Template not found.")
 
-    # Snapshot the PRE-update html/css so edits to the body/styles are revertible.
-    if body.html_body is not None or body.css is not None:
-        session.add(
-            TemplateRevision(
-                template_id=tmpl.id, html=tmpl.html_body, css=tmpl.css, note=body.revision_note
-            )
+    tmpl = apply_template_update(session, tmpl, body)
+    return _to_detail(tmpl)
+
+
+@router.get("/{template_id}/revisions", response_model=list[TemplateRevisionInfo])
+def list_template_revisions(
+    template_id: str, session: Session = Depends(get_session)
+) -> list[TemplateRevision]:
+    """The template's pre-update html/css snapshots, newest first. 404 if it's missing."""
+    tmpl = session.get(Template, template_id)
+    if tmpl is None:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    return session.exec(
+        select(TemplateRevision)
+        .where(TemplateRevision.template_id == template_id)
+        .order_by(TemplateRevision.created_at.desc())
+    ).all()
+
+
+@router.post("/{template_id}/agent")
+async def run_template_agent(
+    template_id: str, body: AgentRequest, session: Session = Depends(get_session)
+) -> StreamingResponse:
+    """Stream the authoring agent editing the template's HTML/CSS (Server-Sent Events).
+
+    Validates the template exists (404) and the provider up front (400 on an unknown one,
+    mirroring the mapper route), then hands off to the engine in a threadpool. The request
+    session is only used for that validation — the engine opens its own sessions, because
+    FastAPI tears this one down before the stream drains. Each ``data:`` line is one
+    :class:`AgentEvent`; the stream always ends with a ``done`` event.
+    """
+    if session.get(Template, template_id) is None:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    if body.provider and body.provider not in AUTHORING_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown authoring provider '{body.provider}'. "
+                f"Available: {', '.join(sorted(AUTHORING_PROVIDERS))}"
+            ),
         )
 
-    # Wholesale replacement per field; JSON columns must be reassigned (SQLAlchemy
-    # doesn't detect in-place mutation of a dict/list).
-    for attr in ("name", "html_body", "css", "form_field_map", "placeholder_map",
-                 "output_formats", "status"):
-        value = getattr(body, attr)
-        if value is not None:
-            setattr(tmpl, attr, value)
-    tmpl.updated_at = _utcnow()
+    async def _stream():
+        try:
+            async for event in iterate_in_threadpool(
+                run_authoring_agent(template_id, body, body.provider)
+            ):
+                yield f"data: {event.model_dump_json()}\n\n".encode()
+        except ValueError as exc:  # unknown provider slipped through -> emit + close cleanly
+            yield f"data: {AgentEvent(type='error', message=str(exc)).model_dump_json()}\n\n".encode()
+            yield f"data: {AgentEvent(type='done').model_dump_json()}\n\n".encode()
 
-    session.add(tmpl)
-    session.commit()
-    session.refresh(tmpl)
-    return _to_detail(tmpl)
+    return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
 @router.delete("/{template_id}", status_code=204)

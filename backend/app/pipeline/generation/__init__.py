@@ -9,7 +9,9 @@ HTML->PDF/DOCX rendering (:mod:`render`).
 
 from __future__ import annotations
 
-from .binder import BindOutcome, bind_html
+from .authoring_agent import PROVIDERS as AUTHORING_PROVIDERS
+from .authoring_agent import TOOL_SCHEMAS, run_authoring_agent
+from .binder import BindOutcome, bind_html, render_field_placeholder
 from .catalogue import FieldCatalogueEntry, field_catalogue
 from .convert import ConvertResult, convert_docx, convert_pdf
 from .forms import FillOutcome, TemplateFormField, enumerate_form_fields, fill_form
@@ -22,6 +24,7 @@ from .generate import (
 )
 from .mapper import PROVIDERS, suggest_mapping
 from .render import RenderUnavailableError, render_docx, render_pdf
+from .template_edits import apply_template_update, sanitize_template_html
 from .values import flatten_field_values, resolve_path
 
 __all__ = [
@@ -45,7 +48,13 @@ __all__ = [
     "ConvertResult",
     "bind_html",
     "BindOutcome",
+    "render_field_placeholder",
     "render_pdf",
     "render_docx",
     "RenderUnavailableError",
+    "apply_template_update",
+    "sanitize_template_html",
+    "run_authoring_agent",
+    "AUTHORING_PROVIDERS",
+    "TOOL_SCHEMAS",
 ]

@@ -1,6 +1,8 @@
 // Fetch client for the FastAPI backend.
 // CORS on the backend already allows the Vite dev origin, so we call it directly.
 import type {
+  AgentChatMessage,
+  AgentEvent,
   DocumentDetail,
   DocumentSummary,
   DecisionResult,
@@ -14,9 +16,11 @@ import type {
   StructuredResult,
   TemplateCreate,
   TemplateDetail,
+  TemplateRevisionInfo,
   TemplateSummary,
   TemplateUpdate,
 } from "@/lib/types";
+import { readSSE } from "@/lib/sse";
 
 const API_BASE_URL: string =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -211,6 +215,50 @@ export async function generateTemplateOutput(
     query: { document_id: p.documentId, flatten: p.flatten ?? true },
     body: form,
   });
+}
+
+// --- authoring agent (SSE chat) + revisions ----------------------------------
+
+/**
+ * Stream a turn of the authoring-agent conversation. Unlike `request`, this
+ * keeps the raw response body so we can parse the `text/event-stream` frames as
+ * they arrive; each yielded value is one `AgentEvent`.
+ */
+export async function* streamAgent(
+  id: string,
+  body: { message: string; history: AgentChatMessage[]; provider?: string },
+  signal?: AbortSignal,
+): AsyncGenerator<AgentEvent> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/templates/${id}/agent`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch {
+    throw new ApiError(0, "Cannot reach the backend — is it running on :8000?");
+  }
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const data = (await res.json()) as { detail?: string };
+      if (data?.detail) detail = data.detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  for await (const ev of readSSE(res)) {
+    yield ev as AgentEvent;
+  }
+}
+
+export async function listTemplateRevisions(
+  id: string,
+): Promise<TemplateRevisionInfo[]> {
+  return request<TemplateRevisionInfo[]>(`/templates/${id}/revisions`);
 }
 
 // --- persisted stage results (GET; 404 when a stage hasn't run) ---------------
