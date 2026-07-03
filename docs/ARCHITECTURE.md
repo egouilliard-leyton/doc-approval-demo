@@ -36,7 +36,7 @@ end-to-end pipeline, the swappable component layers, the data model, and the fro
 - **Backend** — FastAPI, Python 3.12, `uv`. Owns the pipeline and the REST API.
 - **Frontend** — Vite + React 19 + TypeScript at the repo root; Tailwind v4 + shadcn/ui.
   A **hand-rolled hash router** (`src/lib/route.ts`, no `react-router`) makes every place a
-  shareable URL; the shell renders from the parsed route (see [§6](#6-frontend)).
+  shareable URL; the shell renders from the parsed route (see [§7](#7-frontend)).
 - **Storage** — SQLite for metadata + a per-document directory on disk for page images,
   OCR markdown, and artifacts. Zero cloud setup.
 - **External model calls** — everything model-shaped goes through **OpenRouter** with one
@@ -102,7 +102,7 @@ Resolution is DB-aware:
 **Multi-VLM.** Connecting a model is a row, not a code change — every VLM speaks the same
 API behind OpenRouter. The `/engines` routes manage the registry; the add-model dropdown is
 populated **live** from OpenRouter's model list (filtered to image-capable models), with a
-curated fallback when the key/network is absent. See the settings UI in [§6](#6-frontend).
+curated fallback when the key/network is absent. See the settings UI in [§7](#7-frontend).
 
 > Per-engine OCR results coexist under `stage_results["ocr"][<engine>]`, so the inspector's
 > **Compare** tab can diff engines on the same document.
@@ -216,7 +216,56 @@ ceiling. Full design, weights delivery, and measured accuracy:
 
 ---
 
-## 6. Frontend
+## 6. Multi-document cases
+
+A **`Case`** is an entity **above `Document`** that groups N documents (possibly of mixed
+types) and owns the cross-document reasoning result. The per-document pipeline (§2) is reused
+**unchanged** — each member is ingested, OCR'd, structured and (optionally) decided on its own;
+the case layer only adds a **reconcile → decide** pass on top of the members' existing
+`StructuredResult`s. Design & phase plan: **[multi-document-cases.md](./multi-document-cases.md)**.
+
+```
+Case ──┬── Document (invoice)  → StructuredResult ─┐
+       ├── Document (po)        → StructuredResult ─┤ reconcile → canonical fields
+       ├── Document (contract)  → StructuredResult ─┤ (+ conflicts) → one case decision
+       └── Document (delivery)  → StructuredResult ─┘
+```
+
+- **Classify** (`pipeline/classify.py`, `POST /documents/{id}/classify`) — an advisory stage
+  that guesses a file's doc-type from its persisted OCR text. Two providers behind one entry
+  point (mirroring OCR/structuring/decision): **`heuristic`** (default, fully offline — scores
+  each registered type by how much of its extraction vocabulary appears in the text) and an
+  opt-in **`llm`**. The guess is deliberately **not persisted** and doesn't advance status —
+  the user confirms/corrects it ("auto-classify + confirm") before extraction commits.
+- **Reconciler** (`reconcile/`) — turns the members into **canonical fields**, each a *bag of
+  grounded candidates* drawn from N documents (`candidates.py`: a defined case type follows its
+  `canonical_fields` mapping; an open pile infers fields from top-level names overlapping ≥2
+  docs). Candidates are compared under a **per-kind tolerance** (`tolerance.py`: money / date /
+  legal-suffix-aware company names) via a **grouped-by-document exists-match** (`engine.py`), so
+  `$135.00` == `135.0` and `Acme Ltd` == `Acme Limited`. Agreement yields one cited value;
+  disagreement never picks a winner — it records a `conflict_detail` and routes the case to
+  `needs_review`. Each candidate cites *which* document + page it came from (the `document_id`
+  added to `Grounding`/`Citation`).
+- **Case decision** (`case_decision.py`, `POST /cases/{id}/decide`) — lifts the single-doc
+  hybrid to the case: deterministic cross-document checks run in code (a field conflict or a
+  missing required document → `needs_review`; defined case types add **completeness** checks),
+  and an opt-in LLM (`?provider=llm`) adds judgment it can never use to override a failed check.
+  It **reuses `agent._reconcile` verbatim**, so the precedence rules match §5 exactly. The
+  default path is fully offline.
+- **Case-type registry** (`case_types.py` + `case_type_definition.py`) — a data-driven registry
+  parallel to the doc-type one. A case type carries its expected member doc-types (with min/max
+  cardinality) + the canonical-field mapping. Built-in **`ap_match`** (invoice + po + contract +
+  delivery_note) seeds on boot; custom types are JSON rows (`CaseTypeDefinitionRow`) rebuilt
+  verbatim — unlike doc types they carry no code, so there's no code-vs-DB split. Two new
+  built-in doc-types (`po`, `delivery_note`) back the `ap_match` demo.
+- **Orchestration** keeps the no-background-worker design: the client creates a case, fans out
+  the existing per-document stage calls (they parallelize cleanly), then calls the server-side
+  `POST /cases/{id}/reconcile` + `POST /cases/{id}/decide`. Both stages persist onto a
+  **`CaseRun`** (`stage_results` keyed by `case_id`, mirroring `PipelineRun`).
+
+---
+
+## 7. Frontend
 
 Vite + React 19. A **hand-rolled hash router** owns navigation: `src/lib/route.ts` is a pure,
 unit-tested mapping between the location hash and a typed `Route` (parse / format / equality),
@@ -259,6 +308,18 @@ selectable engines and refetches on window focus.
 - **Compare** (`inspector/EngineComparison.tsx`) — a per-engine roster (run/metrics on-demand)
   plus a two-pane A/B transcription diff.
 
+### Cases
+
+`features/case/` mirrors the single-document workspace for a multi-document case (§6).
+`caseReducer.ts` is a pure state machine (shared via `CaseContext`) owning per-member
+pipeline progress, the reconciliation + decision results, and the drill-down focus. The
+views walk the flow: `ClassifyConfirmView` (auto-classify + confirm each file's type),
+`CaseOverview` (members + per-member status), `ReconciliationView` (canonical fields with
+multi-doc citations + conflict badges; clicking a field navigates across members),
+`CaseDecisionPanel`, and `CaseMemberDrilldown` (open one member's inspector in place).
+`CaseList` is the cases index; a shared `#/cases/<id>` link cold-loads a **read-only**
+overview of the saved reconciliation/decision.
+
 ### Admin
 
 `features/admin/AdminPanel.tsx` — a left sidebar over four sections:
@@ -271,7 +332,7 @@ selectable engines and refetches on window focus.
 
 ---
 
-## 7. Data model
+## 8. Data model
 
 `backend/app/models.py` (SQLModel → SQLite):
 
@@ -279,6 +340,10 @@ selectable engines and refetches on window focus.
 | --- | --- |
 | `Document` | An uploaded document + ingestion metadata (filename, doc_type, status, pages). |
 | `PipelineRun` | One run per document; `stage_results` (JSON) accumulates prescan/ocr/structure/decide. |
+| `Case` | A case grouping N documents for cross-document reasoning; open pile or bound to a case type. |
+| `CaseMembership` | Links a document to a case (`document_id` PK → a document belongs to at most one case). |
+| `CaseRun` | One run per case; `stage_results` (JSON) accumulates reconcile/decide (mirrors `PipelineRun`). |
+| `CaseTypeDefinitionRow` | Persisted case-type definition (built-in `ap_match` mirrored; custom rebuilt from JSON). |
 | `DocTypeDefinitionRow` | Persisted doc-type definition (built-ins mirrored; custom rebuilt from JSON). |
 | `VlmEngineRow` | A connected VLM OCR engine (`key`, `label`, OpenRouter `model`, `enabled`). |
 | `FieldCorrectionRow` | One row per (document, field) reviewer edit: `original_value` → `new_value`, timestamps. |
@@ -289,7 +354,7 @@ instead holds `sheets.json` (the parsed grid, one entry per sheet) and no page i
 
 ---
 
-## 8. Testing
+## 9. Testing
 
 - **Backend** — `pytest`, fully offline (mock OCR engine + mock structuring/decision
   providers, no API key). `make test`; `make smoke` runs an offline end-to-end pass.
