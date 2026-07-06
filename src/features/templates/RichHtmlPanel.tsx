@@ -201,6 +201,8 @@ export function RichHtmlPanel({
           <TemplateEditor
             key={editorKey}
             html={html}
+            css={css}
+            previewHtml={template.html_body ?? html}
             onChange={setHtml}
             editorRef={handleEditorReady}
             editable={!streaming}
