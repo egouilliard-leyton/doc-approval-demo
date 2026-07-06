@@ -43,8 +43,11 @@ returns the last persisted result without recomputing.
 | `POST` | `/structure?doc_type=&provider=&ocr_engine=` | Structure the chosen engine's OCR into grounded fields → `StructuredResult`. |
 | `GET` | `/structure` | Persisted structuring result. |
 | `PATCH` | `/structure/field` | Apply a reviewer edit (`{path, value}`) — writes the value into the stored structure (pinning `original_value`, setting `edited`) and logs a correction → updated `StructuredResult`. |
-| `POST` | `/decide` | Run rules + the decision agent → `DecisionResult` (`approve`/`flag`/`needs_review`). |
+| `POST` | `/decide` | Run rules + the decision agent → `DecisionResult` (`approve`/`flag`/`needs_review`). Re-running this **invalidates & deletes any prior signature** (a seal must not outlive its approval). |
 | `GET` | `/decide` | Persisted decision. |
+| `POST` | `/sign?provider=` | Seal the **approved** PDF with a real PAdES signature → `SignResult`; advances the doc to `signed`. `400` non-PDF · `409` not decided · `409` decision ≠ `approve`. See [digital-signing.md](./digital-signing.md). |
+| `GET` | `/sign` | Persisted signing result. `404` if never signed. |
+| `POST` | `/validate-signature?provider=` | Re-verify the signature (signed PDF if present, else the original) → `SignatureValidation`. |
 
 `path` in `PATCH /structure/field` is dotted (e.g. `invoice_no`, `line_items.0.amount`).
 
@@ -168,11 +171,20 @@ structuring result. Scoring is pure (`app.evaluation.scorer`); runs persist as `
 and `collection_scores` (per collection field: `row_precision`/`row_recall`/`row_f1`,
 `cell_accuracy`, `line_item_score = row_f1 × cell_accuracy`, `matched`/`n_expected`/`n_actual`).
 
+## Templates — `routes/templates.py` (prefix `/templates`)
+
+The template generator (create / author / `POST /templates/{id}/generate` a filled PDF or DOCX
+from a document's structured fields) has its own router; the signing-relevant endpoint is below.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/templates/{id}/outputs/{output_id}/sign?provider=` | Seal a **generated** output PDF with a real PAdES signature → `GeneratedSignResult`; writes `<output_id>-signed.pdf` beside the output. `404` template/output missing · `400` unknown provider. See [digital-signing.md](./digital-signing.md#4-signing-a-generated-document-the-outbound-flow). |
+
 ## Static files
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/files/...` | Serves `backend/data/` (page images, thumbnails, OCR markdown, artifacts, and `sheets.json` for spreadsheets). |
+| `GET` | `/files/...` | Serves `backend/data/` (page images, thumbnails, OCR markdown, artifacts, `sheets.json` for spreadsheets, and generated/signed template outputs). |
 
 ---
 
