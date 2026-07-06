@@ -33,12 +33,17 @@ export interface TemplateEditorApi {
 export function TemplateEditor({
   html,
   css,
+  previewHtml,
   onChange,
   editorRef,
   editable = true,
 }: {
   html: string;
   css?: string;
+  // The exact HTML the generator will use (the persisted body). Preview renders
+  // THIS + css, not editor.getHTML() — TipTap's schema flattens complex markup
+  // (divs/classes/tables), so its serialization can't be trusted for the look.
+  previewHtml?: string;
   onChange: (html: string) => void;
   editorRef?: (api: TemplateEditorApi) => void;
   editable?: boolean;
@@ -224,9 +229,12 @@ export function TemplateEditor({
             title="Template preview"
             sandbox=""
             className="h-[36rem] w-full border-0 bg-white"
+            // Render the real template HTML (preserved on load and by the AI
+            // agent), NOT editor.getHTML() — TipTap's schema flattens complex
+            // markup (divs/classes/tables) so its serialization loses the layout.
             srcDoc={`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0}${
               css ?? ""
-            }</style></head><body>${editor.getHTML()}</body></html>`}
+            }</style></head><body>${previewHtml ?? html}</body></html>`}
           />
         )}
       </div>
