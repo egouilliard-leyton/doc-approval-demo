@@ -89,6 +89,30 @@ reconcile + decide on top. Design: [multi-document-cases.md](./multi-document-ca
 | `POST` | `/case-types` | Create a custom case type (expected members + canonical-field mapping; 409 on a duplicate name) → `CaseTypeResponse`. |
 | `DELETE` | `/case-types/{name}` | Delete a custom case type (built-ins → 403; 409 if cases still use it). |
 
+## Templates — `routes/templates.py` (prefix `/templates`)
+
+A **template** is bound to a doc type and turns an **extracted** document's fields into a
+filled **DOCX/PDF**. The mode is **auto-detected from the uploaded source** — a fillable PDF
+→ **form-fill** (AcroForm bindings), a DOCX / non-fillable PDF → **rich-HTML** (converted to
+editable HTML, authored in a TipTap editor, rendered via WeasyPrint/html4docx). Design:
+[document-generation.md](./document-generation.md).
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/templates` | Create a template bound to a doc type (`{doc_type, name?}`) → `TemplateDetail`. |
+| `GET` | `/templates` | List templates (`TemplateSummary[]`). |
+| `GET` | `/templates/{id}` | One template + `html_body`/`css`/mapping + the placeholder `lint` (`TemplateDetail`). 404 if missing. |
+| `PUT` | `/templates/{id}` | Update a template (name / `html_body` / `css` / AcroForm mapping) → `TemplateDetail`. |
+| `DELETE` | `/templates/{id}` | Delete a template (its revisions go with it). |
+| `POST` | `/templates/{id}/source` | Upload the source document (multipart `file`). **Auto-detects the mode** — a fillable PDF → form-fill (fields enumerated); a DOCX/PDF → rich-HTML (converted to HTML) — and **auto-runs the Fidelity check**. |
+| `GET` | `/templates/{id}/catalogue` | The bound doc type's extractable field paths — the binding targets (e.g. `vendor_name`, `line_items.0.amount`). |
+| `POST` | `/templates/{id}/suggest-mapping` | AI/heuristic mapper suggests AcroForm-field → field-path bindings (form-fill mode); offline heuristic default. |
+| `POST` | `/templates/{id}/generate` | Fill the template from a chosen processed document (`{document_id, formats[]}`) → PDF and/or DOCX (`/files/...`). |
+| `POST` | `/templates/{id}/agent` | **SSE stream.** The tool-using authoring agent edits the template's HTML/CSS from a natural-language instruction (`set_html`/`set_css`/`insert_placeholder`/`list_available_fields`/`render_preview`); every edit lands a revision. OpenRouter, offline mock. |
+| `POST` | `/templates/{id}/qa` | Vision **Fidelity** QA: renders the template to page images (pypdfium2) and compares against the uploaded example (`source_pdf`) or self-reviews (DOCX/no source) → verdict + severity-coded discrepancy checklist. |
+| `GET` | `/templates/{id}/revisions` | The edit history — one `TemplateRevision` per edit (manual or AI), newest first. |
+| `POST` | `/templates/{id}/revisions/{rev}/restore` | Restore the template to a revision (itself undoable — lands as a new revision). |
+
 ## Doc types — `routes/doc_types.py` (prefix `/doc-types`)
 
 > A custom type's `rule_definition` is a list of validation primitives. `POST`/`PUT`

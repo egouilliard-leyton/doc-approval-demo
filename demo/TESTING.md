@@ -94,19 +94,32 @@ That document now shows up in the Generate picker later.
 3. Go to the editor (main pane). Click into the text, then in the **Insert field** tab click
    **Vendor** (and **Total** if you like) to drop placeholder chips where the cursor is.
 4. Click **Save template**.
-5. **AI edit tab** — type an instruction and hit send. Try:
+5. **Edit / Preview toggle** — flip the editor's **Preview** switch. It renders the *persisted*
+   `html_body` + CSS in a **sandboxed iframe**, so you see the **styled** document exactly as it
+   will export (faithful to the PDF/DOCX output) — *not* TipTap's flattened in-editor view. Flip
+   back to **Edit** to keep authoring.
+6. **AI edit tab** — type an instruction and hit send. Try:
 
    > **make the invoice title navy, right-align the totals, and use a serif font for the body**
 
    → the agent streams its reply and **edits the template live** (with a real key it does exactly
-     what you asked; with the mock it applies a fixed restyle so you can see the mechanism).
-6. **Fidelity tab** → optionally pick the invoice document → **Run validation**
+     what you asked; with the mock it applies a fixed restyle so you can see the mechanism). Flip
+     to **Preview** afterwards to see the restyle land.
+7. **Fidelity tab** → optionally pick the invoice document → **Run validation**
    → you get a verdict, a side-by-side (your example vs the rendered template), and a
      severity-coded checklist. Click **Send fixes to AI editor** to hand issues back to the agent.
-7. **History tab** → every edit is listed → click **Restore** on an earlier one → the editor rolls
+8. **History tab** → every edit is listed → click **Restore** on an earlier one → the editor rolls
    back (and the restore is itself undoable — it appears as a new history entry).
-8. Under **Generate**, pick the invoice document, toggle **PDF** and **DOCX**, **Generate** →
+9. Under **Generate**, pick the invoice document, toggle **PDF** and **DOCX**, **Generate** →
    **Open PDF** / **Open DOCX** → both come out filled with the vendor/total from the document. ✅
+
+> **Known limitation — edit styled templates via Preview + AI edit, not lossy typing.** TipTap
+> (the WYSIWYG editor) loads HTML into its own schema and **drops `div`s, classes, and tables**
+> it doesn't model, so plain rich-text typing + **Save** is **lossy** for a complex styled
+> layout — it can strip styling the source came in with. The faithful ways to view and change a
+> styled template are the **Preview** toggle (renders the persisted `html_body`) and the **AI
+> edit** agent (writes raw HTML/CSS, bypassing TipTap's schema). A raw HTML/CSS code view is a
+> planned future improvement.
 
 ---
 

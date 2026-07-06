@@ -218,6 +218,33 @@ data the other features already produce (additive fields on `GET /overview`):
 - Plus a **per-doc-type table** (documents, avg confidence, decisions, corrections, latest
   accuracy). All existing overview cards are untouched.
 
+### Document generation from templates (2026-07)
+An extracted document became a **filled, downloadable DOCX/PDF**. A **Template** (bound to a
+doc type) is built from an uploaded source whose **mode is auto-detected**, shipped across 6
+phases (Phase 0 scaffolding → Phase 5 polish):
+- **Form-fill** — a fillable **PDF (AcroForm)**: fields enumerated (**pypdf**), an AI/heuristic
+  mapper suggests bindings to extracted field paths, *Generate* fills + optionally **stamps a
+  signature image** (**reportlab**) → filled PDF.
+- **Rich-HTML** — a **DOCX / non-fillable PDF** converted to editable HTML (**mammoth** /
+  Docling, PyMuPDF fallback), authored in a **TipTap** editor with `<span data-field>`
+  placeholders, rendered to **PDF** (**WeasyPrint**) and/or **DOCX** (**html4docx**) via a
+  **Jinja-free** data-attribute binder.
+- **AI edit** — a streaming **SSE** authoring agent (`POST /templates/{id}/agent`), tool-using
+  (`set_html`/`set_css`/`insert_placeholder`/…), edits the HTML/CSS live from natural language;
+  every edit is a revision.
+- **Fidelity (vision QA)** — `POST /templates/{id}/qa` renders to page images (**pypdfium2**)
+  and a vision model checks the render against the uploaded example (or self-reviews),
+  returning a severity-coded checklist; **auto-runs on source upload**.
+- **History + restore** — every edit snapshots a `TemplateRevision`; restore is itself
+  undoable. Plus a **placeholder ↔ doc-type lint** and a **live styled Preview toggle**.
+- All generation libs are **permissive** (new rasterization is **pypdfium2**, *not* the AGPL
+  PyMuPDF); WeasyPrint needs system Pango/GDK-PixBuf (DOCX works without them, PDF degrades
+  gracefully). **122 backend tests, fully offline** (real WeasyPrint/pypdfium2, mock LLM/vision).
+- **Known limitation (documented honestly):** TipTap+StarterKit flattens complex HTML on load,
+  so plain rich-text editing + Save is **lossy** for styled layouts — the faithful paths are the
+  **Preview** toggle and the **AI edit** agent (raw HTML). A raw HTML/CSS code view is the
+  recommended next step. Full design: **[document-generation.md](./document-generation.md)**.
+
 ### Robustness fixes
 - **Self-healing additive-column migration at startup** (`_sync_additive_columns`) — a generic,
   idempotent pass that `ALTER TABLE ADD COLUMN`s any SQLModel column missing from the live SQLite

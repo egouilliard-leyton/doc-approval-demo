@@ -64,6 +64,7 @@ post-decision action (not part of the auto-run).
 > [Architecture](docs/ARCHITECTURE.md) · [API reference](docs/API.md) ·
 > [Roadmap & work log](docs/ROADMAP.md) · [Validation rules](docs/validation-rules.md).
 > Deep dives: [Multi-document cases](docs/multi-document-cases.md) ·
+> [Document generation](docs/document-generation.md) ·
 > [Large-document extraction](docs/large-document-extraction.md) ·
 > [Signature detection](docs/signature-extraction.md).
 
@@ -486,6 +487,13 @@ Three AI assists layer on top of the rich-HTML editor:
   and a vision model checks it against your uploaded example, showing a side-by-side + a
   severity-coded discrepancy checklist; one click hands the fixes to the AI editor.
 - **History** — every edit snapshots a revision; restore rolls back (and is itself undoable).
+
+An **Edit / Preview** toggle in the editor renders the persisted styled HTML in a sandboxed
+iframe — faithful to the export. This matters because **TipTap flattens complex HTML on load**
+(dropping divs/classes/tables), so plain rich-text typing + Save is **lossy** for styled
+layouts; the faithful ways to view and change a styled template are the **Preview** toggle and
+the **AI edit** agent (which writes raw HTML). A placeholder ↔ doc-type **lint** flags stale
+bindings as an advisory badge. Full design: **[`docs/document-generation.md`](docs/document-generation.md)**.
 
 Key endpoints (all under `/templates`): CRUD, `POST /{id}/source`, `GET /{id}/catalogue`,
 `POST /{id}/suggest-mapping`, `POST /{id}/generate`, `POST /{id}/agent` (SSE),
