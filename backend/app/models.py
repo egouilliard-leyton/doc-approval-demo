@@ -27,6 +27,7 @@ class DocumentStatus(str, Enum):
     structured = "structured"
     decided = "decided"
     needs_review = "needs_review"
+    signed = "signed"
 
 
 class DocType(str, Enum):

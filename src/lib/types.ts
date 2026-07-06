@@ -9,7 +9,8 @@ export type DocumentStatus =
   | "ocr_done"
   | "structured"
   | "decided"
-  | "needs_review";
+  | "needs_review"
+  | "signed";
 
 export type Verdict = "pass" | "warn";
 export type Alignment = "exact" | "partial" | "ungrounded";
@@ -179,4 +180,39 @@ export interface DecisionResult {
   llm_decision: Decision | null;
   warnings: string[];
   latency_ms: number;
+}
+
+// --- outbound digital signing (PAdES) ----------------------------------------
+
+export interface SignerInfo {
+  common_name: string;
+  issuer: string;
+  serial: string;
+  valid_from: string | null;
+  valid_to: string | null;
+}
+
+export interface SignatureValidation {
+  valid: boolean;
+  intact: boolean;
+  trusted: boolean;
+  level: string;
+  signer: SignerInfo | null;
+  signed_at: string | null;
+  trust_anchor: string | null;
+  summary: string;
+  warnings: string[];
+}
+
+export interface SignResult {
+  document_id: string;
+  status: DocumentStatus;
+  provider: string;
+  engine_version: string;
+  level: string;
+  field_name: string;
+  signed_pdf_url: string;
+  validation: SignatureValidation;
+  latency_ms: number;
+  warnings: string[];
 }

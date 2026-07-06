@@ -11,15 +11,24 @@ from typing import Callable, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
+from app import storage
 from app.config import settings
 from app.db import get_session
 from app.models import Document, DocType, DocumentStatus, PipelineRun, _utcnow
 from app.pipeline.agent import run_decision
 from app.pipeline.ocr import run_ocr
 from app.pipeline.prescan import run_prescan
+from app.pipeline.signing import run_signing, validate_document_signature
 from app.pipeline.structuring import run_structuring
 from app.rules import DecisionContext
-from app.schemas import DecisionResult, OCRResult, QualityReport, StructuredResult
+from app.schemas import (
+    DecisionResult,
+    OCRResult,
+    QualityReport,
+    SignatureValidation,
+    SignResult,
+    StructuredResult,
+)
 
 router = APIRouter(prefix="/documents/{doc_id}", tags=["pipeline"])
 
@@ -305,11 +314,22 @@ async def decide_document(
         "Decision", settings.llm_timeout_s, run_decision, doc, structured, ctx, provider
     )
 
+    # A prior signature was produced from the OLD decision. Re-deciding invalidates it:
+    # the signed PDF is a real cryptographic attestation of an approval that may no
+    # longer hold, so the stale seal must not outlive the decision it was based on.
+    # Drop the persisted ``sign`` entry (so it isn't carried forward by the spread in
+    # ``_save_stage``) and delete the on-disk signed PDF; a fresh sign must be re-run.
+    had_signature = "sign" in run.stage_results
+    if had_signature:
+        run.stage_results = {k: v for k, v in run.stage_results.items() if k != "sign"}
+
     # ``run`` is non-None here: a structure result was found above, which requires a run.
     _save_stage(
         session, run, doc, "decide", result.model_dump(mode="json"),
         result.status.value, result.status,
     )
+    if had_signature:
+        storage.delete_signed_dir(doc.id)
     return result
 
 
@@ -325,3 +345,77 @@ def get_decision(doc_id: str, session: Session = Depends(get_session)) -> Decisi
     if not decide:
         raise HTTPException(status_code=404, detail="No decision for this document.")
     return DecisionResult(**decide)
+
+
+@router.post("/sign", response_model=SignResult)
+async def sign_document(
+    doc_id: str,
+    provider: str = Query(default=""),
+    session: Session = Depends(get_session),
+) -> SignResult:
+    """Digitally sign an APPROVED document's original PDF for transmission.
+
+    A separate, manual, post-decision action (NOT part of the inbound auto-run
+    pipeline). Requires a PDF source and a persisted ``approve`` decision; the
+    original is sealed with a real X.509 signature whose embedded CMS validates
+    against a trust chain, and the document advances to ``signed``.
+    """
+    doc = session.get(Document, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if doc.mime != "application/pdf":
+        raise HTTPException(
+            status_code=400, detail="Digital signing requires a PDF source document."
+        )
+
+    run = _latest_run(session, doc_id)
+    decide = run.stage_results.get("decide") if run else None
+    if not decide:
+        raise HTTPException(status_code=409, detail="Decide before signing this document.")
+    if decide.get("decision") != "approve":
+        raise HTTPException(
+            status_code=409,
+            detail="Only approved documents can be signed for transmission.",
+        )
+
+    result = await _run_stage(
+        "Signing", settings.signing_timeout_s, run_signing, doc, provider
+    )
+
+    # ``run`` is non-None here: a decide result was found above, which requires a run.
+    _save_stage(
+        session, run, doc, "sign", result.model_dump(mode="json"),
+        "signed", DocumentStatus.signed,
+    )
+    return result
+
+
+@router.get("/sign", response_model=SignResult)
+def get_signature(doc_id: str, session: Session = Depends(get_session)) -> SignResult:
+    """Return the persisted signature result without re-signing."""
+    doc = session.get(Document, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    run = _latest_run(session, doc_id)
+    sign = run.stage_results.get("sign") if run else None
+    if not sign:
+        raise HTTPException(status_code=404, detail="No signature for this document.")
+    return SignResult(**sign)
+
+
+@router.post("/validate-signature", response_model=SignatureValidation)
+async def validate_signature_document(
+    doc_id: str,
+    provider: str = Query(default=""),
+    session: Session = Depends(get_session),
+) -> SignatureValidation:
+    """Re-verify a document's signature (the signed PDF if present, else the original)."""
+    doc = session.get(Document, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    return await _run_stage(
+        "Signature validation", settings.signing_timeout_s,
+        validate_document_signature, doc, provider,
+    )

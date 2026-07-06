@@ -30,6 +30,10 @@ langextract = ["langextract[openai]"]
 # Agent decision layer (Phase 5) + the "qwen-vl" OCR engine. The OpenAI-compatible
 # client for OpenRouter; lazily imported, "mock" provider covers tests. uv sync --extra agent
 agent = ["openai"]
+# Outbound digital signing (Phase 6). pyHanko produces real PAdES signatures + validates
+# them (MIT). Optional + lazily imported; the "mock" provider covers the offline suite.
+#   uv sync --extra signing
+signing = ["pyhanko"]
 
 [dependency-groups]
 dev = [

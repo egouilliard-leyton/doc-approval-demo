@@ -8,6 +8,7 @@ import { OcrTextPanel } from "@/features/inspector/OcrTextPanel";
 import { StructuredPanel } from "@/features/inspector/StructuredPanel";
 import { EngineComparison } from "@/features/inspector/EngineComparison";
 import { DecisionCard } from "@/features/decision/DecisionCard";
+import { SignaturePanel } from "@/features/decision/SignaturePanel";
 
 function Pending({ label }: { label: string }) {
   return (
@@ -108,7 +109,10 @@ export function SplitInspector() {
             className="min-h-0 flex-1 overflow-auto"
           >
             {decision ? (
-              <DecisionCard decision={decision} />
+              <div className="space-y-5">
+                <DecisionCard decision={decision} />
+                <SignaturePanel documentId={document.id} decision={decision} />
+              </div>
             ) : perStageStatus.decide === "running" ? (
               <Pending label="Agent is deciding…" />
             ) : (
