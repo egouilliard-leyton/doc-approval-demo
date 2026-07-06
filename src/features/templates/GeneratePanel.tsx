@@ -26,7 +26,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   ApiError,
-  fileUrl,
+  downloadFile,
   generateTemplateOutput,
   listDocuments,
   signTemplateOutput,
@@ -210,16 +210,21 @@ function OutputSigner({
       <SigBadge label="Intact" ok={validation.intact} />
       <SigBadge label="Trusted" ok={validation.trusted} />
       <SigBadge label="Valid" ok={validation.valid} />
-      <Button size="sm" asChild>
-        <a
-          href={fileUrl(signed.signed_output_url)}
-          target="_blank"
-          rel="noreferrer"
-          download
-        >
-          <Download />
-          Download signed PDF
-        </a>
+      <Button
+        size="sm"
+        onClick={() =>
+          downloadFile(
+            signed.signed_output_url,
+            `${signed.signed_output_id}.pdf`,
+          ).catch((e) =>
+            toast.error("Download failed", {
+              description: e instanceof ApiError ? e.message : String(e),
+            }),
+          )
+        }
+      >
+        <Download />
+        Download signed PDF
       </Button>
     </div>
   );
@@ -252,16 +257,22 @@ function ResultCard({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {resultOutputs(result).map((out) => (
-            <Button key={out.output_id} size="sm" asChild>
-              <a
-                href={fileUrl(out.output_url)}
-                target="_blank"
-                rel="noreferrer"
-                download
-              >
-                <Download />
-                Open {out.format.toUpperCase()}
-              </a>
+            <Button
+              key={out.output_id}
+              size="sm"
+              onClick={() =>
+                downloadFile(
+                  out.output_url,
+                  `${out.output_id}.${out.format}`,
+                ).catch((e) =>
+                  toast.error("Download failed", {
+                    description: e instanceof ApiError ? e.message : String(e),
+                  }),
+                )
+              }
+            >
+              <Download />
+              Download {out.format.toUpperCase()}
             </Button>
           ))}
         </div>

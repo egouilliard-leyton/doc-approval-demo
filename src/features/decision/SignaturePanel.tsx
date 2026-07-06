@@ -8,7 +8,13 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { ApiError, fileUrl, getSign, runSign, validateSignature } from "@/lib/api";
+import {
+  ApiError,
+  downloadFile,
+  getSign,
+  runSign,
+  validateSignature,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/format";
 import type { DecisionResult, SignResult } from "@/lib/types";
@@ -205,11 +211,17 @@ export function SignaturePanel({
       </dl>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button asChild>
-          <a href={fileUrl(sign.signed_pdf_url)} download>
-            <Download className="size-4" />
-            Download signed PDF
-          </a>
+        <Button
+          onClick={() =>
+            downloadFile(sign.signed_pdf_url, "signed.pdf").catch((e) =>
+              toast.error("Download failed", {
+                description: e instanceof ApiError ? e.message : String(e),
+              }),
+            )
+          }
+        >
+          <Download className="size-4" />
+          Download signed PDF
         </Button>
         <Button variant="outline" onClick={handleReverify} disabled={busy}>
           {busy ? (
