@@ -61,10 +61,24 @@ def bind_html(
             img["src"] = f"data:image/png;base64,{encoded}"
             outcome.signature_stamped = True
         else:
-            img.decompose()  # no signature supplied -> drop the placeholder image
+            # No stamp image, but keep an INVISIBLE anchor at this spot so a later
+            # digital signature can be placed exactly where the author put the marker
+            # (see app.pipeline.signing). Transparent in the PDF; stripped from DOCX.
+            img.replace_with(_signature_anchor_tag(soup))
 
     outcome.html = str(soup)
     return outcome
+
+
+def _signature_anchor_tag(soup):
+    """A hidden, locatable signature-anchor span (invisible; PDF-searchable)."""
+    from app.pipeline.signing.base import SIGNATURE_ANCHOR_TOKEN
+
+    span = soup.new_tag("span")
+    span["data-sig-anchor"] = "true"
+    span["style"] = "color:transparent;font-size:6px;"
+    span.string = SIGNATURE_ANCHOR_TOKEN
+    return span
 
 
 def render_field_placeholder(path: str, label: str, kind: str | None) -> str:

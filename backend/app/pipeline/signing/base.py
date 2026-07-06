@@ -18,6 +18,29 @@ MOCK_LEVEL = "mock"
 # Marker line the mock signer appends to the PDF bytes; parsed back on validate.
 MOCK_MARKER_PREFIX = "%%MOCK-SIGNATURE:"
 
+# A hidden token the generation stage renders at a template's signature placeholder
+# (the `<img data-signature>` marker), so the signer can locate WHERE on the generated
+# document the visible signature should land — "the correct place" the author chose,
+# rather than a fixed corner. Invisible in the PDF; stripped from the DOCX output.
+SIGNATURE_ANCHOR_TOKEN = "§§SIGZONE§§"  # §§SIGZONE§§
+
+# Default visible-stamp box size in PDF points (also the size placed at an anchor).
+STAMP_WIDTH = 200.0
+STAMP_HEIGHT = 72.0
+STAMP_MARGIN = 36.0
+
+# Allowed corner positions for the fallback placement (when no template anchor).
+VISIBLE_POSITIONS = frozenset(
+    {
+        "top-left",
+        "top-center",
+        "top-right",
+        "bottom-left",
+        "bottom-center",
+        "bottom-right",
+    }
+)
+
 
 @dataclass(frozen=True)
 class SigningMeta:
@@ -31,6 +54,8 @@ class SigningMeta:
     level: str
     tsa_url: str
     visible: bool = True
+    visible_position: str = "bottom-right"  # corner fallback when no template anchor
+    visible_page: int = 1  # 1-based; clamped to the last page
 
 
 def resolve_provider(name: str) -> str:
@@ -59,4 +84,6 @@ def signing_meta_from_settings() -> SigningMeta:
         level=settings.signing_level,
         tsa_url=settings.signing_tsa_url,
         visible=settings.signing_visible,
+        visible_position=settings.signing_visible_position,
+        visible_page=settings.signing_visible_page,
     )

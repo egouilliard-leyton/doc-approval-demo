@@ -189,6 +189,10 @@ class Settings(BaseSettings):
     # Off => an invisible signature (valid + validatable, but only shown in a signature-
     # aware viewer like Acrobat). On => a mark you can see in any PDF viewer.
     signing_visible: bool = True
+    # Default placement of the visible stamp (overridable per sign request). Position is
+    # one of top/bottom × left/center/right; page is 1-based (clamped to the last page).
+    signing_visible_position: str = "bottom-right"
+    signing_visible_page: int = 1
     # Demo server-held seal (custody option A). Self-signed CA+leaf minted on first use.
     # Kept OUTSIDE the /files-served data dir (private keys must never be downloadable).
     # Resolved relative to backend/ like data_dir. Gitignored. NOT for production.

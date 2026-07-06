@@ -414,3 +414,43 @@ def test_pyhanko_visible_signature_appearance():
     assert not any(
         w.rect.width > 1 and w.rect.height > 1 for w in inv_widgets
     ), "invisible mode should not draw a visible signature box"
+
+
+def test_visible_signature_lands_at_template_anchor():
+    """The visible stamp is placed where the template's signature marker is, not a corner.
+
+    Binds a rich-HTML body whose `<img data-signature>` sits mid-page, renders it, signs
+    it, and asserts the signature widget lands at the anchor's vertical position (far from
+    the bottom-right fallback corner).
+    """
+    pytest.importorskip("pyhanko")
+    weasyprint = pytest.importorskip("weasyprint")  # noqa: F841 — docgen extra
+    import fitz
+
+    from app.pipeline.generation.binder import bind_html
+    from app.pipeline.generation.render import render_pdf
+
+    body = (
+        "<h1>Solicitud</h1>"
+        '<div style="margin-top:250px;">Firma:</div>'
+        '<div><img data-signature="true"></div>'
+    )
+    bound = bind_html(body, {}, None)
+    assert "data-sig-anchor" in bound.html  # binder left a locatable anchor
+    pdf = render_pdf(bound.html, "")
+
+    src_page = fitz.open(stream=pdf, filetype="pdf")[0]
+    anchor_hits = src_page.search_for("§§SIGZONE§§")
+    assert anchor_hits, "expected the anchor token in the generated PDF"
+    anchor_top = anchor_hits[0].y0
+    page_h = src_page.rect.height
+
+    signed, val, *_ = sign_pdf_bytes(pdf, "pyhanko")
+    assert val.valid and val.intact and val.trusted
+
+    widgets = [w for w in (fitz.open(stream=signed, filetype="pdf")[0].widgets() or []) if w.rect.width > 1]
+    assert widgets, "expected a visible signature widget"
+    widget_top = widgets[0].rect.y0
+    # Landed at the anchor (mid-page), NOT the bottom-right fallback corner.
+    assert abs(widget_top - anchor_top) < 30, (widget_top, anchor_top)
+    assert widget_top < page_h - 120, "should not be in the bottom corner"

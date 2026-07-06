@@ -20,10 +20,16 @@ def test_bind_html_fills_present_paths_and_skips_missing():
     assert ">PO<" not in outcome.html  # placeholder text cleared, not left in place
 
 
-def test_bind_html_removes_signature_when_no_bytes():
+def test_bind_html_leaves_hidden_anchor_when_no_bytes():
+    """No stamp image: the <img> is replaced by an INVISIBLE signature anchor so a later
+    digital signature can be placed exactly where the author marked it."""
+    from app.pipeline.signing.base import SIGNATURE_ANCHOR_TOKEN
+
     outcome = bind_html(RICH_HTML_FIXTURE, {}, None)
-    assert outcome.signature_stamped is False
-    assert "data-signature" not in outcome.html  # <img> dropped entirely
+    assert outcome.signature_stamped is False  # no visible stamp image
+    assert "<img" not in outcome.html  # the placeholder image is gone
+    assert 'data-sig-anchor="true"' in outcome.html  # ...replaced by the hidden anchor
+    assert SIGNATURE_ANCHOR_TOKEN in outcome.html
 
 
 def test_bind_html_stamps_signature_as_data_uri():
