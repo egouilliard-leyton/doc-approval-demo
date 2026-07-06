@@ -30,6 +30,7 @@ class SigningMeta:
     ca_common_name: str
     level: str
     tsa_url: str
+    visible: bool = True
 
 
 def resolve_provider(name: str) -> str:
@@ -57,4 +58,5 @@ def signing_meta_from_settings() -> SigningMeta:
         ca_common_name=settings.signing_ca_common_name,
         level=settings.signing_level,
         tsa_url=settings.signing_tsa_url,
+        visible=settings.signing_visible,
     )

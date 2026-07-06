@@ -184,6 +184,11 @@ class Settings(BaseSettings):
     signing_location: str = ""
     signing_signer_name: str = "Document Approval Demo Signer"
     signing_ca_common_name: str = "Document Approval Demo CA"
+    # Render a VISIBLE signature appearance (a stamp box: "Digitally signed by … /
+    # timestamp") on page 1, in addition to the always-present cryptographic signature.
+    # Off => an invisible signature (valid + validatable, but only shown in a signature-
+    # aware viewer like Acrobat). On => a mark you can see in any PDF viewer.
+    signing_visible: bool = True
     # Demo server-held seal (custody option A). Self-signed CA+leaf minted on first use.
     # Kept OUTSIDE the /files-served data dir (private keys must never be downloadable).
     # Resolved relative to backend/ like data_dir. Gitignored. NOT for production.

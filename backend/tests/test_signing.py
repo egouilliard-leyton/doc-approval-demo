@@ -381,3 +381,36 @@ def test_pyhanko_real_generated_output_signature_smoke():
         raw = signed.read_bytes()
         assert b"/ByteRange" in raw
         assert b"adbe.pkcs7.detached" in raw
+
+
+def test_pyhanko_visible_signature_appearance():
+    """A visible signature draws a stamp widget on page 1 (and still validates).
+
+    ``signing_visible`` (default on) renders a "Digitally signed by …" box so the seal
+    shows in any PDF viewer, not only a signature-aware one; the cryptographic signature
+    is unaffected. Toggling it off produces a valid but invisible signature.
+    """
+    pytest.importorskip("pyhanko")
+    import fitz  # PyMuPDF (a base dep)
+
+    src = (SAMPLES / "invoice-clean.pdf").read_bytes()
+
+    signed_visible, val_v, *_ = sign_pdf_bytes(src, "pyhanko")
+    assert val_v.valid and val_v.intact and val_v.trusted
+    widgets = list(fitz.open(stream=signed_visible, filetype="pdf")[0].widgets() or [])
+    assert any(
+        w.rect.width > 1 and w.rect.height > 1 for w in widgets
+    ), "expected a visible signature widget with a real box"
+
+    saved = settings.signing_visible
+    settings.signing_visible = False
+    try:
+        signed_invisible, val_i, *_ = sign_pdf_bytes(src, "pyhanko")
+    finally:
+        settings.signing_visible = saved
+    # Still a real, valid signature — just no visible box on the page.
+    assert val_i.valid and val_i.intact and val_i.trusted
+    inv_widgets = list(fitz.open(stream=signed_invisible, filetype="pdf")[0].widgets() or [])
+    assert not any(
+        w.rect.width > 1 and w.rect.height > 1 for w in inv_widgets
+    ), "invisible mode should not draw a visible signature box"

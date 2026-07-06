@@ -67,13 +67,70 @@ def sign(src_pdf_bytes: bytes, meta: SigningMeta) -> tuple[bytes, SignatureValid
         timestamper = HTTPTimeStamper(meta.tsa_url)
 
     sig_meta = PdfSignatureMetadata(**sig_meta_kwargs)
+
+    # A VISIBLE appearance (stamp box on page 1) in addition to the cryptographic
+    # signature, so the seal shows in any PDF viewer — not only a signature-aware one.
+    stamp_style = None
+    new_field_spec = None
+    if meta.visible:
+        from pyhanko.sign.fields import SigFieldSpec
+        from pyhanko.stamp import TextStampStyle
+
+        stamp_text = "Digitally signed by:\n%(signer)s\n%(ts)s"
+        if meta.reason:
+            stamp_text += f"\n{meta.reason}"
+        stamp_style = TextStampStyle(stamp_text=stamp_text)
+        new_field_spec = SigFieldSpec(
+            sig_field_name=meta.field_name,
+            on_page=0,
+            box=_signature_box(src_pdf_bytes),
+        )
+
     writer = IncrementalPdfFileWriter(io.BytesIO(src_pdf_bytes))
-    signed_bytes = PdfSigner(
-        sig_meta, signer=signer, timestamper=timestamper
-    ).sign_pdf(writer).getvalue()
+    signed_bytes = (
+        PdfSigner(
+            sig_meta,
+            signer=signer,
+            timestamper=timestamper,
+            stamp_style=stamp_style,
+            new_field_spec=new_field_spec,
+        )
+        .sign_pdf(writer)
+        .getvalue()
+    )
 
     validation = validate(signed_bytes)
     return signed_bytes, validation
+
+
+# Visible-stamp geometry: a box anchored to the bottom-right of page 1.
+_STAMP_W, _STAMP_H, _STAMP_MARGIN = 200.0, 72.0, 36.0
+# Fallback page size (A4 points) when the source's MediaBox can't be read.
+_A4_W, _A4_H = 595.0, 842.0
+
+
+def _signature_box(src_pdf_bytes: bytes) -> tuple[float, float, float, float]:
+    """Bottom-right stamp box on page 1, sized from the page's MediaBox.
+
+    Reads the first page's dimensions so the box lands inside the page regardless of
+    Letter/A4; falls back to A4 if the MediaBox can't be resolved (never fails signing).
+    """
+    import io
+
+    page_w = _A4_W
+    try:
+        from pyhanko.pdf_utils.reader import PdfFileReader
+
+        reader = PdfFileReader(io.BytesIO(src_pdf_bytes))
+        page = reader.root["/Pages"]["/Kids"][0].get_object()
+        media_box = [float(v) for v in page["/MediaBox"]]
+        page_w = media_box[2] - media_box[0]
+    except Exception:  # noqa: BLE001 — geometry is best-effort; A4 fallback is fine
+        page_w = _A4_W
+
+    x1 = page_w - _STAMP_MARGIN
+    x0 = x1 - _STAMP_W
+    return (x0, _STAMP_MARGIN, x1, _STAMP_MARGIN + _STAMP_H)
 
 
 def validate(pdf_bytes: bytes) -> SignatureValidation:
