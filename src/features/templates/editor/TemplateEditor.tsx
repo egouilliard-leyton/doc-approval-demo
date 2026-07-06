@@ -2,14 +2,16 @@
 // the two custom placeholder nodes (field / signature). `editor.getHTML()` is
 // the exact markup persisted and later bound by the backend, so the storage and
 // the DOM are identical.
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   Bold,
+  Eye,
   Heading1,
   Heading2,
   Italic,
   List,
   ListOrdered,
+  PenLine,
   Redo2,
   Undo2,
 } from "lucide-react";
@@ -17,6 +19,7 @@ import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Button } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/toggle";
+import { cn } from "@/lib/utils";
 import type { FieldTokenAttributes } from "@/features/templates/editor/fieldTokenExtension";
 import { FieldToken } from "@/features/templates/editor/fieldTokenExtension";
 import { SignatureToken } from "@/features/templates/editor/signatureTokenExtension";
@@ -29,15 +32,21 @@ export interface TemplateEditorApi {
 
 export function TemplateEditor({
   html,
+  css,
   onChange,
   editorRef,
   editable = true,
 }: {
   html: string;
+  css?: string;
   onChange: (html: string) => void;
   editorRef?: (api: TemplateEditorApi) => void;
   editable?: boolean;
 }) {
+  // "edit" shows the structural WYSIWYG with placeholder chips; "preview" renders
+  // the exact html + template CSS in an isolated iframe, so it looks like the
+  // generated document (placeholders show their labels, styled in place).
+  const [mode, setMode] = useState<"edit" | "preview">("edit");
   const editor = useEditor({
     extensions: [StarterKit, FieldToken, SignatureToken],
     content: html,
@@ -93,6 +102,8 @@ export function TemplateEditor({
   return (
     <div className="overflow-hidden rounded-xl border bg-background">
       <div className="flex flex-wrap items-center gap-1 border-b bg-muted/30 px-2 py-1.5">
+        {mode === "edit" && (
+        <>
         <Toggle
           size="sm"
           aria-label="Bold"
@@ -178,10 +189,46 @@ export function TemplateEditor({
         >
           <Redo2 />
         </Button>
+        </>
+        )}
+
+        {/* Edit / Preview switch — Preview shows the styled, generated look. */}
+        <div className="ml-auto flex items-center gap-0.5 rounded-lg border bg-background p-0.5">
+          <Button
+            type="button"
+            variant={mode === "edit" ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 gap-1.5 px-2.5"
+            onClick={() => setMode("edit")}
+          >
+            <PenLine className="size-3.5" /> Edit
+          </Button>
+          <Button
+            type="button"
+            variant={mode === "preview" ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 gap-1.5 px-2.5"
+            onClick={() => setMode("preview")}
+          >
+            <Eye className="size-3.5" /> Preview
+          </Button>
+        </div>
       </div>
 
-      <div className="max-h-[36rem] overflow-y-auto">
-        <EditorContent editor={editor} />
+      <div className="max-h-[36rem] overflow-y-auto bg-muted/20">
+        <div className={cn(mode === "edit" ? "block" : "hidden")}>
+          <EditorContent editor={editor} />
+        </div>
+        {mode === "preview" && (
+          <iframe
+            title="Template preview"
+            sandbox=""
+            className="h-[36rem] w-full border-0 bg-white"
+            srcDoc={`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0}${
+              css ?? ""
+            }</style></head><body>${editor.getHTML()}</body></html>`}
+          />
+        )}
       </div>
     </div>
   );
