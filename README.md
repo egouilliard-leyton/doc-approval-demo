@@ -48,10 +48,17 @@ Highlights:
 - **Admin panel** — a consolidated **KPI dashboard**, documents, corrections log, a
   low-confidence **review queue**, **accuracy** runs, and configuration. See
   [Admin panel](#admin-panel).
+- **Outbound digital signing** — an **approved** document's PDF can be sealed with a real
+  **PAdES / X.509** signature that validates against a trust chain, as a manual
+  post-decision action (off the inbound pipeline). See
+  [`docs/digital-signing.md`](docs/digital-signing.md).
 
 Built as the demo for a video on _the best OCR tools for AI agents_. The pipeline is
 modular — each stage (**pre-scan → OCR → structure → decide**) is a swappable component,
-so OCR engines can be compared side-by-side on camera.
+so OCR engines can be compared side-by-side on camera. **Signing** is a separate, manual,
+post-decision action (not part of the auto-run).
+
+📚 Full feature docs: **[`docs/`](docs/README.md)**.
 
 > **📚 Full documentation** lives in [`docs/`](docs/README.md):
 > [Architecture](docs/ARCHITECTURE.md) · [API reference](docs/API.md) ·
@@ -85,6 +92,9 @@ cp backend/.env.example backend/.env
 
 # 3. Pre-load the local Docling models so the first request isn't slow on camera (~once).
 make warm
+
+# 4. (Optional) Enable real digital signing (PAdES via pyhanko).
+cd backend && uv sync --extra signing   # omit to use the offline "mock" provider
 ```
 
 > **OCR engines.** **Docling** runs locally (layout + tables + bbox-grounded highlights)
@@ -131,6 +141,13 @@ defaults). The essentials:
 | `OCR_DEVICE`         | `cpu`                              | CPU is the reliable on-device path (MPS unsupported by Docling's float64 ops). |
 | `PRE_WARM_MODELS`    | `false`                            | `true` → load OCR models at startup (set for the demo).                        |
 | `CORS_ORIGINS`       | `["http://localhost:5173"]`        | Browser origins allowed to call the API (JSON list). Must include the frontend's origin. |
+| `SIGNING_PROVIDER`   | `pyhanko`                           | `pyhanko` (real PAdES, needs `--extra signing`) \| `mock` (offline).           |
+| `SIGNING_LEVEL`      | `PAdES-B-B`                         | `PAdES-B-B` \| `PAdES-B-T` (B-T needs `SIGNING_TSA_URL`).                       |
+| `SIGNING_TSA_URL`    | _(empty)_                          | RFC 3161 timestamp-authority URL; set to enable B-T.                           |
+| `SIGNING_CERT_DIR`   | `certs`                            | Demo signer cert dir, outside `data/` and gitignored (see signing doc).        |
+
+See [`docs/digital-signing.md`](docs/digital-signing.md) for the full `SIGNING_*` set and the
+demo-cert security notes.
 
 ## How it works
 
@@ -479,6 +496,13 @@ Key endpoints (all under `/templates`): CRUD, `POST /{id}/source`, `GET /{id}/ca
 > path). WeasyPrint needs system **Pango + GDK-PixBuf** (`apt install libpango-1.0-0 libgdk-pixbuf2.0-0`);
 > without them, DOCX output still works and PDF degrades gracefully. Install the generation extra
 > with `uv sync --extra docgen` (already included in `make install`).
+
+Once a document is **approved**, three signing endpoints become available (a manual,
+post-decision step — not part of the auto-run): `POST /documents/{id}/sign` seals the PDF with
+a real X.509 signature and advances it to `signed` (gated: `400` if not a PDF, `409` unless
+decided **and** approved); `GET /documents/{id}/sign` returns the persisted result; and
+`POST /documents/{id}/validate-signature` re-verifies it. Re-deciding invalidates any prior
+signature. See [`docs/digital-signing.md`](docs/digital-signing.md).
 
 ## Tests
 

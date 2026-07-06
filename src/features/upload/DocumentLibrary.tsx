@@ -39,12 +39,14 @@ const STATUS_LABEL: Record<DocumentStatus, string> = {
   structured: 'Structured',
   decided: 'Decided',
   needs_review: 'Needs review',
+  signed: 'Signed',
 };
 
 // Borrow the approve/review verdict tokens (also used in the Workspace) so a
 // finished doc reads green and a flagged one reads amber.
 function statusBadgeClass(status: DocumentStatus): string {
-  if (status === 'decided') return 'border-approve/40 text-approve';
+  if (status === 'decided' || status === 'signed')
+    return 'border-approve/40 text-approve';
   if (status === 'needs_review')
     return 'border-review/40 text-review-foreground';
   return 'border-border text-muted-foreground';

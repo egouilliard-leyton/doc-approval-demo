@@ -48,6 +48,10 @@ docgen = [
     "pypdfium2>=5.8.0",
     "weasyprint>=68.0,<69",
 ]
+# Outbound digital signing (Phase 6). pyHanko produces real PAdES signatures + validates
+# them (MIT). Optional + lazily imported; the "mock" provider covers the offline suite.
+#   uv sync --extra signing
+signing = ["pyhanko"]
 
 [dependency-groups]
 dev = [

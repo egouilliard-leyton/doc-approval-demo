@@ -9,12 +9,14 @@ export const DOC_STATUS_LABEL: Record<DocumentStatus, string> = {
   structured: "Structured",
   decided: "Decided",
   needs_review: "Needs review",
+  signed: "Signed",
 };
 
 /** Order used for filter chips / groups: things needing attention come first. */
 export const DOC_STATUS_ORDER: DocumentStatus[] = [
   "needs_review",
   "decided",
+  "signed",
   "structured",
   "ocr_done",
   "prescanned",
@@ -22,7 +24,8 @@ export const DOC_STATUS_ORDER: DocumentStatus[] = [
 ];
 
 export function docStatusClass(status: DocumentStatus): string {
-  if (status === "decided") return "border-approve/40 text-approve";
+  if (status === "decided" || status === "signed")
+    return "border-approve/40 text-approve";
   if (status === "needs_review") return "border-review/40 text-review-foreground";
   return "border-border text-muted-foreground";
 }

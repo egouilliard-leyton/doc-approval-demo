@@ -497,3 +497,70 @@ def save_qa_page(
 def qa_page_url(template_id: str, run_id: str, kind: str, page_no: int) -> str:
     """Relative URL (served via /files) for a QA run's rendered/reference page PNG."""
     return f"/files/templates/{template_id}/qa/{run_id}/{kind}/page-{page_no:03d}.png"
+
+
+# --- Phase 6: outbound signing artifacts + demo signer certs -----------------
+
+
+def original_path(doc_id: str) -> Path | None:
+    """The saved original upload (data/<id>/original.*), or None if absent."""
+    return next(iter(sorted(_doc_dir(doc_id).glob("original.*"))), None)
+
+
+def read_original(doc_id: str) -> bytes:
+    """Read the raw original upload bytes; raise if the file is missing."""
+    path = original_path(doc_id)
+    if path is None:
+        raise FileNotFoundError(f"No original file on disk for document {doc_id}.")
+    return path.read_bytes()
+
+
+def signed_dir(doc_id: str) -> Path:
+    """Directory holding the digitally signed output PDF(s)."""
+    return _doc_dir(doc_id) / "signed"
+
+
+def save_signed_pdf(doc_id: str, content: bytes, name: str = "signed.pdf") -> Path:
+    """Write the signed PDF as signed/<name>."""
+    out_dir = signed_dir(doc_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / name
+    path.write_bytes(content)
+    return path
+
+
+def signed_pdf_path(doc_id: str, name: str = "signed.pdf") -> Path:
+    """Absolute path to the signed PDF (may not exist yet)."""
+    return signed_dir(doc_id) / name
+
+
+def signed_pdf_exists(doc_id: str, name: str = "signed.pdf") -> bool:
+    """True if a signed PDF has been written for this document."""
+    return signed_pdf_path(doc_id, name).is_file()
+
+
+def signed_pdf_url(doc_id: str, name: str = "signed.pdf") -> str:
+    """Relative URL (served via /files) for the signed PDF."""
+    return f"/files/{doc_id}/signed/{name}"
+
+
+def delete_signed_dir(doc_id: str) -> None:
+    """Remove data/<doc_id>/signed/ (the signed output PDF).
+
+    Used to invalidate a stale signature when the decision it attested is re-run — a
+    real signature must not outlive the approval it was based on. Idempotent: a missing
+    directory is a no-op.
+    """
+    out_dir = signed_dir(doc_id)
+    if out_dir.exists():
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+
+def certs_dir() -> Path:
+    """The demo signer cert dir (settings.signing_cert_path), created if absent.
+
+    Kept OUTSIDE data_path so the /files mount never exposes the private keys.
+    """
+    path = settings.signing_cert_path
+    path.mkdir(parents=True, exist_ok=True)
+    return path

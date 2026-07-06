@@ -32,6 +32,8 @@ import type {
   QualityReport,
   ReviewQueueResponse,
   Sheet,
+  SignatureValidation,
+  SignResult,
   StructuredResult,
   TemplateCreate,
   TemplateDetail,
@@ -358,6 +360,10 @@ export async function getStructure(id: string): Promise<StructuredResult> {
 
 export async function getDecision(id: string): Promise<DecisionResult> {
   return request<DecisionResult>(`/documents/${id}/decide`);
+}
+
+export async function getSign(id: string): Promise<SignResult> {
+  return request<SignResult>(`/documents/${id}/sign`);
 }
 
 // --- pipeline stages (live engines) ------------------------------------------
@@ -743,4 +749,25 @@ export async function getEvalRun(runId: string): Promise<EvalRunResult> {
   return request<EvalRunResult>(`/eval/runs/${runId}`);
 }
 
+// --- outbound digital signing (PAdES; off the auto-run pipeline) --------------
+
+export async function runSign(
+  id: string,
+  provider?: string,
+): Promise<SignResult> {
+  return request<SignResult>(`/documents/${id}/sign`, {
+    method: "POST",
+    query: { provider },
+  });
+}
+
+export async function validateSignature(
+  id: string,
+  provider?: string,
+): Promise<SignatureValidation> {
+  return request<SignatureValidation>(`/documents/${id}/validate-signature`, {
+    method: "POST",
+    query: { provider },
+  });
+}
 export { API_BASE_URL };

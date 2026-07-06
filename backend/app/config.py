@@ -173,6 +173,23 @@ class Settings(BaseSettings):
     qa_render_dpi: int = 120  # rasterize the preview PDF to PNG at this DPI.
     qa_max_pages: int = 5  # cap images sent to the judge (adds a truncation warning).
 
+    # Outbound digital signing (Phase 6). Off the inbound pipeline: an APPROVED document
+    # can be signed with a real X.509 cert whose embedded CMS validates against a trust
+    # chain. "pyhanko" = real (optional dep: uv sync --extra signing); "mock" = offline.
+    signing_provider: str = "pyhanko"  # "pyhanko" | "mock"
+    signing_level: str = "PAdES-B-B"  # "PAdES-B-B" | "PAdES-B-T" (B-T needs a TSA)
+    signing_tsa_url: str = ""  # RFC 3161 TSA URL; enables B-T when set
+    signing_field_name: str = "Signature1"
+    signing_reason: str = "Approved for transmission"
+    signing_location: str = ""
+    signing_signer_name: str = "Document Approval Demo Signer"
+    signing_ca_common_name: str = "Document Approval Demo CA"
+    # Demo server-held seal (custody option A). Self-signed CA+leaf minted on first use.
+    # Kept OUTSIDE the /files-served data dir (private keys must never be downloadable).
+    # Resolved relative to backend/ like data_dir. Gitignored. NOT for production.
+    signing_cert_dir: str = "certs"
+    signing_timeout_s: float = 60.0
+
     # Browser origins allowed to call the API (Vite dev server by default).
     cors_origins: list[str] = ["http://localhost:5173"]
 
@@ -192,6 +209,16 @@ class Settings(BaseSettings):
     def signature_model_full_path(self) -> Path:
         """Absolute path to the signature model weights, resolved relative to backend/."""
         path = Path(self.signature_model_path)
+        return path if path.is_absolute() else BACKEND_ROOT / path
+
+    @property
+    def signing_cert_path(self) -> Path:
+        """Absolute path to the demo signer cert dir, resolved relative to backend/.
+
+        Deliberately kept OUTSIDE ``data_path`` (the /files static mount serves
+        ``data/``): private keys under it would otherwise be publicly downloadable.
+        """
+        path = Path(self.signing_cert_dir)
         return path if path.is_absolute() else BACKEND_ROOT / path
 
 

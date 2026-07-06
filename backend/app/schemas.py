@@ -1039,3 +1039,50 @@ class QaReport(BaseModel):
     provider_used: str  # "llm" | "mock" (reflects the actual, post-fallback provider)
     model: str
     warnings: list[str]
+
+
+# --- Phase 6: outbound digital signing ---------------------------------------
+
+# An APPROVED document can be sealed with a real X.509 signature whose embedded
+# CMS validates against a trust chain (a stamped image is legally worthless; a
+# real signature validates). Off the inbound pipeline — a manual post-decision
+# action. "pyhanko" = real PAdES (optional dep); "mock" = offline default.
+
+
+class SignerInfo(BaseModel):
+    """The certificate identity that produced a signature."""
+
+    common_name: str
+    issuer: str
+    serial: str
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+
+
+class SignatureValidation(BaseModel):
+    """Outcome of validating an embedded signature against a trust chain."""
+
+    valid: bool  # intact AND trusted
+    intact: bool  # covered bytes untouched
+    trusted: bool  # signer chains to a trust root
+    level: str  # "PAdES-B-B" | "PAdES-B-T" | "mock"
+    signer: SignerInfo | None = None
+    signed_at: datetime | None = None
+    trust_anchor: str | None = None  # CN of the root chained to
+    summary: str = ""
+    warnings: list[str] = []
+
+
+class SignResult(BaseModel):
+    """Document-level signing result, persisted under stage_results["sign"]."""
+
+    document_id: str
+    status: DocumentStatus  # `signed`
+    provider: str  # "pyhanko" | "mock"
+    engine_version: str
+    level: str
+    field_name: str
+    signed_pdf_url: str  # /files/<id>/signed/signed.pdf
+    validation: SignatureValidation
+    latency_ms: int = 0
+    warnings: list[str] = []
