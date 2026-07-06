@@ -22,6 +22,7 @@ import type {
   EvalRunSummary,
   FieldCatalogueEntry,
   FieldCorrection,
+  GeneratedSignResult,
   GenerateResult,
   MappingSuggestResponse,
   OcrEngine,
@@ -769,5 +770,17 @@ export async function validateSignature(
     method: "POST",
     query: { provider },
   });
+}
+
+/** Seal a generated template output PDF with a real PAdES signature. */
+export async function signTemplateOutput(
+  templateId: string,
+  outputId: string,
+  provider?: string,
+): Promise<GeneratedSignResult> {
+  return request<GeneratedSignResult>(
+    `/templates/${templateId}/outputs/${outputId}/sign`,
+    { method: "POST", query: { provider } },
+  );
 }
 export { API_BASE_URL };

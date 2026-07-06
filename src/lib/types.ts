@@ -737,3 +737,17 @@ export interface SignResult {
   latency_ms: number;
   warnings: string[];
 }
+
+export interface GeneratedSignResult {
+  template_id: string;
+  output_id: string;
+  signed_output_id: string;
+  provider: string;
+  engine_version: string;
+  level: string;
+  field_name: string;
+  signed_output_url: string;
+  validation: SignatureValidation;
+  latency_ms: number;
+  warnings: string[];
+}

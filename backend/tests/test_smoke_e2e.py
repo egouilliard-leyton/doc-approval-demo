@@ -144,3 +144,35 @@ def test_smoke_rich_html_journey():
         assert docx_path.read_bytes()[:2] == b"PK"
         text = "\n".join(p.text for p in docx.Document(io.BytesIO(docx_path.read_bytes())).paragraphs)
         assert "MOCK INVOICE" in text
+
+
+def test_smoke_generate_and_sign_journey():
+    """Create rich-html template -> generate PDF -> seal it with a PAdES signature.
+
+    The outbound path validated in a real browser with PinchTab: a generated output
+    PDF is signed via the mock provider (offline), the response self-validates, and a
+    ``<output_id>-signed.pdf`` lands on disk beside the original output.
+    """
+    with TestClient(app) as client:
+        tid = client.post(
+            "/templates", json={"name": "Signable Letter", "doc_type": "invoice"}
+        ).json()["id"]
+        html = '<p>Invoice for <span data-field="vendor" data-field-kind="text">Vendor</span></p>'
+        assert client.put(
+            f"/templates/{tid}", json={"html_body": html, "output_formats": ["pdf"]}
+        ).status_code == 200
+
+        doc_id = _stash_structured_doc()
+        gen = client.post(f"/templates/{tid}/generate", params={"document_id": doc_id})
+        assert gen.status_code == 201, gen.text
+        oid = gen.json()["output_id"]
+
+        signed = client.post(
+            f"/templates/{tid}/outputs/{oid}/sign", params={"provider": "mock"}
+        )
+        assert signed.status_code == 201, signed.text
+        assert signed.json()["validation"]["valid"] is True
+
+        signed_path = storage.template_outputs_dir(tid) / f"{oid}-signed.pdf"
+        assert signed_path.exists()
+        assert signed_path.read_bytes()[:4] == b"%PDF"

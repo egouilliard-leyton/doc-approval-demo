@@ -11,13 +11,15 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
+from app import storage
 from app.config import settings
 from app.db import engine
 from app.models import Document, PipelineRun
-from app.pipeline.signing import run_signing, validate_document_signature
+from app.pipeline.signing import run_signing, sign_pdf_bytes, validate_document_signature
 from app.pipeline.signing import mock as mock_signing
 
 from .conftest import SAMPLES
+from .test_smoke_e2e import _stash_structured_doc
 from app.main import app
 
 
@@ -239,3 +241,143 @@ def test_pyhanko_real_signature_smoke():
         assert result.validation.trusted is True
         assert result.validation.signer is not None
         assert result.validation.signer.common_name == settings.signing_signer_name
+
+
+# --- generated-output signing (outbound: sign a template's generated PDF) ------
+
+
+def _rich_html_pdf_output(client: TestClient) -> tuple[str, str]:
+    """Create a rich-html invoice template + generate a PDF from a stashed doc.
+
+    Mirrors ``test_smoke_e2e.test_smoke_rich_html_journey``. Returns
+    ``(template_id, output_id)`` where the output is a real PDF on disk.
+    """
+    tid = client.post(
+        "/templates", json={"name": "Sign-Me Letter", "doc_type": "invoice"}
+    ).json()["id"]
+    html = '<p>Invoice for <span data-field="vendor" data-field-kind="text">Vendor</span></p>'
+    put = client.put(
+        f"/templates/{tid}", json={"html_body": html, "output_formats": ["pdf"]}
+    )
+    assert put.status_code == 200, put.text
+    doc_id = _stash_structured_doc()
+    gen = client.post(f"/templates/{tid}/generate", params={"document_id": doc_id})
+    assert gen.status_code == 201, gen.text
+    return tid, gen.json()["output_id"]
+
+
+def test_sign_generated_output_signs_pdf():
+    with TestClient(app) as client:
+        tid, oid = _rich_html_pdf_output(client)
+
+        resp = client.post(
+            f"/templates/{tid}/outputs/{oid}/sign", params={"provider": "mock"}
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["provider"] == "mock"
+        assert body["template_id"] == tid
+        assert body["output_id"] == oid
+        assert body["signed_output_id"] == f"{oid}-signed"
+        assert body["signed_output_url"], "expected a signed output url"
+        assert body["signed_output_url"].endswith("-signed.pdf")
+        assert body["validation"]["valid"] is True
+        assert body["validation"]["intact"] is True
+        assert body["validation"]["trusted"] is True
+
+
+def test_signed_generated_output_is_downloadable():
+    """The <output_id>-signed.pdf is fetchable through the /files static mount."""
+    with TestClient(app) as client:
+        tid, oid = _rich_html_pdf_output(client)
+        client.post(f"/templates/{tid}/outputs/{oid}/sign", params={"provider": "mock"})
+
+        got = client.get(f"/files/templates/{tid}/outputs/{oid}-signed.pdf")
+        assert got.status_code == 200, got.text
+        assert got.content[:4] == b"%PDF"
+
+
+def test_sign_generated_output_missing_output_404():
+    with TestClient(app) as client:
+        tid, _ = _rich_html_pdf_output(client)
+        resp = client.post(
+            f"/templates/{tid}/outputs/does-not-exist/sign", params={"provider": "mock"}
+        )
+        assert resp.status_code == 404, resp.text
+
+
+def test_sign_generated_output_missing_template_404():
+    with TestClient(app) as client:
+        resp = client.post(
+            "/templates/no-such-template/outputs/whatever/sign",
+            params={"provider": "mock"},
+        )
+        assert resp.status_code == 404, resp.text
+
+
+def test_sign_generated_output_unknown_provider_400():
+    with TestClient(app) as client:
+        tid, oid = _rich_html_pdf_output(client)
+        resp = client.post(
+            f"/templates/{tid}/outputs/{oid}/sign", params={"provider": "nope"}
+        )
+        assert resp.status_code == 400, resp.text
+
+
+# --- unit test on the shared core (sign_pdf_bytes) ----------------------------
+
+
+def test_sign_pdf_bytes_mock_roundtrip():
+    """The shared core signs real PDF bytes and self-validates all-True (mock)."""
+    pdf_bytes = (SAMPLES / "invoice-clean.pdf").read_bytes()
+    signed_bytes, validation, engine_version, latency_ms = sign_pdf_bytes(
+        pdf_bytes, "mock"
+    )
+    assert validation.valid is True
+    assert validation.intact is True
+    assert validation.trusted is True
+    assert engine_version == "mock"
+    assert latency_ms >= 0
+    assert signed_bytes.startswith(b"%PDF")
+    # The freshly signed bytes carry a marker the mock validator recognises.
+    revalidated = mock_signing.validate(signed_bytes)
+    assert revalidated.valid is True
+    assert revalidated.intact is True
+    assert revalidated.trusted is True
+
+
+def test_sign_arbitrary_bytes_then_mock_validate():
+    """Signing arbitrary (non-signed) bytes then mock-validating reflects intact/trusted."""
+    signed_bytes, _, _, _ = sign_pdf_bytes(b"not really a pdf", "mock")
+    revalidated = mock_signing.validate(signed_bytes)
+    assert revalidated.intact is True
+    assert revalidated.trusted is True
+    # Un-signed bytes on their own validate as invalid.
+    assert mock_signing.validate(b"not really a pdf").valid is False
+
+
+# --- real-path smoke (guarded: runs iff the pyhanko extra is installed) --------
+
+
+def test_pyhanko_real_generated_output_signature_smoke():
+    pytest.importorskip("pyhanko")
+    with TestClient(app) as client:
+        tid, oid = _rich_html_pdf_output(client)
+
+        # Default provider (SIGNING_PROVIDER defaults to pyhanko) => the real path.
+        resp = client.post(f"/templates/{tid}/outputs/{oid}/sign")
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["provider"] == "pyhanko"
+        assert body["validation"]["valid"] is True
+        assert body["validation"]["intact"] is True
+        assert body["validation"]["trusted"] is True
+        assert body["validation"]["signer"] is not None
+        assert body["validation"]["signer"]["common_name"] == settings.signing_signer_name
+
+        # The written signed file is a genuine CMS-bearing PDF, not a mock marker.
+        signed = storage.template_outputs_dir(tid) / f"{oid}-signed.pdf"
+        assert signed.is_file()
+        raw = signed.read_bytes()
+        assert b"/ByteRange" in raw
+        assert b"adbe.pkcs7.detached" in raw
