@@ -48,10 +48,11 @@ Highlights:
 - **Admin panel** — a consolidated **KPI dashboard**, documents, corrections log, a
   low-confidence **review queue**, **accuracy** runs, and configuration. See
   [Admin panel](#admin-panel).
-- **Outbound digital signing** — an **approved** document's PDF can be sealed with a real
-  **PAdES / X.509** signature that validates against a trust chain, as a manual
-  post-decision action (off the inbound pipeline). See
-  [`docs/digital-signing.md`](docs/digital-signing.md).
+- **Outbound digital signing** — seal a PDF with a real **PAdES / X.509** signature that
+  validates against a trust chain, either an **approved** inbound document or a **generated**
+  template output (the *Solicitud de Transmisión* you transmit). Draws a **visible** stamp,
+  placed at the template's signature marker (or a configurable corner). A manual action, off the
+  inbound pipeline. See [`docs/digital-signing.md`](docs/digital-signing.md).
 
 Built as the demo for a video on _the best OCR tools for AI agents_. The pipeline is
 modular — each stage (**pre-scan → OCR → structure → decide**) is a swappable component,
@@ -145,6 +146,7 @@ defaults). The essentials:
 | `SIGNING_PROVIDER`   | `pyhanko`                           | `pyhanko` (real PAdES, needs `--extra signing`) \| `mock` (offline).           |
 | `SIGNING_LEVEL`      | `PAdES-B-B`                         | `PAdES-B-B` \| `PAdES-B-T` (B-T needs `SIGNING_TSA_URL`).                       |
 | `SIGNING_TSA_URL`    | _(empty)_                          | RFC 3161 timestamp-authority URL; set to enable B-T.                           |
+| `SIGNING_VISIBLE`    | `true`                             | Draw a visible stamp (at the template marker, else a corner). `false` → invisible signature. |
 | `SIGNING_CERT_DIR`   | `certs`                            | Demo signer cert dir, outside `data/` and gitignored (see signing doc).        |
 
 See [`docs/digital-signing.md`](docs/digital-signing.md) for the full `SIGNING_*` set and the

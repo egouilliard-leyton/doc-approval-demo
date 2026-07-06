@@ -2,10 +2,13 @@
 
 [← Docs index](README.md) · [← Project README](../README.md)
 
-> **Shipped:** server-held demo seal, real **PAdES-B-B** (optional **-B-T** via a TSA) + signature validation. An outbound, manual, post-decision action — deliberately **not** part of the inbound `prescan → ocr → structure → decide` auto-run.
+> **Shipped:** server-held demo seal, real **PAdES-B-B** (optional **-B-T** via a TSA) + signature validation, applied to **two** targets — an approved inbound document *and* a **generated** template output (the real outbound artifact). A **visible** signature stamp is drawn by default, placed at the **template's signature marker** (or a configurable corner). An outbound, manual action — deliberately **not** part of the inbound `prescan → ocr → structure → decide` auto-run.
 
-Signs an **approved** document's PDF with a real **X.509 certificate** whose embedded CMS
-signature validates against a trust chain, then exposes that validation in the UI and API.
+Signs a PDF with a real **X.509 certificate** whose embedded CMS signature validates against a
+trust chain, then exposes that validation in the UI and API. Two flows share one signing core:
+an **approved inbound document** (`/documents/{id}/sign`) and a **generated template output**
+(`/templates/{id}/outputs/{output_id}/sign`) — the *Solicitud de Transmisión* / *Anexo* you
+actually transmit.
 
 ## Why (the requirement)
 
@@ -25,12 +28,21 @@ Transmisión_ / _Anexo_ for the Spanish Ministry requirement), not a decorative 
 
 ## What shipped
 
-- An **outbound signing stage** (`backend/app/pipeline/signing/`) that seals an approved
-  document's original PDF and **self-validates** the freshly signed bytes.
+- An **outbound signing stage** (`backend/app/pipeline/signing/`) with one shared
+  `sign_pdf_bytes` core that seals a PDF and **self-validates** the freshly signed bytes.
+- **Two signing targets:**
+  - an **approved inbound document** — `POST /documents/{id}/sign` (`SignResult`);
+  - a **generated template output** — `POST /templates/{id}/outputs/{output_id}/sign`
+    (`GeneratedSignResult`), the outbound document you transmit.
 - **Signature validation** — re-verify any signed (or unsigned) document against the demo
   trust root, returning `intact` / `trusted` / `valid` plus the signer identity.
-- A new terminal `DocumentStatus.signed`.
-- A **`SignaturePanel`** under the Decision tab in the frontend.
+- A **visible signature stamp** (default on) — "Digitally signed by … / timestamp / reason" —
+  drawn **at the template's signature marker** if the document has one, else a configurable
+  corner. The cryptographic signature is unaffected either way.
+- A new terminal `DocumentStatus.signed`; a **`SignaturePanel`** (Decision tab) for documents
+  and an **`OutputSigner`** in the **`GeneratePanel`** for generated outputs.
+- Reliable cross-origin **downloads** — the signed-PDF buttons fetch the bytes and save a blob
+  (a cross-origin `<a download>` is ignored and `target="_blank"` is popup-blocked).
 - Two providers: **`pyhanko`** (real PAdES) and **`mock`** (offline, covers the test suite).
 
 ## How to use it
@@ -73,7 +85,47 @@ Open an **approved** document → **Decision** tab → **SignaturePanel**:
 3. **Download signed PDF** — the sealed file (`/files/{id}/signed/signed.pdf`).
 4. **Re-verify signature** → re-runs `POST /validate-signature` on demand.
 
-### 4. Configuration
+### 4. Signing a generated document (the outbound flow)
+
+The real PAdES use case is signing the document you **produce and send** — the filled
+*Solicitud de Transmisión* / *Anexo* from the [template generator](../README.md), not the
+inbound invoice. This is distinct from the generator's optional stamped **signature image**
+(`signature_image` on `/generate`), which is a legally-worthless *picture*; this applies a real
+cryptographic seal to the generated PDF.
+
+| Method & path | Purpose |
+| --- | --- |
+| `POST /templates/{id}/outputs/{output_id}/sign` | Seal a generated output PDF with a real PAdES signature; writes `<output_id>-signed.pdf` beside the output and self-validates it. Returns `GeneratedSignResult`. `404` if the template/output is missing · `400` on an unknown provider. |
+
+**UI:** in a template's **Generate** panel, after generating a PDF the result card shows a
+**Sign for transmission** action (the `OutputSigner`). Signing reveals the **Intact / Trusted /
+Valid** badges and a **Download signed PDF** button. No approve-gating here — a generated
+document is itself the outbound artifact.
+
+### 5. Visible signature & placement
+
+A PAdES signature is **cryptographic, not visual**: it lives in the PDF's signature dictionary,
+so a plain viewer (Chrome, `pdf.js`, Evince) shows nothing on the page even though the signature
+is valid — only a signature-aware viewer (Adobe Acrobat) surfaces its panel. To make the seal
+human-visible, a **visible stamp** is drawn by default (`SIGNING_VISIBLE=true`):
+
+```
+Digitally signed by:
+Document Approval Demo Signer
+2026-01-01 12:00:00 UTC
+Approved for transmission
+```
+
+**Placement — the template decides.** Both template editors (the manual **Generate** editor and
+the **AI edit** editor) let you drop a signature placeholder via the **Insert field → Signature
+image** button, which serializes to `<img data-signature>`. The generator leaves an *invisible,
+locatable anchor* at that spot (transparent in the PDF; stripped from the DOCX output so it
+never leaks into Word), and the signer places the visible stamp exactly there. When a document
+carries **no** marker (e.g. an inbound document, or a template without the placeholder), the
+stamp falls back to a configurable corner/page (`SIGNING_VISIBLE_POSITION` / `_PAGE`). Set
+`SIGNING_VISIBLE=false` for a bare (invisible) cryptographic signature.
+
+### 6. Configuration
 
 All vars are prefixed `SIGNING_` (see `backend/.env.example`, defaults in
 `backend/app/config.py`):
@@ -88,6 +140,9 @@ All vars are prefixed `SIGNING_` (see `backend/.env.example`, defaults in
 | `SIGNING_LOCATION` | _(empty)_ | Optional location recorded in the signature. |
 | `SIGNING_SIGNER_NAME` | `Document Approval Demo Signer` | End-entity (leaf) certificate CN. |
 | `SIGNING_CA_COMMON_NAME` | `Document Approval Demo CA` | Demo CA certificate CN / trust anchor. |
+| `SIGNING_VISIBLE` | `true` | Draw a visible stamp (at the template marker if present, else the fallback below). `false` → invisible signature. |
+| `SIGNING_VISIBLE_POSITION` | `bottom-right` | Fallback corner when there's no template marker: `top`/`bottom`-`left`/`center`/`right`. |
+| `SIGNING_VISIBLE_PAGE` | `1` | Fallback page (1-based, clamped to the last page). |
 | `SIGNING_CERT_DIR` | `certs` | Demo signer cert dir, resolved relative to `backend/`. |
 | `SIGNING_TIMEOUT_S` | `60` | Signing/validation wall-clock ceiling. |
 
@@ -129,21 +184,32 @@ verifiability).
 **Where the code lives:**
 
 - `backend/app/pipeline/signing/` — the stage (adapter package, mirrors `pipeline/ocr/`):
-  - `__init__.py` — provider registry + `run_signing` / `validate_document_signature` entrypoints.
-  - `base.py` — `SigningMeta`, provider set (`pyhanko`, `mock`), provider resolution.
-  - `pyhanko_signer.py` — real PAdES sign + validate (all pyhanko imports lazy; locked to pyhanko 0.35.1).
+  - `__init__.py` — provider registry + `sign_pdf_bytes` (shared core), `run_signing` /
+    `validate_document_signature` entrypoints.
+  - `base.py` — `SigningMeta`, provider set (`pyhanko`, `mock`), provider resolution, and the
+    `SIGNATURE_ANCHOR_TOKEN` / stamp geometry / `VISIBLE_POSITIONS` constants.
+  - `pyhanko_signer.py` — real PAdES sign + validate + the visible-stamp placement (`_placement`
+    → template anchor via PyMuPDF, else `_corner_placement`). All pyhanko imports lazy; locked
+    to pyhanko 0.35.1.
   - `mock.py` — offline marker-based sign/validate for tests + frontend dev.
   - `certs.py` — mints/reuses the demo CA + leaf (`0600` p12).
-- `backend/app/routes/pipeline.py` — the `POST/GET /sign` + `POST /validate-signature` routes,
-  the gating, and the stale-seal invalidation on re-decide.
-- `backend/app/schemas.py` — `SignResult`, `SignatureValidation`, `SignerInfo`.
+- `backend/app/routes/pipeline.py` — `POST/GET /documents/{id}/sign` + `/validate-signature`,
+  gating, and the stale-seal invalidation on re-decide.
+- `backend/app/routes/templates.py` — `POST /templates/{id}/outputs/{output_id}/sign`.
+- `backend/app/pipeline/generation/binder.py` — leaves the invisible signature **anchor** at the
+  `<img data-signature>` marker; `render.py` strips it from the DOCX output.
+- `backend/app/schemas.py` — `SignResult`, `GeneratedSignResult`, `SignatureValidation`, `SignerInfo`.
 - `backend/app/config.py` / `backend/.env.example` — the `SIGNING_*` block + `signing_cert_path`.
-- `backend/app/storage.py` — signed-PDF helpers + `certs_dir()`.
-- `src/features/decision/SignaturePanel.tsx` — the UI (sign / badges / download / re-verify).
+- `backend/app/storage.py` — signed-PDF + `template_output_path` helpers + `certs_dir()`.
+- `src/features/decision/SignaturePanel.tsx` — the document UI (sign / badges / download / re-verify).
+- `src/features/templates/GeneratePanel.tsx` — the `OutputSigner` for generated outputs;
+  `src/lib/api.ts` — `signTemplateOutput` + the `downloadFile` blob helper.
 
-**Tests:** `backend/tests/test_signing.py` (12 tests — mock offline round-trip, the gating
-rules, stale-seal invalidation, and a guarded real-pyhanko smoke). Full backend suite:
-**55 passed** (`cd backend && uv run --no-sync pytest -q`).
+**Tests:** `backend/tests/test_signing.py` (22 tests — mock offline round-trips for both
+targets, the gating rules, stale-seal invalidation, visible-vs-invisible appearance,
+template-anchor placement, and guarded real-pyhanko smokes) plus the DOCX-anchor-strip test in
+`test_generation_render.py` and a `scenario_signing` in `scripts/smoke.py`. Full backend suite:
+**661 passed, 1 skipped** (`cd backend && uv run --no-sync pytest -q`); smoke: **87/87**.
 
 **Follow-on backlog:**
 

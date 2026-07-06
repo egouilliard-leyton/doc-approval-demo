@@ -472,6 +472,11 @@ def template_output_url(template_id: str, output_id: str, ext: str = ".pdf") -> 
     return f"/files/templates/{template_id}/outputs/{output_id}{ext}"
 
 
+def template_output_path(template_id: str, output_id: str, ext: str = ".pdf") -> Path:
+    """Absolute path to a template's generated output (may not exist yet)."""
+    return template_outputs_dir(template_id) / f"{output_id}{ext}"
+
+
 # --- Phase 4 (Vision QA): rendered + reference page images per QA run ----------
 
 # A QA run rasterizes the template's preview PDF ("rendered") and, when available,

@@ -725,6 +725,145 @@ def scenario_kpi(client: TestClient) -> None:
         )
 
 
+def scenario_signing(client: TestClient) -> None:
+    """Digital signing, both paths, all offline via the mock provider.
+
+    Inbound: run a doc to APPROVE, sign its original PDF, validate, then re-decide
+    and confirm the seal is invalidated (GET /sign -> 404).
+    Outbound: generate a template PDF and seal it, confirming the signed variant is
+    fetchable through /files.
+    """
+    from uuid import uuid4
+
+    from sqlmodel import Session, select
+
+    from app import storage
+    from app.db import engine as _engine
+    from app.models import PipelineRun, _new_id
+
+    section("12. Digital signing (inbound seal + outbound generated-output)")
+
+    # --- Inbound: sign an approved document's original PDF --------------------
+    doc = _upload(client, "invoice-clean.pdf")
+    doc_id = doc["id"]
+    client.post(f"/documents/{doc_id}/prescan")
+    client.post(f"/documents/{doc_id}/ocr", params={"engine": "mock"})
+    structure = client.post(
+        f"/documents/{doc_id}/structure",
+        params={"doc_type": "invoice", "provider": "mock", "ocr_engine": "mock"},
+    )
+    if not check(
+        "signing setup: structure(mock) -> 200",
+        structure.status_code == 200,
+        structure.text[:200],
+    ):
+        return
+
+    # The mock structurer emits a constant invoice_no; make it unique so the doc
+    # approves (a duplicate would flag) — mirrors test_signing._uniquify_invoice_no.
+    with Session(_engine) as session:
+        run = session.exec(
+            select(PipelineRun)
+            .where(PipelineRun.document_id == doc_id)
+            .order_by(PipelineRun.created_at.desc())
+        ).first()
+        structure_res = dict(run.stage_results["structure"])
+        fields = dict(structure_res["fields"])
+        node = dict(fields["invoice_no"])
+        node["value"] = f"INV-{uuid4()}"
+        fields["invoice_no"] = node
+        structure_res["fields"] = fields
+        run.stage_results = {**run.stage_results, "structure": structure_res}
+        session.add(run)
+        session.commit()
+
+    decide = client.post(f"/documents/{doc_id}/decide", params={"provider": "mock"})
+    check(
+        "inbound decide(mock) -> approve",
+        decide.status_code == 200 and decide.json().get("decision") == "approve",
+        f"status={decide.status_code} decision={decide.json().get('decision') if decide.status_code == 200 else 'n/a'}",
+    )
+
+    sign = client.post(f"/documents/{doc_id}/sign", params={"provider": "mock"})
+    if check("POST /documents/{id}/sign(mock) -> 200", sign.status_code == 200, sign.text[:200]):
+        sbody = sign.json()
+        check(
+            "inbound sign: status signed + validation.valid",
+            sbody.get("status") == "signed" and sbody.get("validation", {}).get("valid") is True,
+            f"status={sbody.get('status')} valid={sbody.get('validation', {}).get('valid')}",
+        )
+
+    validate = client.post(
+        f"/documents/{doc_id}/validate-signature", params={"provider": "mock"}
+    )
+    check(
+        "POST /documents/{id}/validate-signature(mock) -> valid",
+        validate.status_code == 200 and validate.json().get("valid") is True,
+        f"status={validate.status_code} valid={validate.json().get('valid') if validate.status_code == 200 else 'n/a'}",
+    )
+
+    # Re-deciding a signed doc must invalidate the seal (GET /sign -> 404).
+    client.post(f"/documents/{doc_id}/decide", params={"provider": "mock"})
+    gone = client.get(f"/documents/{doc_id}/sign")
+    check(
+        "re-decide invalidates seal: GET /sign -> 404",
+        gone.status_code == 404,
+        f"status={gone.status_code}",
+    )
+
+    # --- Outbound: sign a generated template output PDF ----------------------
+    tid = client.post(
+        "/templates", json={"name": "Smoke Signable", "doc_type": "invoice"}
+    ).json()["id"]
+    html = '<p>Invoice for <span data-field="vendor" data-field-kind="text">Vendor</span></p>'
+    client.put(f"/templates/{tid}", json={"html_body": html, "output_formats": ["pdf"]})
+
+    stash_id = _new_id()
+    with Session(_engine) as session:
+        session.add(
+            PipelineRun(
+                document_id=stash_id,
+                status="structured",
+                stage_results={
+                    "structure": {
+                        "fields": {
+                            "vendor": {"value": "MOCK INVOICE", "confidence": 0.9, "grounding": None}
+                        }
+                    }
+                },
+            )
+        )
+        session.commit()
+
+    gen = client.post(f"/templates/{tid}/generate", params={"document_id": stash_id})
+    if not check(
+        "outbound generate PDF -> 201", gen.status_code == 201, gen.text[:200]
+    ):
+        return
+    oid = gen.json()["output_id"]
+
+    osign = client.post(
+        f"/templates/{tid}/outputs/{oid}/sign", params={"provider": "mock"}
+    )
+    if check(
+        "POST /templates/{tid}/outputs/{oid}/sign(mock) -> 201",
+        osign.status_code == 201,
+        osign.text[:200],
+    ):
+        check(
+            "outbound sign: validation.valid",
+            osign.json().get("validation", {}).get("valid") is True,
+            f"valid={osign.json().get('validation', {}).get('valid')}",
+        )
+
+    fetched = client.get(f"/files/templates/{tid}/outputs/{oid}-signed.pdf")
+    check(
+        "signed output fetchable via /files -> 200 (%PDF)",
+        fetched.status_code == 200 and fetched.content[:4] == b"%PDF",
+        f"status={fetched.status_code}",
+    )
+
+
 def main() -> int:
     print(f"doc-approval smoke test (DATA_DIR={_TMP_DATA})")
     with TestClient(app) as client:
@@ -739,6 +878,7 @@ def main() -> int:
         scenario_corrections_export(client)
         scenario_routing(client)
         scenario_kpi(client)
+        scenario_signing(client)
 
     section("Summary")
     total = _PASSES + _FAILURES

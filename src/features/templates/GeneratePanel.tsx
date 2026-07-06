@@ -7,6 +7,9 @@ import {
   Download,
   FileWarning,
   Loader2,
+  PenLine,
+  ShieldAlert,
+  ShieldCheck,
   Sparkles,
   X,
 } from "lucide-react";
@@ -23,14 +26,17 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   ApiError,
-  fileUrl,
+  downloadFile,
   generateTemplateOutput,
   listDocuments,
+  signTemplateOutput,
   updateTemplate,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import type {
   DocumentStatus,
   DocumentSummary,
+  GeneratedSignResult,
   GenerateOutputFile,
   GenerateResult,
   TemplateDetail,
@@ -135,7 +141,102 @@ function SignaturePicker({
   );
 }
 
-function ResultCard({ result }: { result: GenerateResult }) {
+function SigBadge({ label, ok }: { label: string; ok: boolean }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium",
+        ok
+          ? "bg-approve text-approve-foreground"
+          : "bg-flag text-flag-foreground",
+      )}
+    >
+      {ok ? (
+        <ShieldCheck className="size-3" />
+      ) : (
+        <ShieldAlert className="size-3" />
+      )}
+      {label}
+    </span>
+  );
+}
+
+// The real PAdES seal for one generated PDF output: a "Sign for transmission"
+// action that, once signed, shows the validation badges + a link to the signed
+// file. This is the cryptographic counterpart to the optional stamped image — the
+// document you actually transmit, validatable against a trust chain.
+function OutputSigner({
+  templateId,
+  outputId,
+}: {
+  templateId: string;
+  outputId: string;
+}) {
+  const [signed, setSigned] = useState<GeneratedSignResult | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function handleSign() {
+    setBusy(true);
+    try {
+      const res = await signTemplateOutput(templateId, outputId);
+      setSigned(res);
+      toast.success("Generated document signed for transmission");
+    } catch (e) {
+      toast.error("Signing failed", {
+        description:
+          e instanceof ApiError ? e.message : "Could not sign the PDF.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!signed) {
+    return (
+      <Button size="sm" variant="outline" onClick={handleSign} disabled={busy}>
+        {busy ? (
+          <Loader2 className="animate-spin" />
+        ) : (
+          <PenLine />
+        )}
+        Sign for transmission
+      </Button>
+    );
+  }
+
+  const { validation } = signed;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <SigBadge label="Intact" ok={validation.intact} />
+      <SigBadge label="Trusted" ok={validation.trusted} />
+      <SigBadge label="Valid" ok={validation.valid} />
+      <Button
+        size="sm"
+        onClick={() =>
+          downloadFile(
+            signed.signed_output_url,
+            `${signed.signed_output_id}.pdf`,
+          ).catch((e) =>
+            toast.error("Download failed", {
+              description: e instanceof ApiError ? e.message : String(e),
+            }),
+          )
+        }
+      >
+        <Download />
+        Download signed PDF
+      </Button>
+    </div>
+  );
+}
+
+function ResultCard({
+  result,
+  templateId,
+}: {
+  result: GenerateResult;
+  templateId: string;
+}) {
   return (
     <div className="space-y-3 rounded-xl border bg-muted/30 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -156,20 +257,42 @@ function ResultCard({ result }: { result: GenerateResult }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {resultOutputs(result).map((out) => (
-            <Button key={out.output_id} size="sm" asChild>
-              <a
-                href={fileUrl(out.output_url)}
-                target="_blank"
-                rel="noreferrer"
-                download
-              >
-                <Download />
-                Open {out.format.toUpperCase()}
-              </a>
+            <Button
+              key={out.output_id}
+              size="sm"
+              onClick={() =>
+                downloadFile(
+                  out.output_url,
+                  `${out.output_id}.${out.format}`,
+                ).catch((e) =>
+                  toast.error("Download failed", {
+                    description: e instanceof ApiError ? e.message : String(e),
+                  }),
+                )
+              }
+            >
+              <Download />
+              Download {out.format.toUpperCase()}
             </Button>
           ))}
         </div>
       </div>
+
+      {/* Outbound digital signing: seal each generated PDF with a real PAdES
+          signature (not the legally-worthless stamped image). */}
+      {resultOutputs(result)
+        .filter((out) => out.format === "pdf")
+        .map((out) => (
+          <div
+            key={out.output_id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-background/60 px-3 py-2"
+          >
+            <span className="text-xs text-muted-foreground">
+              Sign the generated PDF for transmission (real PAdES certificate).
+            </span>
+            <OutputSigner templateId={templateId} outputId={out.output_id} />
+          </div>
+        ))}
 
       {result.skipped_fields.length > 0 && (
         <p className="text-xs text-muted-foreground">
@@ -346,7 +469,7 @@ export function GeneratePanel({ template }: { template: TemplateDetail }) {
         Generate
       </Button>
 
-      {result && <ResultCard result={result} />}
+      {result && <ResultCard result={result} templateId={template.id} />}
     </div>
   );
 }

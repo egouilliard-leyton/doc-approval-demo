@@ -1086,3 +1086,25 @@ class SignResult(BaseModel):
     validation: SignatureValidation
     latency_ms: int = 0
     warnings: list[str] = []
+
+
+class GeneratedSignResult(BaseModel):
+    """Result of sealing a GENERATED template output PDF with a real PAdES signature.
+
+    The outbound counterpart to :class:`SignResult`: instead of an inbound document's
+    original, this signs a document produced by the generation stage (the Solicitud /
+    Anexo you transmit). Not persisted on a pipeline run — the signed file is written
+    beside the generated output as ``<output_id>-signed.pdf``.
+    """
+
+    template_id: str
+    output_id: str  # the generated PDF output that was signed
+    signed_output_id: str  # the signed variant (``<output_id>-signed``)
+    provider: str  # "pyhanko" | "mock"
+    engine_version: str
+    level: str
+    field_name: str
+    signed_output_url: str  # /files/templates/<id>/outputs/<output_id>-signed.pdf
+    validation: SignatureValidation
+    latency_ms: int = 0
+    warnings: list[str] = []

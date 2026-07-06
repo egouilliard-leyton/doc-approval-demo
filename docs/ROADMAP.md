@@ -108,6 +108,20 @@ Located + cropped handwritten-signature extraction, layered onto the text-ground
   scans are a documented model ceiling. Full design + accuracy:
   **[signature-extraction.md](./signature-extraction.md)**.
 
+### Outbound digital signing (PAdES)
+The opposite direction from signature *detection*: **produce** a real cryptographic seal on a
+document we're about to send, not find ink on one we received.
+- Seals a PDF with a real **PAdES-B-B** (optional **-B-T** via a TSA) signature whose embedded
+  CMS validates against a trust chain — applied to an **approved inbound document**
+  (`/documents/{id}/sign`) *or* a **generated template output**
+  (`/templates/{id}/outputs/{output_id}/sign`), the *Solicitud de Transmisión* you transmit.
+- A **visible** stamp (default) drawn **at the template's signature marker** (`<img
+  data-signature>`) — or a configurable corner when there's none — over the always-present
+  cryptographic signature.
+- Server-held **demo seal** (self-signed CA + leaf, `pyhanko`); a `mock` provider covers the
+  offline suite. Re-deciding invalidates a prior seal. Full design + custody/security notes:
+  **[digital-signing.md](./digital-signing.md)**.
+
 ### Human-in-the-loop corrections
 - **Inline field editing** (`PATCH /documents/{id}/structure/field`) — correct any extracted
   value; the model's original is pinned and the edit is logged (`FieldCorrectionRow`).
@@ -281,6 +295,11 @@ Not built yet — candidate next steps, roughly ordered by value.
 - **Export** — download a decision + citations as a PDF/JSON audit record.
 - **Confidence calibration** — use the corrections log to measure and tune per-field
   confidence.
+- **Signing depth** — **PAdES-B-LT / B-LTA** (embedded revocation + archive timestamps for
+  long-term validation), **remote per-signer signing** (pyHanko `ExternalSigner`, each signer
+  holds their own key), a **Stirling-PDF** external provider, and an inbound
+  `digital_signature_valid` rule primitive. See
+  [digital-signing.md § For the next agent](./digital-signing.md#for-the-next-agent).
 
 ---
 

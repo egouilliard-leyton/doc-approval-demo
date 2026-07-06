@@ -24,6 +24,26 @@ def _wrap(html_body: str, css: str) -> str:
     )
 
 
+def _strip_sig_anchor(html_body: str) -> str:
+    """Remove the hidden signature-anchor spans before DOCX conversion.
+
+    The anchor (a transparent token) is invisible in the PDF but html4docx ignores the
+    ``color:transparent`` inline style, so it would show as stray text in the Word file.
+    The anchor is only meaningful for the PDF signing path, so DOCX drops it entirely.
+    """
+    if "data-sig-anchor" not in html_body:
+        return html_body
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html_body, "html.parser")
+        for span in soup.select("span[data-sig-anchor]"):
+            span.decompose()
+        return str(soup)
+    except Exception:  # noqa: BLE001 — never fail rendering on cleanup
+        return html_body
+
+
 def render_pdf(html_body: str, css: str) -> bytes:
     """Render a bound HTML body to PDF bytes via WeasyPrint.
 
@@ -47,7 +67,7 @@ def render_docx(html_body: str, css: str) -> bytes:
     try:
         from html4docx import HtmlToDocx  # lazy: optional docgen dep
 
-        document = HtmlToDocx().parse_html_string(_wrap(html_body, css))
+        document = HtmlToDocx().parse_html_string(_wrap(_strip_sig_anchor(html_body), css))
         buf = BytesIO()
         document.save(buf)
         return buf.getvalue()

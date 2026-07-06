@@ -39,10 +39,13 @@ from app.pipeline.generation import (
     run_template_qa,
     suggest_mapping,
 )
+from app.pipeline.signing import sign_pdf_bytes
+from app.pipeline.signing.base import resolve_provider, signing_meta_from_settings
 from app.schemas import (
     AgentEvent,
     AgentRequest,
     FieldCatalogueEntry,
+    GeneratedSignResult,
     GenerateOutputFile,
     GenerateResult,
     MappingSuggestResponse,
@@ -478,4 +481,58 @@ async def generate_template_output(
         signature_stamped=rich.signature_stamped,
         warnings=rich.warnings,
         outputs=outputs,
+    )
+
+
+@router.post(
+    "/{template_id}/outputs/{output_id}/sign",
+    response_model=GeneratedSignResult,
+    status_code=201,
+)
+async def sign_template_output(
+    template_id: str,
+    output_id: str,
+    provider: str = Query(default=""),
+    session: Session = Depends(get_session),
+) -> GeneratedSignResult:
+    """Seal a GENERATED output PDF with a real PAdES signature (the outbound flow).
+
+    Unlike the stamped ``signature_image`` on ``/generate`` (a legally-worthless
+    picture), this applies a cryptographic signature whose embedded CMS validates
+    against a trust chain — the document you actually transmit. The signed file is
+    written beside the output as ``<output_id>-signed.pdf`` and self-validated.
+    """
+    tmpl = session.get(Template, template_id)
+    if tmpl is None:
+        raise HTTPException(status_code=404, detail="Template not found.")
+
+    source = storage.template_output_path(template_id, output_id, ".pdf")
+    if not source.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="No generated PDF output with that id — generate a PDF first.",
+        )
+
+    try:
+        signed_bytes, validation, engine_version, latency_ms = await asyncio.to_thread(
+            sign_pdf_bytes, source.read_bytes(), provider
+        )
+    except ValueError as exc:  # unknown provider / missing optional dep
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    signed_id = f"{output_id}-signed"
+    storage.save_template_output(template_id, signed_id, signed_bytes, ".pdf")
+
+    return GeneratedSignResult(
+        template_id=template_id,
+        output_id=output_id,
+        signed_output_id=signed_id,
+        provider=resolve_provider(provider),
+        engine_version=engine_version,
+        level=validation.level,
+        field_name=signing_meta_from_settings().field_name,
+        signed_output_url=storage.template_output_url(template_id, signed_id, ".pdf"),
+        validation=validation,
+        latency_ms=latency_ms,
+        warnings=list(validation.warnings),
     )

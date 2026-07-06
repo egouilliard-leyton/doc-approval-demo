@@ -18,7 +18,7 @@ Project documentation for the Document Auto-Approval System.
 | [document-generation.md](./document-generation.md) | **Document generation from templates** — turn an extraction into a filled DOCX/PDF; the two modes (form-fill / rich-HTML), the AI authoring agent, vision Fidelity QA, revision history, the data model + endpoints, and the honest TipTap-flattening limitation. |
 | [large-document-extraction.md](./large-document-extraction.md) | **Extraction accuracy on long docs** — proximity grounding, section-aware extraction, cross-section list dedup, and the whole-document grounding fallback. |
 | [signature-extraction.md](./signature-extraction.md) | **Signature detection** — the YOLOv8-ONNX best-effort spatial post-pass, its config, weights delivery, and measured accuracy. |
-| [digital-signing.md](./digital-signing.md) | **Outbound digital signing (PAdES)** — sealing an **approved** document's PDF with a real X.509 certificate + signature validation; the `pyhanko`/`mock` providers, the sign/validate endpoints, the `SignaturePanel` UI, the `SIGNING_*` config, and the demo custody model + security notes. |
+| [digital-signing.md](./digital-signing.md) | **Outbound digital signing (PAdES)** — sealing an **approved** document *or* a **generated** template output with a real X.509 signature + validation; the **visible** stamp placed at the template's signature marker (or a corner); the `pyhanko`/`mock` providers, the sign/validate endpoints, the `SignaturePanel` / `OutputSigner` UI, the `SIGNING_*` config, and the demo custody model + security notes. |
 
 Start with the [root README](../README.md) for the pitch, setup, and running the app.
 

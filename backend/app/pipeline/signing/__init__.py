@@ -43,39 +43,53 @@ def available_engines() -> list[str]:
     return engines
 
 
+def sign_pdf_bytes(
+    pdf_bytes: bytes, provider: str = ""
+) -> tuple[bytes, SignatureValidation, str, int]:
+    """Sign raw PDF bytes with the resolved provider; self-validate the output.
+
+    The shared core behind both inbound-document signing (:func:`run_signing`) and
+    outbound generated-output signing (the template route). Returns
+    ``(signed_bytes, validation, engine_version, latency_ms)``. Raises ``ValueError``
+    on an unknown provider or a missing optional dep (mapped to HTTP 400 upstream).
+    """
+    provider = resolve_provider(provider)
+    meta = signing_meta_from_settings()
+
+    start = perf_counter()
+    if provider == "mock":
+        signed_bytes, validation = mock.sign(pdf_bytes, meta)
+        engine_version = "mock"
+    else:
+        from . import pyhanko_signer  # lazy: only touches pyhanko on the real path
+
+        signed_bytes, validation = pyhanko_signer.sign(pdf_bytes, meta)
+        engine_version = _pyhanko_version()
+    latency_ms = int((perf_counter() - start) * 1000)
+    return signed_bytes, validation, engine_version, latency_ms
+
+
 def run_signing(doc: Document, provider: str = "") -> SignResult:
     """Sign an approved document's original PDF and return the sealed result.
 
     Requires a PDF source. Self-validates the freshly signed output and embeds
     that validation in the returned :class:`SignResult` (status = ``signed``).
     """
-    provider = resolve_provider(provider)
     if doc.mime != "application/pdf":
         raise ValueError("Digital signing requires a PDF source document.")
 
-    meta = signing_meta_from_settings()
     src = storage.read_original(doc.id)
-
-    start = perf_counter()
-    if provider == "mock":
-        signed_bytes, validation = mock.sign(src, meta)
-        engine_version = "mock"
-    else:
-        from . import pyhanko_signer  # lazy: only touches pyhanko on the real path
-
-        signed_bytes, validation = pyhanko_signer.sign(src, meta)
-        engine_version = _pyhanko_version()
-    latency_ms = int((perf_counter() - start) * 1000)
+    signed_bytes, validation, engine_version, latency_ms = sign_pdf_bytes(src, provider)
 
     storage.save_signed_pdf(doc.id, signed_bytes)
 
     return SignResult(
         document_id=doc.id,
         status=DocumentStatus.signed,
-        provider=provider,
+        provider=resolve_provider(provider),
         engine_version=engine_version,
         level=validation.level,
-        field_name=meta.field_name,
+        field_name=signing_meta_from_settings().field_name,
         signed_pdf_url=storage.signed_pdf_url(doc.id),
         validation=validation,
         latency_ms=latency_ms,
@@ -108,6 +122,7 @@ def prewarm(engines) -> None:  # noqa: ARG001 — parity with ocr.prewarm; nothi
 __all__ = [
     "PROVIDERS",
     "available_engines",
+    "sign_pdf_bytes",
     "run_signing",
     "validate_document_signature",
     "prewarm",

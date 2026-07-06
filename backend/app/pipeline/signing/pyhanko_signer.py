@@ -67,13 +67,117 @@ def sign(src_pdf_bytes: bytes, meta: SigningMeta) -> tuple[bytes, SignatureValid
         timestamper = HTTPTimeStamper(meta.tsa_url)
 
     sig_meta = PdfSignatureMetadata(**sig_meta_kwargs)
+
+    # A VISIBLE appearance (stamp box on page 1) in addition to the cryptographic
+    # signature, so the seal shows in any PDF viewer — not only a signature-aware one.
+    stamp_style = None
+    new_field_spec = None
+    if meta.visible:
+        from pyhanko.sign.fields import SigFieldSpec
+        from pyhanko.stamp import TextStampStyle
+
+        stamp_text = "Digitally signed by:\n%(signer)s\n%(ts)s"
+        if meta.reason:
+            stamp_text += f"\n{meta.reason}"
+        stamp_style = TextStampStyle(stamp_text=stamp_text)
+        page_index, box = _placement(src_pdf_bytes, meta)
+        new_field_spec = SigFieldSpec(
+            sig_field_name=meta.field_name,
+            on_page=page_index,
+            box=box,
+        )
+
     writer = IncrementalPdfFileWriter(io.BytesIO(src_pdf_bytes))
-    signed_bytes = PdfSigner(
-        sig_meta, signer=signer, timestamper=timestamper
-    ).sign_pdf(writer).getvalue()
+    signed_bytes = (
+        PdfSigner(
+            sig_meta,
+            signer=signer,
+            timestamper=timestamper,
+            stamp_style=stamp_style,
+            new_field_spec=new_field_spec,
+        )
+        .sign_pdf(writer)
+        .getvalue()
+    )
 
     validation = validate(signed_bytes)
     return signed_bytes, validation
+
+
+# Fallback page size (A4 points) when a page's dimensions can't be read.
+_A4_W, _A4_H = 595.0, 842.0
+
+Box = "tuple[float, float, float, float]"
+
+
+def _placement(src_pdf_bytes: bytes, meta: SigningMeta) -> "tuple[int, Box]":
+    """Where to draw the visible stamp: ``(page_index, box)`` in PDF (bottom-left) coords.
+
+    Prefers the template's signature anchor — the spot the author marked with the
+    ``<img data-signature>`` placeholder — so the seal lands "in the correct place".
+    Falls back to the configured corner/page when the PDF carries no anchor (e.g. an
+    inbound document, or a template without a signature placeholder).
+    """
+    anchor = _find_anchor(src_pdf_bytes)
+    if anchor is not None:
+        return anchor
+    return _corner_placement(src_pdf_bytes, meta.visible_position, meta.visible_page)
+
+
+def _find_anchor(src_pdf_bytes: bytes) -> "tuple[int, Box] | None":
+    """Locate the generation signature-anchor token; return ``(page_index, box)`` or None.
+
+    The token (rendered invisibly by the binder at the template's signature placeholder)
+    is found with PyMuPDF text search; the stamp box is anchored top-left at the token
+    and extends down-right, clamped to stay on the page.
+    """
+    from .base import SIGNATURE_ANCHOR_TOKEN, STAMP_HEIGHT, STAMP_WIDTH
+
+    try:
+        import fitz  # PyMuPDF (base dep)
+
+        doc = fitz.open(stream=src_pdf_bytes, filetype="pdf")
+        for idx in range(doc.page_count):
+            page = doc[idx]
+            hits = page.search_for(SIGNATURE_ANCHOR_TOKEN)
+            if not hits:
+                continue
+            rect, ph, pw = hits[0], page.rect.height, page.rect.width
+            # fitz top-left origin -> PDF bottom-left; box top edge at the token.
+            x0 = max(0.0, min(rect.x0, pw - STAMP_WIDTH))
+            y_top = ph - rect.y0
+            y_bottom = max(0.0, y_top - STAMP_HEIGHT)
+            return idx, (x0, y_bottom, x0 + STAMP_WIDTH, y_bottom + STAMP_HEIGHT)
+    except Exception:  # noqa: BLE001 — anchor is best-effort; fall through to corner
+        return None
+    return None
+
+
+def _corner_placement(
+    src_pdf_bytes: bytes, position: str, page: int
+) -> "tuple[int, Box]":
+    """A stamp box in the given corner of the given (1-based, clamped) page."""
+    from .base import STAMP_HEIGHT, STAMP_MARGIN, STAMP_WIDTH
+
+    page_w, page_h, idx = _A4_W, _A4_H, 0
+    try:
+        import fitz
+
+        doc = fitz.open(stream=src_pdf_bytes, filetype="pdf")
+        idx = max(0, min((page or 1) - 1, max(doc.page_count, 1) - 1))
+        rect = doc[idx].rect
+        page_w, page_h = float(rect.width), float(rect.height)
+    except Exception:  # noqa: BLE001 — best-effort; A4/page-1 fallback
+        page_w, page_h, idx = _A4_W, _A4_H, 0
+
+    vert, _, horiz = (position or "bottom-right").partition("-")
+    x0 = {
+        "left": STAMP_MARGIN,
+        "center": (page_w - STAMP_WIDTH) / 2,
+        "right": page_w - STAMP_MARGIN - STAMP_WIDTH,
+    }.get(horiz, page_w - STAMP_MARGIN - STAMP_WIDTH)
+    y0 = STAMP_MARGIN if vert == "bottom" else page_h - STAMP_MARGIN - STAMP_HEIGHT
+    return idx, (x0, y0, x0 + STAMP_WIDTH, y0 + STAMP_HEIGHT)
 
 
 def validate(pdf_bytes: bytes) -> SignatureValidation:

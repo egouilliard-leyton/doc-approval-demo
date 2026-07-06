@@ -22,6 +22,7 @@ import type {
   EvalRunSummary,
   FieldCatalogueEntry,
   FieldCorrection,
+  GeneratedSignResult,
   GenerateResult,
   MappingSuggestResponse,
   OcrEngine,
@@ -82,6 +83,32 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.status = status;
   }
+}
+
+/**
+ * Save a served file to disk. The backend runs on a different origin than the
+ * dev frontend, and a cross-origin `<a download>` is ignored by the browser while
+ * `target="_blank"` new-tab opens can be popup-blocked — so both silently fail.
+ * Fetching the bytes (the `/files` mount is CORS-enabled) and clicking a
+ * same-origin blob URL downloads reliably without opening a tab.
+ */
+export async function downloadFile(
+  path: string | null | undefined,
+  filename: string,
+): Promise<void> {
+  const url = fileUrl(path);
+  if (!url) throw new ApiError(0, "No file to download.");
+  const res = await fetch(url);
+  if (!res.ok) throw new ApiError(res.status, `Could not fetch file (${res.status}).`);
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objectUrl);
 }
 
 interface RequestOpts {
@@ -769,5 +796,17 @@ export async function validateSignature(
     method: "POST",
     query: { provider },
   });
+}
+
+/** Seal a generated template output PDF with a real PAdES signature. */
+export async function signTemplateOutput(
+  templateId: string,
+  outputId: string,
+  provider?: string,
+): Promise<GeneratedSignResult> {
+  return request<GeneratedSignResult>(
+    `/templates/${templateId}/outputs/${outputId}/sign`,
+    { method: "POST", query: { provider } },
+  );
 }
 export { API_BASE_URL };
