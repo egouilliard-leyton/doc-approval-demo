@@ -1,6 +1,8 @@
 // Fetch client for the FastAPI backend.
 // CORS on the backend already allows the Vite dev origin, so we call it directly.
 import type {
+  AgentChatMessage,
+  AgentEvent,
   CaseCreate,
   CaseDecisionResult,
   CaseDetail,
@@ -18,15 +20,24 @@ import type {
   EvalGoldenSummary,
   EvalRunResult,
   EvalRunSummary,
+  FieldCatalogueEntry,
   FieldCorrection,
+  GenerateResult,
+  MappingSuggestResponse,
   OcrEngine,
   OCRResult,
   OpenRouterModel,
   OverviewStats,
+  QaReport,
   QualityReport,
   ReviewQueueResponse,
   Sheet,
   StructuredResult,
+  TemplateCreate,
+  TemplateDetail,
+  TemplateRevisionInfo,
+  TemplateSummary,
+  TemplateUpdate,
   VlmEngineRow,
 } from "@/lib/types";
 import type {
@@ -41,6 +52,7 @@ import type {
   DocTypeUpdate,
   IngestResponse,
 } from "@/lib/doc-type-schema";
+import { readSSE } from "@/lib/sse";
 
 const API_BASE_URL: string =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8001";
@@ -74,8 +86,8 @@ interface RequestOpts {
   method?: string;
   query?: Record<string, string | number | boolean | undefined>;
   body?: BodyInit;
-  signal?: AbortSignal;
   headers?: Record<string, string>;
+  signal?: AbortSignal;
 }
 
 async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
@@ -171,6 +183,162 @@ export async function deleteAllDocuments(): Promise<void> {
   await request<void>("/documents", { method: "DELETE" });
 }
 
+// --- templates ---------------------------------------------------------------
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+export async function listTemplates(
+  docType?: DocType,
+): Promise<TemplateSummary[]> {
+  return request<TemplateSummary[]>("/templates", {
+    query: { doc_type: docType },
+  });
+}
+
+export async function getTemplate(id: string): Promise<TemplateDetail> {
+  return request<TemplateDetail>(`/templates/${id}`);
+}
+
+export async function createTemplate(
+  body: TemplateCreate,
+): Promise<TemplateDetail> {
+  return request<TemplateDetail>("/templates", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateTemplate(
+  id: string,
+  body: TemplateUpdate,
+): Promise<TemplateDetail> {
+  return request<TemplateDetail>(`/templates/${id}`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  await request<void>(`/templates/${id}`, { method: "DELETE" });
+}
+
+// --- template form-fill: source, catalogue, mapping, generate ----------------
+
+export async function uploadTemplateSource(
+  id: string,
+  file: File,
+): Promise<TemplateDetail> {
+  const form = new FormData();
+  form.append("file", file);
+  return request<TemplateDetail>(`/templates/${id}/source`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+export async function getTemplateCatalogue(
+  id: string,
+): Promise<FieldCatalogueEntry[]> {
+  return request<FieldCatalogueEntry[]>(`/templates/${id}/catalogue`);
+}
+
+export async function suggestTemplateMapping(
+  id: string,
+  provider?: string,
+): Promise<MappingSuggestResponse> {
+  return request<MappingSuggestResponse>(`/templates/${id}/suggest-mapping`, {
+    method: "POST",
+    query: { provider },
+  });
+}
+
+export async function generateTemplateOutput(
+  id: string,
+  p: { documentId: string; flatten?: boolean; signatureImage?: File },
+): Promise<GenerateResult> {
+  const form = new FormData();
+  if (p.signatureImage) form.append("signature_image", p.signatureImage);
+  return request<GenerateResult>(`/templates/${id}/generate`, {
+    method: "POST",
+    query: { document_id: p.documentId, flatten: p.flatten ?? true },
+    body: form,
+  });
+}
+
+// --- vision QA / fidelity ----------------------------------------------------
+
+export async function runTemplateQa(
+  id: string,
+  body: { document_id?: string | null; provider?: string; instructions?: string | null },
+): Promise<QaReport> {
+  return request<QaReport>(`/templates/${id}/qa`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+// --- authoring agent (SSE chat) + revisions ----------------------------------
+
+/**
+ * Stream a turn of the authoring-agent conversation. Unlike `request`, this
+ * keeps the raw response body so we can parse the `text/event-stream` frames as
+ * they arrive; each yielded value is one `AgentEvent`.
+ */
+export async function* streamAgent(
+  id: string,
+  body: { message: string; history: AgentChatMessage[]; provider?: string },
+  signal?: AbortSignal,
+): AsyncGenerator<AgentEvent> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/templates/${id}/agent`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch {
+    throw new ApiError(0, "Cannot reach the backend — is it running on :8000?");
+  }
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const data = (await res.json()) as { detail?: string };
+      if (data?.detail) detail = data.detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  for await (const ev of readSSE(res)) {
+    yield ev as AgentEvent;
+  }
+}
+
+export async function listTemplateRevisions(
+  id: string,
+): Promise<TemplateRevisionInfo[]> {
+  return request<TemplateRevisionInfo[]>(`/templates/${id}/revisions`);
+}
+
+/**
+ * Roll the template's html/css back to a prior snapshot. The backend snapshots
+ * the current state first, so a restore is itself undoable. Returns the updated
+ * template.
+ */
+export async function restoreTemplateRevision(
+  templateId: string,
+  revisionId: string,
+): Promise<TemplateDetail> {
+  return request<TemplateDetail>(
+    `/templates/${templateId}/revisions/${revisionId}/restore`,
+    { method: "POST" },
+  );
+}
+
 // --- persisted stage results (GET; 404 when a stage hasn't run) ---------------
 
 export async function getPrescan(id: string): Promise<QualityReport> {
@@ -245,8 +413,6 @@ export async function editStructureField(
 }
 
 // --- configurable doc types (CRUD + preview) ---------------------------------
-
-const JSON_HEADERS = { "Content-Type": "application/json" };
 
 export async function listDocTypes(): Promise<DocTypeResponse[]> {
   return request<DocTypeResponse[]>("/doc-types");

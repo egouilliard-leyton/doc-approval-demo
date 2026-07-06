@@ -2,7 +2,7 @@
 
 # One-time setup: backend deps (PyPI, hardened) + frontend deps.
 install:
-	cd backend && uv sync --extra ocr --extra langextract --extra agent
+	cd backend && uv sync --extra ocr --extra langextract --extra agent --extra docgen
 	pnpm install
 
 # Pre-download/load the OCR models to disk so the first request on camera is fast

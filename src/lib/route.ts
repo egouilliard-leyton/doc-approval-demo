@@ -23,7 +23,8 @@ export type Route =
   | { view: "document"; id: string; tab: InspectorTab; field?: string }
   | { view: "cases" }
   | { view: "case"; id: string; member?: string }
-  | { view: "admin"; section: AdminSection; doctype?: string; runId?: string };
+  | { view: "admin"; section: AdminSection; doctype?: string; runId?: string }
+  | { view: "templates"; id?: string };
 
 /** Where an empty or unrecognizable hash lands. */
 export const DEFAULT_ROUTE: Route = { view: "home" };
@@ -115,6 +116,12 @@ export function parseHash(hash: string): Route {
     return { view: "admin", section };
   }
 
+  // `#/templates` (list) and `#/templates/<id>` (one template's editor).
+  if (head === "templates") {
+    const id = rest[0];
+    return id ? { view: "templates", id } : { view: "templates" };
+  }
+
   return DEFAULT_ROUTE;
 }
 
@@ -154,8 +161,18 @@ export function formatHash(route: Route): string {
         ? "#/admin"
         : `#/admin/${route.section}`;
     }
+    case "templates":
+      return route.id
+        ? `#/templates/${encodeURIComponent(route.id)}`
+        : "#/templates";
   }
 }
+
+/**
+ * Inverse of parseHash. Alias kept for the Templates feature, which was authored
+ * against a `routeToHash` name; it delegates to the canonical `formatHash`.
+ */
+export const routeToHash = formatHash;
 
 /** Structural equality — true when two routes name the same view + modifiers. */
 export function routesEqual(a: Route, b: Route): boolean {
@@ -178,6 +195,10 @@ export function routesEqual(a: Route, b: Route): boolean {
         a.doctype === other.doctype &&
         a.runId === other.runId
       );
+    }
+    case "templates": {
+      const other = b as Extract<Route, { view: "templates" }>;
+      return a.id === other.id;
     }
     default:
       // home / cases carry no modifiers — same view is enough.

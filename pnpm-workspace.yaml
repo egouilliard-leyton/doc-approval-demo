@@ -22,6 +22,38 @@ minimumReleaseAgeStrict: true
 #   - some-package@1.2.3
 # For a one-off override instead: pnpm install --config.minimumReleaseAge=0
 
+# Pin the entire TipTap v3 tree to a single version published before the
+# 2026-05-25 supply-chain cutoff. StarterKit's transitive extensions use caret
+# ranges that would otherwise float to the newest 3.x (post-cutoff); overrides
+# clamp every @tiptap/* package to 3.23.6 (published 2026-05-21).
+overrides:
+  "@tiptap/core": "3.23.6"
+  "@tiptap/pm": "3.23.6"
+  "@tiptap/react": "3.23.6"
+  "@tiptap/starter-kit": "3.23.6"
+  "@tiptap/extensions": "3.23.6"
+  "@tiptap/extension-blockquote": "3.23.6"
+  "@tiptap/extension-bold": "3.23.6"
+  "@tiptap/extension-bullet-list": "3.23.6"
+  "@tiptap/extension-code": "3.23.6"
+  "@tiptap/extension-code-block": "3.23.6"
+  "@tiptap/extension-document": "3.23.6"
+  "@tiptap/extension-dropcursor": "3.23.6"
+  "@tiptap/extension-gapcursor": "3.23.6"
+  "@tiptap/extension-hard-break": "3.23.6"
+  "@tiptap/extension-heading": "3.23.6"
+  "@tiptap/extension-horizontal-rule": "3.23.6"
+  "@tiptap/extension-italic": "3.23.6"
+  "@tiptap/extension-link": "3.23.6"
+  "@tiptap/extension-list": "3.23.6"
+  "@tiptap/extension-list-item": "3.23.6"
+  "@tiptap/extension-list-keymap": "3.23.6"
+  "@tiptap/extension-ordered-list": "3.23.6"
+  "@tiptap/extension-paragraph": "3.23.6"
+  "@tiptap/extension-strike": "3.23.6"
+  "@tiptap/extension-text": "3.23.6"
+  "@tiptap/extension-underline": "3.23.6"
+
 # --- General ----------------------------------------------------------------
 # Honor engines.node / engines.pnpm in package.json.
 engineStrict: true

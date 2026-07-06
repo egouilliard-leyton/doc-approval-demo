@@ -57,6 +57,15 @@ def is_spreadsheet(mime: str) -> bool:
     return mime in SPREADSHEET_MIMES
 
 
+# Accepted template source uploads: extension -> canonical MIME. A template source is
+# either a fillable PDF (form-fill mode) or a Word doc converted to rich HTML (Phase 2).
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+TEMPLATE_SOURCE_TYPES: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".docx": DOCX_MIME,
+}
+
+
 class UnsupportedFileType(Exception):
     """Raised when an upload has an extension we don't accept."""
 
@@ -69,6 +78,15 @@ def detect_type(filename: str) -> tuple[str, str]:
     """Return (lowercased extension, MIME) for an accepted file, else raise."""
     ext = Path(filename).suffix.lower()
     mime = ALLOWED_TYPES.get(ext)
+    if mime is None:
+        raise UnsupportedFileType(ext or filename)
+    return ext, mime
+
+
+def detect_template_source_type(filename: str) -> tuple[str, str]:
+    """Return (lowercased extension, MIME) for an accepted template source, else raise."""
+    ext = Path(filename).suffix.lower()
+    mime = TEMPLATE_SOURCE_TYPES.get(ext)
     if mime is None:
         raise UnsupportedFileType(ext or filename)
     return ext, mime
@@ -378,3 +396,104 @@ def save_structure_artifact(doc_id: str, content: str, name: str = "extractions.
 def structure_artifact_url(doc_id: str, name: str = "extractions.jsonl") -> str:
     """Relative URL (served via /files) for the saved structuring artifact."""
     return f"/files/{doc_id}/structure/{name}"
+
+
+# --- Phase 1 (form-fill): template source + generated outputs -----------------
+
+# Templates get their own data/templates/<id>/ tree so their source PDFs and
+# generated outputs never collide with a document's data/<doc_id>/.
+
+
+def _template_dir(template_id: str) -> Path:
+    return settings.data_path / "templates" / template_id
+
+
+def template_dir(template_id: str) -> Path:
+    """Directory holding a template's source PDF + generated outputs."""
+    return _template_dir(template_id)
+
+
+def delete_template_dir(template_id: str) -> None:
+    """Recursively remove data/templates/<template_id>/ (source + outputs).
+
+    A missing directory (e.g. a template that never got a source upload) is treated
+    as success, so deletion stays idempotent. Real failures (permissions, a locked
+    file) are logged rather than silently swallowed — the DB row is already gone, so
+    a leftover tree is an orphan worth surfacing.
+    """
+    tmpl_dir = _template_dir(template_id)
+    if not tmpl_dir.exists():
+        return
+    shutil.rmtree(
+        tmpl_dir,
+        onexc=lambda _func, path, exc: logger.warning(
+            "Failed to delete %s while removing template %s: %s", path, template_id, exc
+        ),
+    )
+
+
+def template_source_path(template_id: str, ext: str = ".pdf") -> Path:
+    """Absolute path to a template's uploaded source (``.pdf`` by default, or ``.docx``)."""
+    return _template_dir(template_id) / f"source{ext}"
+
+
+def save_template_source(template_id: str, ext: str, content: bytes) -> Path:
+    """Persist the raw source upload bytes as data/templates/<id>/source<ext>."""
+    tmpl_dir = _template_dir(template_id)
+    tmpl_dir.mkdir(parents=True, exist_ok=True)
+    source = tmpl_dir / f"source{ext}"
+    source.write_bytes(content)
+    return source
+
+
+def template_source_url(template_id: str, ext: str = ".pdf") -> str:
+    """Relative URL (served via /files) for a template's source upload."""
+    return f"/files/templates/{template_id}/source{ext}"
+
+
+def template_outputs_dir(template_id: str) -> Path:
+    """Directory holding a template's generated PDF outputs."""
+    return _template_dir(template_id) / "outputs"
+
+
+def save_template_output(
+    template_id: str, output_id: str, content: bytes, ext: str = ".pdf"
+) -> Path:
+    """Persist a generated output as data/templates/<id>/outputs/<output_id><ext>."""
+    out_dir = template_outputs_dir(template_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{output_id}{ext}"
+    path.write_bytes(content)
+    return path
+
+
+def template_output_url(template_id: str, output_id: str, ext: str = ".pdf") -> str:
+    """Relative URL (served via /files) for a template's generated output."""
+    return f"/files/templates/{template_id}/outputs/{output_id}{ext}"
+
+
+# --- Phase 4 (Vision QA): rendered + reference page images per QA run ----------
+
+# A QA run rasterizes the template's preview PDF ("rendered") and, when available,
+# the source/reference ("reference") into per-page PNGs the vision judge compares.
+
+
+def template_qa_dir(template_id: str, run_id: str) -> Path:
+    """Directory holding one QA run's rendered + reference page images."""
+    return _template_dir(template_id) / "qa" / run_id
+
+
+def save_qa_page(
+    template_id: str, run_id: str, kind: str, page_no: int, content: bytes
+) -> Path:
+    """Write a QA page PNG as qa/<run_id>/<kind>/page-NNN.png (kind: "rendered"|"reference")."""
+    out_dir = template_qa_dir(template_id, run_id) / kind
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"page-{page_no:03d}.png"
+    path.write_bytes(content)
+    return path
+
+
+def qa_page_url(template_id: str, run_id: str, kind: str, page_no: int) -> str:
+    """Relative URL (served via /files) for a QA run's rendered/reference page PNG."""
+    return f"/files/templates/{template_id}/qa/{run_id}/{kind}/page-{page_no:03d}.png"

@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.models import DocumentStatus
+from app.models import DocType, DocumentStatus, TemplateMode, TemplateStatus
 
 
 class DocumentSummary(BaseModel):
@@ -33,6 +33,137 @@ class DocumentDetail(DocumentSummary):
     """List fields plus per-page image/thumbnail URLs."""
 
     pages: list[PageInfo]
+
+
+# --- Phase 0: template registry ----------------------------------------------
+
+
+class TemplateSummary(BaseModel):
+    """Compact shape for the template list view."""
+
+    id: str
+    name: str
+    doc_type: DocType
+    mode: TemplateMode
+    status: TemplateStatus
+    output_formats: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class TemplateFormField(BaseModel):
+    """One enumerated AcroForm field of a template's source PDF (Phase 1 form-fill)."""
+
+    name: str
+    kind: str  # "text" | "checkbox" | "radio" | "choice" | "signature"
+    page: int
+    rect: list[float] | None = None  # [x0, y0, x1, y1] in PDF user space
+    options: list[str] | None = None
+    nearby_label: str | None = None
+
+
+class FieldCatalogueEntry(BaseModel):
+    """One bindable leaf value a template can map onto (Phase 1 form-fill)."""
+
+    path: str  # dotted path into a structured result, e.g. "line_items.0.amount"
+    label: str
+    kind: str  # "scalar" | "number" | "text"
+
+
+class TemplateLint(BaseModel):
+    """Advisory placeholder<->doc-type consistency check (Phase 5)."""
+
+    orphaned_paths: list[str] = []  # referenced paths the doc type's catalogue no longer offers
+    bound_count: int = 0  # placeholder/mapping occurrences resolving to a known path
+    total_count: int = 0  # total occurrences referencing any path
+
+
+class TemplateDetail(TemplateSummary):
+    """List fields plus the template body, styles, and field/placeholder maps."""
+
+    source_file_id: str | None
+    source_url: str | None = None
+    html_body: str | None
+    css: str | None
+    form_fields: list[TemplateFormField] = []
+    form_field_map: dict
+    placeholder_map: dict
+    lint: TemplateLint = TemplateLint()
+
+
+class TemplateRevisionInfo(BaseModel):
+    """A single pre-update snapshot of a template's html/css."""
+
+    id: str
+    html: str | None
+    css: str | None
+    note: str | None
+    created_at: datetime
+
+
+class TemplateCreate(BaseModel):
+    """Request body to create a template."""
+
+    name: str
+    doc_type: DocType
+    mode: TemplateMode = TemplateMode.rich_html
+
+
+class TemplateUpdate(BaseModel):
+    """Partial update; every field is optional (only provided fields are applied)."""
+
+    name: str | None = None
+    html_body: str | None = None
+    css: str | None = None
+    form_field_map: dict | None = None
+    placeholder_map: dict | None = None
+    output_formats: list[str] | None = None
+    status: TemplateStatus | None = None
+    revision_note: str | None = None
+
+
+# --- Phase 1 (form-fill): AI mapping + generation (Waves 3+4) -----------------
+
+
+class MappingSuggestion(BaseModel):
+    """A suggested binding for one PDF form field (Wave 3 AI/heuristic mapper)."""
+
+    field_path: str | None = None  # catalogue path to bind, or None if unmatched
+    confidence: float | None = None  # 0-1 (heuristic overlap score or LLM confidence)
+    source: str = "heuristic"  # "ai" (LLM) | "heuristic" (offline token overlap)
+    is_signature: bool = False  # this field is a signature target (stamp, not text)
+    rationale: str | None = None
+
+
+class MappingSuggestResponse(BaseModel):
+    """Response of ``POST /templates/{id}/suggest-mapping`` (not persisted)."""
+
+    suggestions: dict[str, MappingSuggestion]  # keyed by PDF field name
+    provider_used: str  # "llm" | "mock" (reflects the actual, post-fallback provider)
+
+
+class GenerateOutputFile(BaseModel):
+    """One rendered output file of ``POST /templates/{id}/generate`` (Phase 2)."""
+
+    format: str  # "pdf" | "docx"
+    output_id: str
+    output_url: str
+
+
+class GenerateResult(BaseModel):
+    """Response of ``POST /templates/{id}/generate``: the filled output(s) + trace.
+
+    ``output_url``/``output_id`` remain the primary (first/PDF) output for the form-fill
+    path; ``outputs`` lists every rendered file (Phase 2 rich-HTML may emit PDF + DOCX).
+    """
+
+    output_url: str
+    output_id: str
+    filled_fields: list[str]
+    skipped_fields: list[str]
+    signature_stamped: bool
+    warnings: list[str] = []
+    outputs: list[GenerateOutputFile] = []
 
 
 # --- Phase 2: pre-flight / quality metrics -----------------------------------
@@ -832,3 +963,79 @@ class BatchExtractionResult(BaseModel):
     items: list[BatchExtractionItem]
     succeeded: int
     failed: int
+
+
+# --- Phase 3: authoring agent (Waves 2+3) ------------------------------------
+
+
+class AgentChatMessage(BaseModel):
+    """One turn of the authoring-agent conversation, replayed into the LLM."""
+
+    role: str  # "user" | "assistant"
+    content: str
+
+
+class AgentRequest(BaseModel):
+    """Request body for ``POST /templates/{id}/agent``: a message + prior turns."""
+
+    message: str
+    history: list[AgentChatMessage] = []
+    provider: str = ""  # "" -> settings default; "llm" | "mock"
+
+
+class AgentEvent(BaseModel):
+    """One server-sent event emitted by the authoring agent's stream.
+
+    ``type`` selects which of the all-optional payload fields carry meaning:
+    ``token`` (text), ``tool_call`` (tool_name/tool_args), ``tool_result``
+    (tool_name/ok/detail), ``html``/``css`` (the new document + revision_id),
+    ``error`` (message), ``done`` (terminal, no payload).
+    """
+
+    type: str  # "token"|"tool_call"|"tool_result"|"html"|"css"|"error"|"done"
+    text: str | None = None
+    tool_name: str | None = None
+    tool_args: dict | None = None
+    ok: bool | None = None
+    detail: str | None = None
+    html: str | None = None
+    css: str | None = None
+    revision_id: str | None = None
+    message: str | None = None
+
+
+# --- Phase 4 (Vision QA): render + judge a rich-HTML template -----------------
+
+
+class QaFinding(BaseModel):
+    """One visual-fidelity issue the vision judge reported on a rendered template."""
+
+    severity: str  # "low" | "medium" | "high"
+    category: str  # "layout" | "color" | "table" | "spacing" | "text" | "missing"
+    description: str
+    suggested_fix: str | None = None
+    page: int | None = None
+
+
+class QaRequest(BaseModel):
+    """Request body for ``POST /templates/{id}/qa``: optionally fill from a document."""
+
+    document_id: str | None = None  # fill the preview from this document's structure
+    provider: str = ""  # "" -> settings default; "llm" | "mock"
+    instructions: str | None = None  # extra guidance passed to the judge
+
+
+class QaReport(BaseModel):
+    """Response of ``POST /templates/{id}/qa``: the fidelity critique + page images."""
+
+    template_id: str
+    document_id: str | None
+    mode: str  # "source_pdf" (compared to the source) | "self_review" (no reference)
+    ok: bool
+    summary: str
+    findings: list[QaFinding]
+    rendered_image_urls: list[str]
+    reference_image_urls: list[str]
+    provider_used: str  # "llm" | "mock" (reflects the actual, post-fallback provider)
+    model: str
+    warnings: list[str]

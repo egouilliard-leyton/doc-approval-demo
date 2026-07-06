@@ -1,5 +1,10 @@
 import { useEffect, useRef } from "react";
-import { ShieldCheck, Home as HomeIcon, LayoutDashboard } from "lucide-react";
+import {
+  ShieldCheck,
+  Home as HomeIcon,
+  LayoutDashboard,
+  FileText,
+} from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -13,10 +18,11 @@ import { Home } from "@/features/home/Home";
 import { Workspace } from "@/features/Workspace";
 import { AdminPanel } from "@/features/admin/AdminPanel";
 import { CaseShell } from "@/features/case/CaseShell";
+import { TemplatesView } from "@/features/templates/TemplatesView";
 
-// The two coarse areas the top toggle switches between. Finer navigation
-// (which document, which case, which tab) lives in the Route itself.
-type ToggleView = "home" | "admin";
+// The coarse areas the top toggle switches between. Finer navigation
+// (which document, which case, which tab, which template) lives in the Route itself.
+type ToggleView = "home" | "templates" | "admin";
 
 function ViewToggle({
   current,
@@ -27,6 +33,7 @@ function ViewToggle({
 }) {
   const items: { id: ToggleView; label: string; icon: typeof HomeIcon }[] = [
     { id: "home", label: "Home", icon: HomeIcon },
+    { id: "templates", label: "Templates", icon: FileText },
     { id: "admin", label: "Admin", icon: LayoutDashboard },
   ];
   return (
@@ -102,11 +109,18 @@ function Shell() {
   }, [caseId, route.view, navigate]);
 
   // Highlight the toggle for whichever family the current route belongs to.
-  const currentToggle: ToggleView = route.view === "admin" ? "admin" : "home";
+  const currentToggle: ToggleView =
+    route.view === "admin"
+      ? "admin"
+      : route.view === "templates"
+        ? "templates"
+        : "home";
 
   const selectToggle = (v: ToggleView) => {
     if (v === "admin") {
       navigate({ view: "admin", section: "overview" });
+    } else if (v === "templates") {
+      navigate({ view: "templates" });
     } else {
       // Clear any active document/case first; otherwise the state→URL effects would
       // immediately bounce us back to that view. Server state persists — reopen from
@@ -145,6 +159,8 @@ function Shell() {
               navigate({ view: "document", id, tab: "structured" })
             }
           />
+        ) : route.view === "templates" ? (
+          <TemplatesView />
         ) : route.view === "cases" || route.view === "case" ? (
           <CaseShell />
         ) : route.view === "document" ? (

@@ -24,6 +24,7 @@ from app.routes import (
     overview,
     pipeline,
     review_queue,
+    templates,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,7 @@ app.include_router(overview.router)
 app.include_router(review_queue.router)
 app.include_router(evaluation.router)
 app.include_router(extract.router)
+app.include_router(templates.router)
 
 
 @app.get("/health")

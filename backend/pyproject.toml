@@ -11,7 +11,9 @@ dependencies = [
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
     "pymupdf>=1.27.2.3",
+    "pypdf>=6.12.1",
     "python-multipart>=0.0.29",
+    "reportlab>=4.4.10",
     "sqlmodel>=0.0.38",
     "uvicorn[standard]>=0.48.0",
 ]
@@ -36,6 +38,16 @@ agent = ["openai"]
 # lazily imported — the app boots and structuring runs without them and without the model
 # file present. Install with: uv sync --extra signatures
 signatures = ["onnxruntime>=1.20", "huggingface-hub>=0.30"]
+# Document generation (Templates feature). Heavy + optional: WeasyPrint renders HTML→PDF,
+# pypdfium2 rasterizes for vision-QA, mammoth/html-for-docx handle DOCX. Install with:
+# uv sync --extra docgen
+docgen = [
+    "beautifulsoup4>=4.13,<5",
+    "html-for-docx>=1.1.5,<2",
+    "mammoth>=1.11.0,<2",
+    "pypdfium2>=5.8.0",
+    "weasyprint>=68.0,<69",
+]
 
 [dependency-groups]
 dev = [

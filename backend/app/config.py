@@ -146,6 +146,33 @@ class Settings(BaseSettings):
     reconcile_date_tolerance_days: int = 3  # dates within this many days agree.
     reconcile_string_fuzzy_threshold: float = 0.85  # SequenceMatcher ratio at/above this agrees.
 
+    # Form-fill mapping layer (Phase 1, Wave 3). A single OpenRouter call suggests
+    # which catalogue path each PDF form field binds to; the offline "mock" heuristic
+    # (token overlap) is both the no-key fallback and each field's per-field fallback.
+    mapping_provider: str = "llm"  # "llm" | "mock"
+    mapping_model: str = "deepseek/deepseek-v4-flash"
+    mapping_base_url: str = "https://openrouter.ai/api/v1"
+
+    # Authoring-agent layer (Phase 3). A tool-calling OpenRouter agent edits a
+    # template's HTML/CSS on request; the offline "mock" provider covers tests.
+    # The "llm" path is lazily imported; agent + SSE route land in later waves.
+    agent_authoring_provider: str = "llm"  # "llm" | "mock"
+    agent_authoring_model: str = "deepseek/deepseek-v4-flash"
+    agent_authoring_base_url: str = "https://openrouter.ai/api/v1"
+    agent_authoring_max_tool_iterations: int = 6  # tool-call rounds before stopping.
+    agent_authoring_timeout_s: float = 120.0  # per-request wall-clock ceiling.
+
+    # Vision-QA layer (Phase 4). A multimodal OpenRouter call judges a rendered
+    # template PDF against a reference (or the described HTML) for visual-fidelity
+    # issues. The "llm" path is lazily imported; "mock" is offline and the graceful
+    # fallback when the key/network/parse fails.
+    qa_vision_provider: str = "llm"  # "llm" | "mock"
+    qa_vision_model: str = "qwen/qwen3-vl-235b-a22b-instruct"
+    qa_vision_base_url: str = "https://openrouter.ai/api/v1"
+    qa_timeout_s: float = 180.0  # per-request wall-clock ceiling.
+    qa_render_dpi: int = 120  # rasterize the preview PDF to PNG at this DPI.
+    qa_max_pages: int = 5  # cap images sent to the judge (adds a truncation warning).
+
     # Browser origins allowed to call the API (Vite dev server by default).
     cors_origins: list[str] = ["http://localhost:5173"]
 
