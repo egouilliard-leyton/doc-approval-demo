@@ -54,7 +54,13 @@ export function SignaturePanel({
   const [sign, setSign] = useState<SignResult | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Hydrate any previously-persisted signature; a 404 just means "never signed".
+  // Hydrate the persisted signature, and re-sync whenever the decision changes. A
+  // signature is only valid for the decision it attested: re-deciding invalidates it
+  // server-side (the backend drops the stored sign result + signed PDF), so a 404 here
+  // means "never signed OR just invalidated" — clear the card rather than leave a stale
+  // seal (and a dead download link) on screen. Depending on `decision` re-runs this on
+  // every re-decide; signing/re-verifying don't change `decision`, so they keep their
+  // freshly-set state.
   useEffect(() => {
     let active = true;
     getSign(documentId)
@@ -62,13 +68,16 @@ export function SignaturePanel({
         if (active) setSign(result);
       })
       .catch((e) => {
-        if (e instanceof ApiError && e.status === 404) return;
+        if (e instanceof ApiError && e.status === 404) {
+          if (active) setSign(null);
+          return;
+        }
         if (active) toast.error("Could not load signature", { description: errMessage(e) });
       });
     return () => {
       active = false;
     };
-  }, [documentId]);
+  }, [documentId, decision]);
 
   if (decision.decision !== "approve") {
     return (
