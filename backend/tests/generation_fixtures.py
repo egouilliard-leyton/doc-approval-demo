@@ -82,6 +82,48 @@ def make_docx_bytes() -> bytes:
     return buf.getvalue()
 
 
+def make_xlsx_template() -> bytes:
+    """A tiny in-memory .xlsx spreadsheet template for the spreadsheet-mode tests.
+
+    Layout (sheet "Invoice"): a label/value scalar pair (``A1`` "Vendor" / ``B1`` blank);
+    a line-items header (row 3) + one bold-styled anchor row (row 4) whose ``D4`` carries a
+    per-row ``=B4*C4`` formula; and a ``SUM`` total below (``D6``). Exercises scalar fill,
+    both table row modes (style clone + formula translation off the anchor row), and the
+    LibreOffice recompute (the formulas have no cached result until recalc).
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Invoice"
+
+    # Scalar label/value pair.
+    ws["A1"] = "Vendor"
+    ws["B1"] = None  # bound to `vendor`
+
+    # Line-items header.
+    ws["A3"] = "Description"
+    ws["B3"] = "Qty"
+    ws["C3"] = "Unit Price"
+    ws["D3"] = "Amount"
+
+    # Styled anchor row (row 4) with a per-row formula in the amount column.
+    for letter in ("A", "B", "C", "D"):
+        ws[f"{letter}4"].font = Font(bold=True)
+    ws["C4"].number_format = '#,##0.00'
+    ws["D4"].number_format = '#,##0.00'
+    ws["D4"] = "=B4*C4"
+
+    # Total below the anchor row (a formula with no cached result until recalc).
+    ws["A6"] = "Total"
+    ws["D6"] = "=SUM(D4:D4)"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 # A rich-HTML template body carrying the two placeholder marker kinds the binder fills:
 # ``span[data-field]`` text placeholders (a scalar path + an indexed list path) and an
 # ``img[data-signature]`` signature stamp target.

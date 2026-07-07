@@ -88,6 +88,10 @@ class TemplateDetail(TemplateSummary):
     form_fields: list[TemplateFormField] = []
     form_field_map: dict
     placeholder_map: dict
+    # Spreadsheet mode: the field->cell mapping + enumerated sheet metadata (both empty
+    # for non-spreadsheet templates). Additive/default so existing responses are unchanged.
+    cell_map: dict = {}
+    spreadsheet_sheets: list = []
     lint: TemplateLint = TemplateLint()
 
 
@@ -117,6 +121,7 @@ class TemplateUpdate(BaseModel):
     css: str | None = None
     form_field_map: dict | None = None
     placeholder_map: dict | None = None
+    cell_map: dict | None = None  # spreadsheet mode: field->cell mapping
     output_formats: list[str] | None = None
     status: TemplateStatus | None = None
     revision_note: str | None = None
@@ -164,6 +169,120 @@ class GenerateResult(BaseModel):
     signature_stamped: bool
     warnings: list[str] = []
     outputs: list[GenerateOutputFile] = []
+
+
+# --- Spreadsheet templates (xlsx mode) ---------------------------------------
+
+# A spreadsheet template is a plain .xlsx uploaded as the source; the author visually
+# binds catalogue fields to cells (scalars) and list fields to a table anchor + column
+# layout. openpyxl fills the workbook; LibreOffice headless recomputes formulas for the
+# computed preview / PDF. These models mirror ``Template.cell_map`` (the mapping) and the
+# grid/preview payloads the mapping + preview UIs render.
+
+
+class SpreadsheetSheetMeta(BaseModel):
+    """One worksheet's dimensions + layout, enumerated at source-upload time."""
+
+    name: str  # ws.title
+    max_row: int
+    max_col: int
+    merges: list[str] = []  # A1-style merged ranges, e.g. "A1:B2"
+    col_widths: dict[str, float] = {}  # column letter -> width (only where set)
+
+
+class SpreadsheetCell(BaseModel):
+    """One rendered grid cell: its address, display value, and formatting hints.
+
+    ``is_formula`` marks a cell whose stored value is a formula string; ``computed`` is
+    ``False`` only in a preview fallback where the formula couldn't be evaluated (its
+    ``value`` is then the raw formula string).
+    """
+
+    row: int  # 1-based
+    col: int  # 1-based
+    address: str  # A1
+    value: str | None = None  # display string
+    is_formula: bool = False
+    number_format: str | None = None
+    computed: bool = True
+
+
+class SpreadsheetGrid(BaseModel):
+    """A (capped) sheet grid for the mapping UI: non-empty cells + merged ranges."""
+
+    sheet: str
+    max_row: int
+    max_col: int
+    merges: list[str] = []
+    cells: list[SpreadsheetCell]
+
+
+class SpreadsheetScalarBinding(BaseModel):
+    """One scalar binding: a catalogue ``field_path`` written into a single ``cell``."""
+
+    sheet: str
+    cell: str  # A1 address
+    field_path: str
+    suffix: str | None = None  # number_format unit (numeric) or literal concat (text)
+    is_signature: bool = False  # reserved; always False this build
+
+
+class SpreadsheetTableColumnBinding(BaseModel):
+    """One column of a table binding: a record-relative field written to a column."""
+
+    order: int  # write/display order (independent of extraction order)
+    col: str  # target column letter, e.g. "A"
+    field_path: str  # record-relative (sub-model field name; "" = the record's own value)
+    suffix: str | None = None
+
+
+class SpreadsheetTableBinding(BaseModel):
+    """A table binding: a list field expanded down rows from an anchor cell."""
+
+    sheet: str
+    list_path: str  # top-level list field, e.g. "line_items"
+    anchor_cell: str  # A1 address of the first data row's first column
+    row_mode: Literal["fill_next_empty_row", "insert_row"] = "fill_next_empty_row"
+    columns: list[SpreadsheetTableColumnBinding] = []
+
+
+class SpreadsheetMapping(BaseModel):
+    """The full field->cell mapping persisted in ``Template.cell_map``."""
+
+    scalars: list[SpreadsheetScalarBinding] = []
+    tables: list[SpreadsheetTableBinding] = []
+
+
+class FieldListCatalogueEntry(BaseModel):
+    """One bindable top-level list field + its record-relative columns.
+
+    ``columns`` are the sub-model's leaf fields for a ``list_composite`` (their ``path`` is
+    the record-relative field name); a ``list_scalar`` collection yields a single sentinel
+    column with ``path=""`` (the record's own value).
+    """
+
+    list_path: str  # top-level list field, e.g. "line_items" or "parties"
+    label: str
+    columns: list[FieldCatalogueEntry] = []
+
+
+class SpreadsheetPreviewSheet(BaseModel):
+    """One sheet of a computed preview: its grid + whether formulas were computed."""
+
+    name: str
+    max_row: int
+    max_col: int
+    merges: list[str] = []
+    cells: list[SpreadsheetCell]
+    computed: bool = True  # False -> formula cells show their raw formula string
+
+
+class SpreadsheetPreviewResponse(BaseModel):
+    """Response of the spreadsheet preview: the computed sheets + a degraded flag."""
+
+    sheets: list[SpreadsheetPreviewSheet]
+    computed: bool  # False when LibreOffice recompute was unavailable (fallback shown)
+    warnings: list[str] = []
 
 
 # --- Phase 2: pre-flight / quality metrics -----------------------------------

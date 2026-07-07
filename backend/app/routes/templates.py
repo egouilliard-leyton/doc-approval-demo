@@ -21,6 +21,7 @@ from app.models import (
     Template,
     TemplateMode,
     TemplateRevision,
+    _new_id,
     _utcnow,
 )
 from app.pipeline.generation import (
@@ -30,11 +31,18 @@ from app.pipeline.generation import (
     apply_template_update,
     convert_docx,
     convert_pdf,
+    convert_to_pdf,
     enumerate_form_fields,
+    enumerate_workbook_sheets,
     field_catalogue,
+    fill_spreadsheet,
     generate_pdf,
     generate_rich,
     lint_template,
+    list_field_catalogue,
+    read_computed_grid,
+    read_template_grid,
+    recompute_workbook,
     run_authoring_agent,
     run_template_qa,
     suggest_mapping,
@@ -45,12 +53,16 @@ from app.schemas import (
     AgentEvent,
     AgentRequest,
     FieldCatalogueEntry,
+    FieldListCatalogueEntry,
     GeneratedSignResult,
     GenerateOutputFile,
     GenerateResult,
     MappingSuggestResponse,
     QaReport,
     QaRequest,
+    SpreadsheetGrid,
+    SpreadsheetPreviewResponse,
+    SpreadsheetSheetMeta,
     TemplateCreate,
     TemplateDetail,
     TemplateFormField,
@@ -68,7 +80,9 @@ def _to_detail(t: Template) -> TemplateDetail:
         storage.template_source_url(t.id, t.source_ext or ".pdf") if t.source_file_id else None
     )
     # Advisory: which referenced field paths the doc type's catalogue no longer offers.
-    result = lint_template(t.mode, t.doc_type, t.html_body, t.form_field_map)
+    result = lint_template(
+        t.mode, t.doc_type, t.html_body, t.form_field_map, cell_map=t.cell_map
+    )
     lint = TemplateLint(
         orphaned_paths=result.orphaned_paths,
         bound_count=result.bound_count,
@@ -299,12 +313,14 @@ async def upload_template_source(
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
 ) -> TemplateDetail:
-    """Attach a source (PDF or DOCX) and set the template's mode from what it holds.
+    """Attach a source (PDF, DOCX, or XLSX) and set the template's mode from what it holds.
 
     A PDF carrying an AcroForm switches the template to ``form_fill`` (its fields are
     persisted for the mapper). A PDF without a form, or any DOCX, becomes ``rich_html``
-    and is converted to an editable HTML body + baseline stylesheet. A non-PDF/DOCX is a
-    415; an unreadable source is a 422 (mirroring the document upload path).
+    and is converted to an editable HTML body + baseline stylesheet. An XLSX becomes
+    ``spreadsheet``: its per-sheet layout is enumerated for the cell-mapping UI. A
+    non-PDF/DOCX/XLSX is a 415; an unreadable source is a 422 (mirroring the document
+    upload path).
     """
     tmpl = session.get(Template, template_id)
     if tmpl is None:
@@ -314,7 +330,7 @@ async def upload_template_source(
         ext, mime = storage.detect_template_source_type(file.filename or "")
     except storage.UnsupportedFileType:
         raise HTTPException(
-            status_code=415, detail="Template source must be a PDF or DOCX."
+            status_code=415, detail="Template source must be a PDF, DOCX, or XLSX."
         )
 
     content = await file.read()
@@ -327,8 +343,14 @@ async def upload_template_source(
     form_fields: list = []
     html_body: str | None = None
     css: str | None = None
+    spreadsheet_sheets: list = []
     try:
-        if mime == "application/pdf":
+        if mime == storage.XLSX_MIME:
+            mode = TemplateMode.spreadsheet
+            spreadsheet_sheets = [
+                m.model_dump() for m in enumerate_workbook_sheets(source)
+            ]
+        elif mime == "application/pdf":
             has_acroform, fields = enumerate_form_fields(source)
             if has_acroform:
                 mode = TemplateMode.form_fill
@@ -353,6 +375,10 @@ async def upload_template_source(
     if mode == TemplateMode.rich_html:
         tmpl.html_body = html_body
         tmpl.css = css
+    elif mode == TemplateMode.spreadsheet:
+        tmpl.spreadsheet_sheets = spreadsheet_sheets
+        tmpl.cell_map = {}  # a new source invalidates any prior binding
+        tmpl.output_formats = ["xlsx"]
     tmpl.updated_at = _utcnow()
 
     session.add(tmpl)
@@ -365,11 +391,101 @@ async def upload_template_source(
 def get_template_catalogue(
     template_id: str, session: Session = Depends(get_session)
 ) -> list[FieldCatalogueEntry]:
-    """The bindable field catalogue for the template's document type."""
+    """The bindable field catalogue for the template's document type.
+
+    A spreadsheet template binds scalars into single cells, so its catalogue is
+    scalar-only (``list_repeat=0`` drops the synthetic ``line_items.N.*`` slots — list
+    fields become table bindings via the list-catalogue endpoint instead).
+    """
     tmpl = session.get(Template, template_id)
     if tmpl is None:
         raise HTTPException(status_code=404, detail="Template not found.")
+    if tmpl.mode == TemplateMode.spreadsheet:
+        return field_catalogue(tmpl.doc_type, list_repeat=0)
     return field_catalogue(tmpl.doc_type)
+
+
+@router.get(
+    "/{template_id}/spreadsheet/sheets", response_model=list[SpreadsheetSheetMeta]
+)
+def get_spreadsheet_sheets(
+    template_id: str, session: Session = Depends(get_session)
+) -> list[SpreadsheetSheetMeta]:
+    """The per-sheet layout enumerated from the uploaded workbook at source-upload time."""
+    tmpl = session.get(Template, template_id)
+    if tmpl is None:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    return [SpreadsheetSheetMeta(**m) for m in tmpl.spreadsheet_sheets or []]
+
+
+@router.get("/{template_id}/spreadsheet/cells", response_model=SpreadsheetGrid)
+def get_spreadsheet_cells(
+    template_id: str,
+    sheet: str = Query(...),
+    session: Session = Depends(get_session),
+) -> SpreadsheetGrid:
+    """A (capped) grid of one sheet's non-empty cells for the click-to-bind mapping UI."""
+    tmpl = session.get(Template, template_id)
+    if tmpl is None:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    if tmpl.mode != TemplateMode.spreadsheet or not tmpl.source_file_id:
+        raise HTTPException(
+            status_code=400, detail="Template is not a spreadsheet template with a source."
+        )
+    source = storage.template_source_path(tmpl.id, tmpl.source_ext or ".xlsx")
+    return read_template_grid(source, sheet)
+
+
+@router.get(
+    "/{template_id}/spreadsheet/list-catalogue",
+    response_model=list[FieldListCatalogueEntry],
+)
+def get_spreadsheet_list_catalogue(
+    template_id: str, session: Session = Depends(get_session)
+) -> list[FieldListCatalogueEntry]:
+    """The top-level list fields a spreadsheet table binding can expand down rows."""
+    tmpl = session.get(Template, template_id)
+    if tmpl is None:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    return list_field_catalogue(tmpl.doc_type)
+
+
+@router.post(
+    "/{template_id}/spreadsheet/preview", response_model=SpreadsheetPreviewResponse
+)
+async def preview_spreadsheet(
+    template_id: str,
+    document_id: str = Query(...),
+    session: Session = Depends(get_session),
+) -> SpreadsheetPreviewResponse:
+    """A formula-computed preview of the filled workbook for a document.
+
+    Fills the template from the document's structured extraction, recomputes formulas via
+    LibreOffice (disk-cached by content hash), and returns the per-sheet computed grid.
+    Never hard-fails on a LibreOffice failure: the raw formula strings are shown with
+    ``computed=False`` instead (mirroring the fallback ladder).
+    """
+    tmpl = session.get(Template, template_id)
+    if tmpl is None:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    if tmpl.mode != TemplateMode.spreadsheet or not tmpl.source_file_id:
+        raise HTTPException(
+            status_code=400, detail="Template is not a spreadsheet template with a source."
+        )
+
+    fields = _load_structured_fields(session, document_id)
+
+    def _build() -> SpreadsheetPreviewResponse:
+        outcome = fill_spreadsheet(tmpl, fields)
+        recomputed = recompute_workbook(tmpl.id, outcome.content)
+        sheets = read_computed_grid(recomputed.xlsx_bytes)
+        return SpreadsheetPreviewResponse(
+            sheets=sheets,
+            computed=recomputed.computed,
+            warnings=[*outcome.warnings, *recomputed.warnings],
+        )
+
+    return await asyncio.to_thread(_build)
 
 
 @router.post("/{template_id}/suggest-mapping", response_model=MappingSuggestResponse)
@@ -448,6 +564,58 @@ async def generate_template_output(
                 GenerateOutputFile(format="pdf", output_id=outcome.output_id, output_url=output_url)
             ],
         )
+
+    if tmpl.mode == TemplateMode.spreadsheet:
+        if not tmpl.source_file_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Template is not a spreadsheet template with a source.",
+            )
+
+        def _generate_spreadsheet() -> GenerateResult:
+            outcome = fill_spreadsheet(tmpl, fields)
+            warnings = list(outcome.warnings)
+            outputs: list[GenerateOutputFile] = []
+
+            xlsx_id = _new_id()
+            storage.save_template_output(tmpl.id, xlsx_id, outcome.content, ext=".xlsx")
+            outputs.append(
+                GenerateOutputFile(
+                    format="xlsx",
+                    output_id=xlsx_id,
+                    output_url=storage.template_output_url(tmpl.id, xlsx_id, ext=".xlsx"),
+                )
+            )
+
+            if "pdf" in (tmpl.output_formats or []):
+                pdf_bytes = convert_to_pdf(outcome.content)
+                if pdf_bytes:
+                    pdf_id = _new_id()
+                    storage.save_template_output(tmpl.id, pdf_id, pdf_bytes, ext=".pdf")
+                    outputs.append(
+                        GenerateOutputFile(
+                            format="pdf",
+                            output_id=pdf_id,
+                            output_url=storage.template_output_url(tmpl.id, pdf_id),
+                        )
+                    )
+                else:
+                    warnings.append(
+                        "PDF export unavailable (LibreOffice); returning the xlsx only."
+                    )
+
+            primary = outputs[0]
+            return GenerateResult(
+                output_url=primary.output_url,
+                output_id=primary.output_id,
+                filled_fields=outcome.filled,
+                skipped_fields=outcome.skipped,
+                signature_stamped=False,
+                warnings=warnings,
+                outputs=outputs,
+            )
+
+        return await asyncio.to_thread(_generate_spreadsheet)
 
     # rich_html: bind the HTML body, render every configured format, persist each.
     if not tmpl.html_body:

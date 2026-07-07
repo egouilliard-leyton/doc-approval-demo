@@ -27,11 +27,19 @@ const RichHtmlPanel = lazy(() =>
   })),
 );
 
+// Lazy-loaded so openpyxl-grid UI only ships when a spreadsheet template is opened.
+const SpreadsheetPanel = lazy(() =>
+  import("@/features/templates/SpreadsheetPanel").then((m) => ({
+    default: m.SpreadsheetPanel,
+  })),
+);
+
 const LOAD_ERROR = "Could not load this template.";
 
 const MODE_LABEL = {
   form_fill: "Form-fill",
   rich_html: "Rich HTML",
+  spreadsheet: "Spreadsheet",
 } as const;
 
 function statusBadgeClass(status: TemplateStatus): string {
@@ -155,7 +163,11 @@ export function TemplateDetail({ id }: { id: string }) {
             </div>
           }
         >
-          <RichHtmlPanel template={template} onChange={setTemplate} />
+          {template.mode === "spreadsheet" ? (
+            <SpreadsheetPanel template={template} onChange={setTemplate} />
+          ) : (
+            <RichHtmlPanel template={template} onChange={setTemplate} />
+          )}
         </Suspense>
       )}
     </div>

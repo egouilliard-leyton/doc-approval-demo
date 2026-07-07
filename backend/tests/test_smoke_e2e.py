@@ -24,7 +24,7 @@ from app.db import engine
 from app.main import app
 from app.models import PipelineRun, _new_id
 
-from .generation_fixtures import make_fillable_pdf
+from .generation_fixtures import make_fillable_pdf, make_xlsx_template
 
 
 def _fv(value):
@@ -176,3 +176,64 @@ def test_smoke_generate_and_sign_journey():
         signed_path = storage.template_outputs_dir(tid) / f"{oid}-signed.pdf"
         assert signed_path.exists()
         assert signed_path.read_bytes()[:4] == b"%PDF"
+
+
+def test_smoke_spreadsheet_journey():
+    """Create -> upload .xlsx -> spreadsheet mode -> map a scalar + a line-items table
+    -> generate -> the mapped scalar value AND a table row value land in the right cells."""
+    from openpyxl import load_workbook
+
+    with TestClient(app) as client:
+        tid = client.post(
+            "/templates", json={"name": "Invoice Sheet", "doc_type": "invoice"}
+        ).json()["id"]
+
+        # Upload the .xlsx source -> the backend flips the template to spreadsheet mode
+        # and enumerates its sheet layout.
+        detail = client.post(
+            f"/templates/{tid}/source",
+            files={
+                "file": ("invoice.xlsx", make_xlsx_template(), storage.XLSX_MIME),
+            },
+        ).json()
+        assert detail["mode"] == "spreadsheet"
+        assert [s["name"] for s in detail["spreadsheet_sheets"]] == ["Invoice"]
+
+        # Persist a cell map: a scalar (vendor -> B1) and a line-items table anchored at
+        # A4 (desc -> col A, amount -> col D), mirroring the click-to-bind UI's PUT.
+        cell_map = {
+            "scalars": [
+                {"sheet": "Invoice", "cell": "B1", "field_path": "vendor",
+                 "suffix": None, "is_signature": False},
+            ],
+            "tables": [
+                {
+                    "sheet": "Invoice",
+                    "list_path": "line_items",
+                    "anchor_cell": "A4",
+                    "row_mode": "fill_next_empty_row",
+                    "columns": [
+                        {"order": 0, "col": "A", "field_path": "desc", "suffix": None},
+                        {"order": 1, "col": "D", "field_path": "amount", "suffix": None},
+                    ],
+                }
+            ],
+        }
+        put = client.put(f"/templates/{tid}", json={"cell_map": cell_map})
+        assert put.status_code == 200, put.text
+
+        # Generate the filled .xlsx from a processed document.
+        doc_id = _stash_structured_doc()
+        gen = client.post(f"/templates/{tid}/generate", params={"document_id": doc_id})
+        assert gen.status_code == 201, gen.text
+        body = gen.json()
+        assert body["outputs"] and body["outputs"][0]["format"] == "xlsx"
+
+        # Open the produced workbook and assert the scalar + a table row value landed.
+        out = storage.template_outputs_dir(tid) / f"{body['output_id']}.xlsx"
+        assert out.exists()
+        wb = load_workbook(out, data_only=False)
+        ws = wb["Invoice"]
+        assert ws["B1"].value == "MOCK INVOICE"  # scalar binding
+        assert ws["A4"].value == "Widget"  # first line-item's desc
+        assert ws["D4"].value == 125.0  # first line-item's amount

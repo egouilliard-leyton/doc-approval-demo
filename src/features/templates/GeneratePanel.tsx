@@ -47,8 +47,13 @@ const STATUS_LABEL: Partial<Record<DocumentStatus, string>> = {
   decided: "Decided",
 };
 
-// Formats the generator can emit. Kept in sync with the backend's supported set.
-const OUTPUT_FORMATS = ["pdf", "docx"] as const;
+// Formats the generator can emit, per template mode. A spreadsheet template emits
+// the filled .xlsx (and an optional recomputed PDF); the others emit PDF/DOCX.
+const OUTPUT_FORMATS_BY_MODE: Record<TemplateDetail["mode"], readonly string[]> = {
+  form_fill: ["pdf", "docx"],
+  rich_html: ["pdf", "docx"],
+  spreadsheet: ["xlsx", "pdf"],
+};
 
 function isEligible(
   doc: DocumentSummary,
@@ -453,7 +458,7 @@ export function GeneratePanel({ template }: { template: TemplateDetail }) {
             if (v.length > 0) setFormats(v);
           }}
         >
-          {OUTPUT_FORMATS.map((f) => (
+          {OUTPUT_FORMATS_BY_MODE[template.mode].map((f) => (
             <ToggleGroupItem key={f} value={f} disabled={generating}>
               {f.toUpperCase()}
             </ToggleGroupItem>

@@ -85,6 +85,7 @@ class TemplateMode(str, Enum):
 
     form_fill = "form_fill"
     rich_html = "rich_html"
+    spreadsheet = "spreadsheet"
 
 
 class TemplateStatus(str, Enum):
@@ -108,6 +109,11 @@ class Template(SQLModel, table=True):
     form_fields: list = Field(default_factory=list, sa_column=Column(JSON))  # AcroForm enumeration
     form_field_map: dict = Field(default_factory=dict, sa_column=Column(JSON))
     placeholder_map: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    # Spreadsheet mode (xlsx templates): the visual field->cell mapping (scalars + tables;
+    # see app.pipeline.generation.spreadsheet) and the enumerated sheet metadata captured
+    # at source-upload time. Both additive JSON columns (auto-migrated like the maps above).
+    cell_map: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    spreadsheet_sheets: list = Field(default_factory=list, sa_column=Column(JSON))
     output_formats: list = Field(default_factory=lambda: ["pdf"], sa_column=Column(JSON))
     status: TemplateStatus = Field(default=TemplateStatus.draft)
     created_at: datetime = Field(default_factory=_utcnow)

@@ -36,6 +36,7 @@ const LOAD_ERROR = "Could not load templates.";
 const MODE_LABEL = {
   form_fill: "Form-fill",
   rich_html: "Rich HTML",
+  spreadsheet: "Spreadsheet",
 } as const;
 
 // Order sections predictably even when only one doc type is present.

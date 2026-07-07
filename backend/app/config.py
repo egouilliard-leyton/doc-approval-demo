@@ -199,6 +199,16 @@ class Settings(BaseSettings):
     signing_cert_dir: str = "certs"
     signing_timeout_s: float = 60.0
 
+    # Spreadsheet template generation (xlsx mode). openpyxl does the fill; LibreOffice
+    # headless (an external system binary, not a pip dep) recomputes formulas for the
+    # preview/PDF. ``xlsx_soffice_path`` is the ``soffice`` binary (name on PATH or an
+    # absolute path); recalc runs bounded by a semaphore and a per-invocation timeout,
+    # and each table fill is capped so a huge list can't explode the workbook.
+    xlsx_soffice_path: str = "soffice"
+    xlsx_recalc_timeout_s: float = 60.0  # per soffice invocation; a cold first run is slow.
+    xlsx_recalc_concurrency: int = 1  # LO isn't concurrency-safe; serialize by default.
+    xlsx_max_table_rows: int = 500  # cap rows written per mapped table (matches sheet caps).
+
     # Browser origins allowed to call the API (Vite dev server by default).
     cors_origins: list[str] = ["http://localhost:5173"]
 

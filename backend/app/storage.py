@@ -63,6 +63,7 @@ DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 TEMPLATE_SOURCE_TYPES: dict[str, str] = {
     ".pdf": "application/pdf",
     ".docx": DOCX_MIME,
+    ".xlsx": XLSX_MIME,  # spreadsheet mode (openpyxl fill + LibreOffice recompute)
 }
 
 
@@ -475,6 +476,20 @@ def template_output_url(template_id: str, output_id: str, ext: str = ".pdf") -> 
 def template_output_path(template_id: str, output_id: str, ext: str = ".pdf") -> Path:
     """Absolute path to a template's generated output (may not exist yet)."""
     return template_outputs_dir(template_id) / f"{output_id}{ext}"
+
+
+def template_preview_cache_path(template_id: str, key: str) -> Path:
+    """Absolute path for a cached LibreOffice-recomputed preview workbook.
+
+    Keyed by ``sha256(xlsx_bytes)`` (see
+    :func:`app.pipeline.generation.xlsx_preview.recompute_workbook`) under
+    ``data/templates/<id>/preview_cache/`` so paginating a spreadsheet preview never
+    re-runs the (slow) headless recalc for identical filled bytes. Creates the parent
+    dir like the sibling output helpers; the file itself may not exist yet.
+    """
+    cache_dir = _template_dir(template_id) / "preview_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"{key}.xlsx"
 
 
 # --- Phase 4 (Vision QA): rendered + reference page images per QA run ----------

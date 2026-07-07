@@ -66,7 +66,7 @@ def apply_template_update(session: Session, tmpl: Template, body: TemplateUpdate
     # Wholesale replacement per field; JSON columns must be reassigned (SQLAlchemy
     # doesn't detect in-place mutation of a dict/list).
     for attr in ("name", "html_body", "css", "form_field_map", "placeholder_map",
-                 "output_formats", "status"):
+                 "cell_map", "output_formats", "status"):
         value = getattr(body, attr)
         if value is not None:
             if attr == "html_body":

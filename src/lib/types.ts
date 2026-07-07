@@ -260,7 +260,7 @@ export interface StructuredResult {
 
 // --- templates ---------------------------------------------------------------
 
-export type TemplateMode = "form_fill" | "rich_html";
+export type TemplateMode = "form_fill" | "rich_html" | "spreadsheet";
 export type TemplateStatus = "draft" | "ready";
 
 export interface TemplateSummary {
@@ -310,7 +310,97 @@ export interface TemplateDetail extends TemplateSummary {
   form_fields: TemplateFormField[];
   form_field_map: Record<string, FormFieldMapEntry>;
   placeholder_map: Record<string, unknown>;
+  // Spreadsheet mode: the field->cell mapping + enumerated sheet metadata.
+  cell_map: SpreadsheetMapping;
+  spreadsheet_sheets: SpreadsheetSheetMeta[];
   lint: TemplateLint;
+}
+
+// --- spreadsheet templates (xlsx mode) ---------------------------------------
+
+/** One worksheet's dimensions + layout, enumerated at source-upload time. */
+export interface SpreadsheetSheetMeta {
+  name: string;
+  max_row: number;
+  max_col: number;
+  merges: string[]; // A1-style merged ranges, e.g. "A1:B2"
+  col_widths: Record<string, number>; // column letter -> width (only where set)
+}
+
+/** One rendered grid cell: its address, display value, and formatting hints. */
+export interface SpreadsheetCell {
+  row: number; // 1-based
+  col: number; // 1-based
+  address: string; // A1
+  value: string | null;
+  is_formula: boolean;
+  number_format: string | null;
+  computed: boolean; // false -> preview fallback showing the raw formula string
+}
+
+/** A (capped) sheet grid for the mapping UI: non-empty cells + merged ranges. */
+export interface SpreadsheetGrid {
+  sheet: string;
+  max_row: number;
+  max_col: number;
+  merges: string[];
+  cells: SpreadsheetCell[];
+}
+
+/** One scalar binding: a catalogue field_path written into a single cell. */
+export interface SpreadsheetScalarBinding {
+  sheet: string;
+  cell: string; // A1 address
+  field_path: string;
+  suffix: string | null; // number_format unit (numeric) or literal concat (text)
+  is_signature: boolean; // reserved; always false this build
+}
+
+/** One column of a table binding: a record-relative field written to a column. */
+export interface SpreadsheetTableColumnBinding {
+  order: number; // write/display order (independent of extraction order)
+  col: string; // target column letter, e.g. "A"
+  field_path: string; // record-relative ("" = the record's own value)
+  suffix: string | null;
+}
+
+/** A table binding: a list field expanded down rows from an anchor cell. */
+export interface SpreadsheetTableBinding {
+  sheet: string;
+  list_path: string; // top-level list field, e.g. "line_items"
+  anchor_cell: string; // A1 address of the first data row's first column
+  row_mode: "fill_next_empty_row" | "insert_row";
+  columns: SpreadsheetTableColumnBinding[];
+}
+
+/** The full field->cell mapping persisted in `Template.cell_map`. */
+export interface SpreadsheetMapping {
+  scalars: SpreadsheetScalarBinding[];
+  tables: SpreadsheetTableBinding[];
+}
+
+/** One bindable top-level list field + its record-relative columns. */
+export interface FieldListCatalogueEntry {
+  list_path: string; // "line_items" or "parties"
+  label: string;
+  columns: FieldCatalogueEntry[]; // record-relative leaves ("" = the record's own value)
+}
+
+/** One sheet of a computed preview: its grid + whether formulas were computed. */
+export interface SpreadsheetPreviewSheet {
+  name: string;
+  max_row: number;
+  max_col: number;
+  merges: string[];
+  cells: SpreadsheetCell[];
+  computed: boolean; // false -> formula cells show their raw formula string
+}
+
+/** Response of the spreadsheet preview: the computed sheets + a degraded flag. */
+export interface SpreadsheetPreviewResponse {
+  sheets: SpreadsheetPreviewSheet[];
+  computed: boolean; // false when LibreOffice recompute was unavailable
+  warnings: string[];
 }
 
 // --- template form-fill mapping / generation ---------------------------------
@@ -407,6 +497,7 @@ export interface TemplateUpdate {
   css?: string;
   form_field_map?: Record<string, unknown>;
   placeholder_map?: Record<string, unknown>;
+  cell_map?: SpreadsheetMapping; // spreadsheet mode: field->cell mapping
   output_formats?: string[];
   status?: TemplateStatus;
   revision_note?: string;

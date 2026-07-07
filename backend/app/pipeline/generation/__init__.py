@@ -12,7 +12,7 @@ from __future__ import annotations
 from .authoring_agent import PROVIDERS as AUTHORING_PROVIDERS
 from .authoring_agent import TOOL_SCHEMAS, run_authoring_agent
 from .binder import BindOutcome, bind_html, render_field_placeholder
-from .catalogue import FieldCatalogueEntry, field_catalogue
+from .catalogue import FieldCatalogueEntry, field_catalogue, list_field_catalogue
 from .convert import ConvertResult, convert_docx, convert_pdf
 from .forms import FillOutcome, TemplateFormField, enumerate_form_fields, fill_form
 from .generate import (
@@ -30,8 +30,20 @@ from .qa_vision import PROVIDERS as QA_PROVIDERS
 from .qa_vision import QaOutcome, run_qa
 from .rasterize import render_pdf_to_pngs
 from .render import RenderUnavailableError, render_docx, render_pdf
+from .spreadsheet import (
+    SpreadsheetFillOutcome,
+    enumerate_workbook_sheets,
+    fill_spreadsheet,
+    read_template_grid,
+)
 from .template_edits import apply_template_update, sanitize_template_html
 from .values import flatten_field_values, resolve_path
+from .xlsx_preview import (
+    RecomputeResult,
+    convert_to_pdf,
+    read_computed_grid,
+    recompute_workbook,
+)
 
 __all__ = [
     "FieldCatalogueEntry",
@@ -71,4 +83,13 @@ __all__ = [
     "QaOutcome",
     "lint_template",
     "TemplateLintResult",
+    "list_field_catalogue",
+    "enumerate_workbook_sheets",
+    "read_template_grid",
+    "fill_spreadsheet",
+    "SpreadsheetFillOutcome",
+    "recompute_workbook",
+    "RecomputeResult",
+    "convert_to_pdf",
+    "read_computed_grid",
 ]

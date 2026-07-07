@@ -33,10 +33,12 @@ export function SourceUploadPanel({
 
   return (
     <div className="space-y-4">
-      <Dropzone accept=".pdf,.docx" onFile={handleFile} disabled={uploading} />
+      <Dropzone accept=".pdf,.docx,.xlsx" onFile={handleFile} disabled={uploading} />
       <p className="text-center text-xs text-muted-foreground">
-        A PDF with fillable fields, or a DOCX/PDF to convert into an editable
-        template.
+        A PDF with fillable fields, a DOCX/PDF to convert into an editable template,
+        or an Excel .xlsx to bind fields to cells. For spreadsheets, all formulas,
+        colouring, and charts must be authored in the file beforehand — they are not
+        edited on the platform.
       </p>
       {uploading && (
         <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">

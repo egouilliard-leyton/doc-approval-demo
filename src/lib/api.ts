@@ -22,6 +22,7 @@ import type {
   EvalRunSummary,
   FieldCatalogueEntry,
   FieldCorrection,
+  FieldListCatalogueEntry,
   GeneratedSignResult,
   GenerateResult,
   MappingSuggestResponse,
@@ -35,6 +36,9 @@ import type {
   Sheet,
   SignatureValidation,
   SignResult,
+  SpreadsheetGrid,
+  SpreadsheetPreviewResponse,
+  SpreadsheetSheetMeta,
   StructuredResult,
   TemplateCreate,
   TemplateDetail,
@@ -271,6 +275,41 @@ export async function getTemplateCatalogue(
   id: string,
 ): Promise<FieldCatalogueEntry[]> {
   return request<FieldCatalogueEntry[]>(`/templates/${id}/catalogue`);
+}
+
+// --- template spreadsheet (xlsx) mode: sheets, cells, list-catalogue, preview ---
+
+export async function getSpreadsheetSheets(
+  id: string,
+): Promise<SpreadsheetSheetMeta[]> {
+  return request<SpreadsheetSheetMeta[]>(`/templates/${id}/spreadsheet/sheets`);
+}
+
+export async function getSpreadsheetCells(
+  id: string,
+  sheet: string,
+): Promise<SpreadsheetGrid> {
+  return request<SpreadsheetGrid>(`/templates/${id}/spreadsheet/cells`, {
+    query: { sheet },
+  });
+}
+
+export async function getListCatalogue(
+  id: string,
+): Promise<FieldListCatalogueEntry[]> {
+  return request<FieldListCatalogueEntry[]>(
+    `/templates/${id}/spreadsheet/list-catalogue`,
+  );
+}
+
+export async function previewSpreadsheet(
+  id: string,
+  documentId: string,
+): Promise<SpreadsheetPreviewResponse> {
+  return request<SpreadsheetPreviewResponse>(
+    `/templates/${id}/spreadsheet/preview`,
+    { method: "POST", query: { document_id: documentId } },
+  );
 }
 
 export async function suggestTemplateMapping(

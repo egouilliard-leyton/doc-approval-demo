@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from app.extraction import get_spec
 from app.models import DocType
-from app.schemas import FieldCatalogueEntry, FieldValue
+from app.schemas import FieldCatalogueEntry, FieldListCatalogueEntry, FieldValue
 
 # Leaf field names whose extracted value is numeric (see the ``to_number`` coercions
 # in ``app/extraction``); everything else is treated as free text.
@@ -82,4 +82,34 @@ def field_catalogue(doc_type: DocType, list_repeat: int = 3) -> list[FieldCatalo
     """
     out: list[FieldCatalogueEntry] = []
     _walk(get_spec(doc_type).field_model, "", list_repeat, out)
+    return out
+
+
+def list_field_catalogue(doc_type: DocType) -> list[FieldListCatalogueEntry]:
+    """The top-level list fields a spreadsheet table binding can expand down rows.
+
+    One entry per top-level list field. A ``list_composite`` (e.g. ``line_items``) exposes
+    its sub-model's leaf fields as record-relative ``columns`` (``path`` = the sub-field
+    name); a ``list_scalar`` collection (e.g. ``parties``) exposes a single sentinel column
+    with ``path=""`` — the record has no sub-fields, so the whole record value is written.
+    Nested scalar leaves (non-list) are ignored here — those bind as scalars, not tables.
+    """
+    out: list[FieldListCatalogueEntry] = []
+    for name, info in get_spec(doc_type).field_model.model_fields.items():
+        annotation = info.annotation
+        if get_origin(annotation) is not list:
+            continue
+        (inner,) = get_args(annotation) or (None,)
+        columns: list[FieldCatalogueEntry] = []
+        if isinstance(inner, type) and issubclass(inner, BaseModel) and inner is not FieldValue:
+            # list_composite: the sub-model's own leaf fields, record-relative (no prefix).
+            _walk(inner, "", 0, columns)
+        else:
+            # list_scalar: the record IS the value; a single sentinel column (path "").
+            columns = [
+                FieldCatalogueEntry(path="", label=_label_for(name), kind=_kind_for(name))
+            ]
+        out.append(
+            FieldListCatalogueEntry(list_path=name, label=_label_for(name), columns=columns)
+        )
     return out
