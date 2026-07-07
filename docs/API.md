@@ -95,22 +95,27 @@ reconcile + decide on top. Design: [multi-document-cases.md](./multi-document-ca
 ## Templates — `routes/templates.py` (prefix `/templates`)
 
 A **template** is bound to a doc type and turns an **extracted** document's fields into a
-filled **DOCX/PDF**. The mode is **auto-detected from the uploaded source** — a fillable PDF
-→ **form-fill** (AcroForm bindings), a DOCX / non-fillable PDF → **rich-HTML** (converted to
-editable HTML, authored in a TipTap editor, rendered via WeasyPrint/html4docx). Design:
-[document-generation.md](./document-generation.md).
+filled **DOCX / PDF / Excel (.xlsx)**. The mode is **auto-detected from the uploaded source** —
+a fillable PDF → **form-fill** (AcroForm bindings), a DOCX / non-fillable PDF → **rich-HTML**
+(converted to editable HTML, authored in a TipTap editor, rendered via WeasyPrint/html4docx),
+a styled **`.xlsx` → spreadsheet** (visual cell mapping; openpyxl fill + LibreOffice-computed
+preview). Design: [document-generation.md](./document-generation.md).
 
 | Method | Path | Description |
 | --- | --- | --- |
 | `POST` | `/templates` | Create a template bound to a doc type (`{doc_type, name?}`) → `TemplateDetail`. |
 | `GET` | `/templates` | List templates (`TemplateSummary[]`). |
-| `GET` | `/templates/{id}` | One template + `html_body`/`css`/mapping + the placeholder `lint` (`TemplateDetail`). 404 if missing. |
-| `PUT` | `/templates/{id}` | Update a template (name / `html_body` / `css` / AcroForm mapping) → `TemplateDetail`. |
+| `GET` | `/templates/{id}` | One template + `html_body`/`css`/mapping (+ `cell_map`/`spreadsheet_sheets` for xlsx) + the placeholder `lint` (`TemplateDetail`). 404 if missing. |
+| `PUT` | `/templates/{id}` | Update a template (name / `html_body` / `css` / AcroForm mapping / `cell_map`) → `TemplateDetail`. |
 | `DELETE` | `/templates/{id}` | Delete a template (its revisions go with it). |
-| `POST` | `/templates/{id}/source` | Upload the source document (multipart `file`). **Auto-detects the mode** — a fillable PDF → form-fill (fields enumerated); a DOCX/PDF → rich-HTML (converted to HTML) — and **auto-runs the Fidelity check**. |
-| `GET` | `/templates/{id}/catalogue` | The bound doc type's extractable field paths — the binding targets (e.g. `vendor_name`, `line_items.0.amount`). |
+| `POST` | `/templates/{id}/source` | Upload the source document (multipart `file`). **Auto-detects the mode** — a fillable PDF → form-fill (fields enumerated); a DOCX/PDF → rich-HTML (converted to HTML); an `.xlsx` → spreadsheet (sheets enumerated, `cell_map` reset). Auto-runs the Fidelity check for form/rich. `415` on a non-PDF/DOCX/XLSX; `422` on an unreadable source. |
+| `GET` | `/templates/{id}/catalogue` | The bound doc type's extractable field paths — the binding targets (e.g. `vendor_name`, `line_items.0.amount`). Scalar-only (`list_repeat=0`) for a spreadsheet template. |
+| `GET` | `/templates/{id}/spreadsheet/sheets` | (spreadsheet) The per-sheet layout enumerated at upload (`SpreadsheetSheetMeta[]`: name, extent, merges, column widths). |
+| `GET` | `/templates/{id}/spreadsheet/cells?sheet=` | (spreadsheet) A capped, merge-aware grid of one sheet's non-empty cells (`SpreadsheetGrid`) for click-to-bind. `400` if not a spreadsheet template with a source. |
+| `GET` | `/templates/{id}/spreadsheet/list-catalogue` | (spreadsheet) The top-level list fields + record-relative columns a table binding can expand down rows (`FieldListCatalogueEntry[]`). |
+| `POST` | `/templates/{id}/spreadsheet/preview?document_id=` | (spreadsheet) Fill from `document_id` and return a **formula-computed** per-sheet grid (`SpreadsheetPreviewResponse`, `computed` flag); falls back to raw formula strings if LibreOffice is unavailable. `400` if not a spreadsheet template with a source. |
 | `POST` | `/templates/{id}/suggest-mapping` | AI/heuristic mapper suggests AcroForm-field → field-path bindings (form-fill mode); offline heuristic default. |
-| `POST` | `/templates/{id}/generate` | Fill the template from a chosen processed document (`{document_id, formats[]}`) → PDF and/or DOCX (`/files/...`). |
+| `POST` | `/templates/{id}/generate?document_id=` | Fill the template from a chosen processed document → PDF and/or DOCX (form/rich), or **`.xlsx` + optional PDF** (spreadsheet) → `GenerateResult` with `outputs[]` (`/files/...`). |
 | `POST` | `/templates/{id}/agent` | **SSE stream.** The tool-using authoring agent edits the template's HTML/CSS from a natural-language instruction (`set_html`/`set_css`/`insert_placeholder`/`list_available_fields`/`render_preview`); every edit lands a revision. OpenRouter, offline mock. |
 | `POST` | `/templates/{id}/qa` | Vision **Fidelity** QA: renders the template to page images (pypdfium2) and compares against the uploaded example (`source_pdf`) or self-reviews (DOCX/no source) → verdict + severity-coded discrepancy checklist. |
 | `GET` | `/templates/{id}/revisions` | The edit history — one `TemplateRevision` per edit (manual or AI), newest first. |

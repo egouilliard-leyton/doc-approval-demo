@@ -473,7 +473,7 @@ overview of the saved reconciliation/decision.
 | `CaseTypeDefinitionRow` | Persisted case-type definition (built-in `ap_match` mirrored; custom rebuilt from JSON). |
 | `DocTypeDefinitionRow` | Persisted doc-type definition (built-ins mirrored; custom rebuilt from JSON). Also carries the **OCR-routing columns** `preferred_ocr_engine` + `ocr_fallback_engines` (permissive; edited via `PATCH /doc-types/{name}/routing`). |
 | `VlmEngineRow` | A connected VLM OCR engine (`key`, `label`, OpenRouter `model`, `enabled`). |
-| `Template` | A doc-type-bound generation template ([§13](#13-document-generation-from-templates)); `mode` (`form`/`rich`), the source artifact, and either the AcroForm mapping (form) or `html_body` + `css` (rich). |
+| `Template` | A doc-type-bound generation template ([§13](#13-document-generation-from-templates)); `mode` (`form_fill`/`rich_html`/`spreadsheet`), the source artifact, and the mode's binding — the AcroForm mapping (form), `html_body` + `css` (rich), or `cell_map` + `spreadsheet_sheets` (spreadsheet). |
 | `TemplateRevision` | One snapshot per template edit (manual or AI); powers the revision history + restore. |
 | `FieldCorrectionRow` | One row per (document, field) reviewer edit: `original_value` → `new_value`, timestamps. |
 | `EvalRunRow` | One scored evaluation run: `golden_id`/`doc_type`/`engine`/`provider`/`document_id`, the three headline scores (`overall_score`, `field_accuracy_exact`/`_normalized`), and the full `field_scores` / `collection_scores` JSON breakdown. |
@@ -505,10 +505,11 @@ crash startup.
 
 ## 13. Document generation from templates
 
-`backend/app/pipeline/generation/` turns an **extracted** document into a filled **DOCX/PDF**.
-A **`Template`** is bound to a doc type; the **mode is auto-detected from the uploaded source**
-and the generation layer stays as stateless/single-purpose as the rest of the pipeline. Full
-design: **[document-generation.md](./document-generation.md)**.
+`backend/app/pipeline/generation/` turns an **extracted** document into a filled
+**DOCX / PDF / Excel (.xlsx)**. A **`Template`** is bound to a doc type; the **mode is
+auto-detected from the uploaded source** and the generation layer stays as
+stateless/single-purpose as the rest of the pipeline. Full design:
+**[document-generation.md](./document-generation.md)**.
 
 - **Form-fill** (fillable PDF) — `forms`/`mapper`/`generate`: enumerate AcroForm fields
   (**pypdf**), an AI/heuristic mapper binds each to an extracted field path, `generate` fills
@@ -517,15 +518,26 @@ design: **[document-generation.md](./document-generation.md)**.
   (**mammoth** / Docling, PyMuPDF fallback), a **Jinja-free** `bind_html` substitutes each
   `<span data-field="path">` with the document's value, then render to **PDF** (**WeasyPrint**)
   and/or **DOCX** (**html4docx**). The same bound HTML feeds both exporters.
+- **Spreadsheet** (styled `.xlsx`) — `spreadsheet`/`xlsx_preview`: a visual **cell mapping**
+  (`Template.cell_map`) binds scalar fields to cells (optional numeric suffix → number format)
+  and list fields to **tables** expanded down rows from an anchor (`fill_next_empty_row` /
+  `insert_row`, cloning styled rows + translating and auto-expanding formulas). **openpyxl**
+  (BSD) writes the workbook; **LibreOffice headless** (external `soffice` binary, not linked)
+  recomputes formulas for the computed preview and PDF — every soffice call is a non-raising,
+  degrading boundary (sha256-cached; falls back to raw formula strings flagged `computed=false`
+  when unavailable). `xlsx-datafill` (JS) was evaluated and reimplemented in Python instead.
 - **AI assists** — `authoring_agent`/`template_edits` (the SSE, tool-using HTML/CSS editor);
   `rasterize`/`preview`/`qa_vision`/`qa` (pypdfium2 rasterization + the styled preview + the
-  vision Fidelity loop); `lint` (placeholder ↔ doc-type consistency). Every edit snapshots a
-  `TemplateRevision` (history + undoable restore).
+  vision Fidelity loop); `lint` (placeholder ↔ doc-type consistency, incl. spreadsheet
+  `cell_map` paths). Every edit snapshots a `TemplateRevision` (history + undoable restore).
 - **Persistence** — `Template` + `TemplateRevision` SQLModel tables ([§11](#11-data-model)),
-  served by `routes/templates.py`; the frontend is `src/features/templates/` (+ `editor/`).
-- **Licensing** — all generation libs are permissive; new rasterization is **pypdfium2** (not
-  the AGPL PyMuPDF). WeasyPrint needs system Pango + GDK-PixBuf; without them DOCX still works
-  and PDF degrades gracefully. Installed as the `docgen` extra.
+  served by `routes/templates.py`; the frontend is `src/features/templates/` (+ `editor/`, and
+  the `Spreadsheet*` mapping/preview components).
+- **Licensing** — all generation libs are permissive (pypdfium2, openpyxl BSD, …); new
+  rasterization is **pypdfium2** (not the AGPL PyMuPDF), and LibreOffice is invoked as an
+  external headless binary, not bundled. WeasyPrint needs system Pango + GDK-PixBuf and the
+  spreadsheet preview needs `soffice`; without either, output degrades gracefully rather than
+  crashing. Installed as the `docgen` extra.
 - **Known limitation** — TipTap+StarterKit flattens complex HTML on load, so rich-text
   editing + Save is lossy for styled layouts; the faithful paths are the **Preview** toggle
   (renders the persisted `html_body`) and the **AI edit** agent (writes raw HTML).
