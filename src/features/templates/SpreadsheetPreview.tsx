@@ -193,7 +193,7 @@ export function SpreadsheetPreview({ template }: { template: TemplateDetail }) {
       )}
 
       {preview && (
-        <div className="min-h-[20rem]">
+        <div className="min-w-0 min-h-[20rem]">
           <SpreadsheetGridTable
             grid={activeGrid}
             sheetNames={sheetNames}

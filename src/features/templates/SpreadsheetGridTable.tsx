@@ -103,8 +103,8 @@ export function SpreadsheetGridTable({
   const clickable = Boolean(onCellClick);
 
   return (
-    <div className="flex h-full flex-col gap-3">
-      <div className="relative flex-1 overflow-auto rounded-xl border bg-muted/40">
+    <div className="flex h-full min-w-0 flex-col gap-3">
+      <div className="relative max-h-[65vh] min-h-[16rem] flex-1 overflow-auto rounded-xl border bg-muted/40">
         {loading ? (
           <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
             Loading sheet…

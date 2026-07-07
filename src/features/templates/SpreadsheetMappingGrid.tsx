@@ -251,8 +251,8 @@ export function SpreadsheetMappingGrid({
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_22rem]">
-      <div className="min-h-[24rem]">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="min-w-0">
         <SpreadsheetGridTable
           grid={gridSheet}
           sheetNames={sheetNames}
